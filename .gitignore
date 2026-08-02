@@ -1,0 +1,44 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+my_own_agent/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+work_memory.db
+
+# Tests and coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Application runtime
+*.log
+.streamlit/secrets.toml
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
