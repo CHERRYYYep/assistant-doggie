@@ -249,6 +249,21 @@ class Decision(Base):
     entry: Mapped[Entry | None] = relationship(back_populates="decisions")
 
 
+class ChatMessage(Base):
+    """One persisted item in the application's single long-running conversation."""
+
+    __tablename__ = "chat_messages"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_name: Mapped[str | None] = mapped_column(String(100))
+    tool_call_id: Mapped[str | None] = mapped_column(String(100))
+    details_json: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, index=True
+    )
+
+
 class Correction(Base):
     """An audit record describing a user-requested correction."""
 

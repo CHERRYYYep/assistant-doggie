@@ -13,6 +13,8 @@ def test_streamlit_mvp_renders_without_runtime_error(tmp_path, monkeypatch):
     assert not app.exception
     assert any("Personal Work Memory Agent" in item.value for item in app.title)
     assert any("分析并归档" in item.label for item in app.button)
+    assert app.chat_input[0].placeholder.startswith("向 Doggie 提问")
+    assert [tab.label for tab in app.tabs[:2]] == ["💬 对话助手", "🗂️ Bucket 记忆"]
 
 
 def test_pending_result_helpers_reuse_same_normalized_text():

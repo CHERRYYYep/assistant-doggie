@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -281,6 +281,28 @@ class ArchiveResult(OutputSchema):
         if not 0 <= value <= 1:
             raise ValueError("confidence must be between 0 and 1")
         return value
+
+
+ChatRoleValue = Literal["user", "assistant", "tool"]
+
+
+class ChatMessageView(OutputSchema):
+    """Persisted message shown in the single conversation timeline."""
+
+    id: str
+    role: ChatRoleValue
+    content: str
+    tool_name: str | None = None
+    tool_call_id: str | None = None
+    details: dict[str, Any] | list[Any] | None = None
+    created_at: datetime
+
+
+class AgentTurnResult(OutputSchema):
+    """Final assistant answer and the bounded tool activity for one turn."""
+
+    assistant_message: ChatMessageView
+    tool_messages: list[ChatMessageView] = Field(default_factory=list)
 
 
 class BucketSearchResult(OutputSchema):

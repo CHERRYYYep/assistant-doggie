@@ -1,4 +1,4 @@
-"""Minimal Streamlit interface for the personal work-memory MVP."""
+"""Streamlit interface for the single-conversation work-memory agent."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app.db import get_session, init_db
+from app.db import init_db
 from app.services.archive_service import (
     archive_confirmed_input,
     archive_confirmed_new_input,
     archive_user_input,
 )
+from app.services.agent_service import list_chat_messages, run_agent_turn
 from app.services.bucket_service import get_bucket_detail, list_active_buckets
 from app.services.correction_service import move_latest_entry
 from app.services.search_service import search_buckets
@@ -166,7 +167,7 @@ def main() -> None:
     init_db()
 
     st.title("🧠 Personal Work Memory Agent")
-    st.caption("分类优先、可解释、可纠错的私人事务记忆 MVP")
+    st.caption("单一长期对话、问题解决与受控记忆操作一体化 Agent")
 
     if "current_bucket_id" not in st.session_state:
         st.session_state.current_bucket_id = None
@@ -205,149 +206,182 @@ def main() -> None:
                     st.session_state.current_bucket_id = result.bucket_id
                     st.rerun()
 
-    input_column, detail_column = st.columns([1, 1])
-    with input_column:
-        st.subheader("归档新内容")
-        text = st.text_area(
-            "把碎片信息丢进来",
-            height=180,
-            placeholder="例如：支付回调 10:20 开始失败，第三方返回 502，待补复盘。",
+    chat_tab, memory_tab = st.tabs(["💬 对话助手", "🗂️ Bucket 记忆"])
+
+    with chat_tab:
+        st.caption(
+            "这是唯一的长期对话。Doggie 会结合聊天历史回答问题，并在需要时调用受控的 Bucket 记忆工具。"
         )
-        if st.button("分析并归档", type="primary", use_container_width=True):
-            if not text.strip():
-                st.warning("请先输入内容。")
-            elif _can_reuse_pending_result(
-                text,
-                st.session_state.pending_text,
-                st.session_state.archive_result,
-            ):
-                st.info("相同内容已有待确认结果，本次已直接复用；如需重跑请点击“重新分析”。")
-            else:
-                try:
-                    _analyze_and_store(text)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"归档失败：{exc}")
-
-        result_data = st.session_state.archive_result
-        if result_data:
-            _show_archive_result(result_data)
-
-        pending_text = st.session_state.pending_text
-        if pending_text and result_data:
-            pending_suffix = _pending_widget_suffix(pending_text)
-            if st.button(
-                "重新分析（再次调用模型）",
-                key=f"reanalyze-{pending_suffix}",
-                use_container_width=True,
-            ):
-                try:
-                    _analyze_and_store(pending_text)
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"重新分析失败：{exc}")
-
-            candidate_ids = result_data.get("candidate_bucket_ids", [])
-            suggested_title = result_data.get("bucket_title")
-            suggested_type = result_data.get("bucket_type")
-
-            if not candidate_ids:
-                default_title = (
-                    str(suggested_title)
-                    if suggested_title
-                    else _fallback_bucket_title(pending_text)
-                )
-                default_type = (
-                    str(suggested_type)
-                    if suggested_type in BUCKET_TYPES
-                    else _infer_bucket_type(pending_text)
-                )
-                st.info("没有可用的目标 Bucket，可直接编辑下面的信息并创建新 Bucket。")
-                with st.form(key=f"create-bucket-{pending_suffix}"):
-                    new_title = st.text_input("Bucket 标题", value=default_title)
-                    new_type = st.selectbox(
-                        "Bucket 类型",
-                        options=BUCKET_TYPES,
-                        index=BUCKET_TYPES.index(default_type),
-                    )
-                    create_submitted = st.form_submit_button(
-                        "创建 Bucket 并归档",
-                        use_container_width=True,
-                    )
-                if create_submitted:
-                    if not new_title.strip():
-                        st.warning("Bucket 标题不能为空。")
+        messages = list_chat_messages(limit=200)
+        if not messages:
+            st.info(
+                "你可以直接提问，例如：‘这个报错应该怎么排查？’；也可以说“记住这条结论”，让 Agent 操作 Bucket 记忆。"
+            )
+        for message in messages:
+            if message.role == "tool":
+                with st.expander(f"🔧 已调用 {message.tool_name or 'tool'}", expanded=False):
+                    if message.details is not None:
+                        st.json(message.details)
                     else:
-                        try:
-                            confirmed = archive_confirmed_new_input(
-                                pending_text,
-                                new_title,
-                                new_type,
-                            )
-                            st.session_state.archive_result = archive_result_view(confirmed)
-                            st.session_state.current_bucket_id = confirmed.bucket_id
-                            st.session_state.pending_text = None
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"创建 Bucket 失败：{exc}")
+                        st.code(message.content)
+                continue
+            with st.chat_message(message.role):
+                st.markdown(message.content)
 
-            if active_buckets:
-                selectable = [
-                    bucket
-                    for bucket in active_buckets
-                    if not candidate_ids or bucket.id in candidate_ids
-                ] or active_buckets
-                target_id = st.selectbox(
-                    "确认已有 Bucket",
-                    options=[bucket.id for bucket in selectable],
-                    format_func=lambda item: bucket_by_id[item].title,
-                    key=f"confirm-existing-{pending_suffix}",
-                )
+        prompt = st.chat_input("向 Doggie 提问、讨论问题，或要求它保存和查找记忆……")
+        if prompt:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            try:
+                with st.spinner("Doggie 正在思考并按需调用工具……"):
+                    run_agent_turn(prompt)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"对话失败：{exc}")
+
+    with memory_tab:
+        input_column, detail_column = st.columns([1, 1])
+        with input_column:
+            st.subheader("归档新内容")
+            text = st.text_area(
+                "把碎片信息丢进来",
+                height=180,
+                placeholder="例如：支付回调 10:20 开始失败，第三方返回 502，待补复盘。",
+            )
+            if st.button("分析并归档", type="primary", use_container_width=True):
+                if not text.strip():
+                    st.warning("请先输入内容。")
+                elif _can_reuse_pending_result(
+                    text,
+                    st.session_state.pending_text,
+                    st.session_state.archive_result,
+                ):
+                    st.info("相同内容已有待确认结果，本次已直接复用；如需重跑请点击“重新分析”。")
+                else:
+                    try:
+                        _analyze_and_store(text)
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"归档失败：{exc}")
+
+            result_data = st.session_state.archive_result
+            if result_data:
+                _show_archive_result(result_data)
+
+            pending_text = st.session_state.pending_text
+            if pending_text and result_data:
+                pending_suffix = _pending_widget_suffix(pending_text)
                 if st.button(
-                    "归档到选中的 Bucket",
-                    key=f"confirm-existing-button-{pending_suffix}",
+                    "重新分析（再次调用模型）",
+                    key=f"reanalyze-{pending_suffix}",
                     use_container_width=True,
                 ):
                     try:
-                        confirmed = archive_confirmed_input(pending_text, target_id)
-                        st.session_state.archive_result = archive_result_view(confirmed)
-                        st.session_state.current_bucket_id = target_id
-                        st.session_state.pending_text = None
+                        _analyze_and_store(pending_text)
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"确认归档失败：{exc}")
+                        st.error(f"重新分析失败：{exc}")
 
-        if active_buckets:
-            with st.expander("纠正最近一次归档"):
-                correction_target = st.selectbox(
-                    "移动到",
-                    options=[bucket.id for bucket in active_buckets],
-                    format_func=lambda item: bucket_by_id[item].title,
-                    key="correction-target",
-                )
-                correction_reason = st.text_input(
-                    "纠错说明",
-                    value="把刚才那条移到正确的 Bucket",
-                )
-                if st.button("移动最近 Entry"):
-                    try:
-                        correction = move_latest_entry(
-                            correction_reason,
-                            target_bucket_id=correction_target,
+                candidate_ids = result_data.get("candidate_bucket_ids", [])
+                suggested_title = result_data.get("bucket_title")
+                suggested_type = result_data.get("bucket_type")
+
+                if not candidate_ids:
+                    default_title = (
+                        str(suggested_title)
+                        if suggested_title
+                        else _fallback_bucket_title(pending_text)
+                    )
+                    default_type = (
+                        str(suggested_type)
+                        if suggested_type in BUCKET_TYPES
+                        else _infer_bucket_type(pending_text)
+                    )
+                    st.info("没有可用的目标 Bucket，可直接编辑下面的信息并创建新 Bucket。")
+                    with st.form(key=f"create-bucket-{pending_suffix}"):
+                        new_title = st.text_input("Bucket 标题", value=default_title)
+                        new_type = st.selectbox(
+                            "Bucket 类型",
+                            options=BUCKET_TYPES,
+                            index=BUCKET_TYPES.index(default_type),
                         )
-                        st.success(f"纠错已记录：{correction.id}")
-                        st.session_state.current_bucket_id = correction_target
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"纠错失败：{exc}")
+                        create_submitted = st.form_submit_button(
+                            "创建 Bucket 并归档",
+                            use_container_width=True,
+                        )
+                    if create_submitted:
+                        if not new_title.strip():
+                            st.warning("Bucket 标题不能为空。")
+                        else:
+                            try:
+                                confirmed = archive_confirmed_new_input(
+                                    pending_text,
+                                    new_title,
+                                    new_type,
+                                )
+                                st.session_state.archive_result = archive_result_view(confirmed)
+                                st.session_state.current_bucket_id = confirmed.bucket_id
+                                st.session_state.pending_text = None
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f"创建 Bucket 失败：{exc}")
 
-    with detail_column:
-        st.subheader("Bucket 详情")
-        if st.session_state.current_bucket_id:
-            _show_bucket_detail(st.session_state.current_bucket_id)
-        else:
-            st.info("从左侧选择一个 Bucket，或先归档一条内容。")
+                if active_buckets:
+                    selectable = [
+                        bucket
+                        for bucket in active_buckets
+                        if not candidate_ids or bucket.id in candidate_ids
+                    ] or active_buckets
+                    target_id = st.selectbox(
+                        "确认已有 Bucket",
+                        options=[bucket.id for bucket in selectable],
+                        format_func=lambda item: bucket_by_id[item].title,
+                        key=f"confirm-existing-{pending_suffix}",
+                    )
+                    if st.button(
+                        "归档到选中的 Bucket",
+                        key=f"confirm-existing-button-{pending_suffix}",
+                        use_container_width=True,
+                    ):
+                        try:
+                            confirmed = archive_confirmed_input(pending_text, target_id)
+                            st.session_state.archive_result = archive_result_view(confirmed)
+                            st.session_state.current_bucket_id = target_id
+                            st.session_state.pending_text = None
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"确认归档失败：{exc}")
 
+            if active_buckets:
+                with st.expander("纠正最近一次归档"):
+                    correction_target = st.selectbox(
+                        "移动到",
+                        options=[bucket.id for bucket in active_buckets],
+                        format_func=lambda item: bucket_by_id[item].title,
+                        key="correction-target",
+                    )
+                    correction_reason = st.text_input(
+                        "纠错说明",
+                        value="把刚才那条移到正确的 Bucket",
+                    )
+                    if st.button("移动最近 Entry"):
+                        try:
+                            correction = move_latest_entry(
+                                correction_reason,
+                                target_bucket_id=correction_target,
+                            )
+                            st.success(f"纠错已记录：{correction.id}")
+                            st.session_state.current_bucket_id = correction_target
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"纠错失败：{exc}")
+
+        with detail_column:
+            st.subheader("Bucket 详情")
+            if st.session_state.current_bucket_id:
+                _show_bucket_detail(st.session_state.current_bucket_id)
+            else:
+                st.info("从左侧选择一个 Bucket，或先归档一条内容。")
 
 if __name__ == "__main__":
     main()

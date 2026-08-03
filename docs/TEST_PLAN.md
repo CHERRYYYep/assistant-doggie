@@ -5,7 +5,8 @@
 MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 
 ```text
-输入 → 分类 → 提取 → 保存 → 展示 → 纠错 → 搜索
+单会话输入 → 直接回答或工具调用 → 记忆读取/写入 → 历史展示
+归档输入 → 分类 → 提取 → 保存 → 展示 → 纠错 → 搜索
 ```
 
 ## 2. 测试类型
@@ -19,6 +20,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - search_service。
 - correction_service 的规则部分。
 - schema 校验。
+- Agent 工具参数解析、工具白名单和历史消息装配。
 
 ### 2.2 集成测试
 
@@ -27,12 +29,50 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - archive_user_input 完整流程。
 - LLM mock 后的分类和提取。
 - 创建 bucket + entry + structured records。
+- Responses API 与 Chat Completions 的多轮工具调用。
+- 单一对话在多次请求之间的上下文复用。
 
 ### 2.3 手动测试
 
 使用 `tests/fixtures/sample_inputs.md` 逐条输入。
 
 ## 3. 样例场景
+
+### 场景 0：单会话回答与工具调用
+
+先输入：
+
+```text
+我在排查支付回调 502，先帮我分析可能原因和检查顺序。
+```
+
+期望：
+
+- 助手直接给出问题分析和可执行步骤，不机械归档。
+- `chat_messages` 保存 user 和 assistant 消息。
+
+继续输入：
+
+```text
+查一下之前支付问题的记录，再结合历史告诉我下一步。
+```
+
+期望：
+
+- 模型调用 `search_memory`，必要时继续调用 `get_bucket_detail`。
+- 工具调用及结果作为 tool 消息保存并在 UI 中可展开查看。
+- 最终回答结合本轮问题与已持久化的上一轮上下文。
+
+再输入：
+
+```text
+请记住：支付回调问题已定位为第三方证书过期。
+```
+
+期望：
+
+- 模型调用受控写入工具，而不是声称已保存但不执行。
+- 写入仍经过现有 Bucket 分类、提取和事务逻辑。
 
 ### 场景 1：Incident 新建与追加
 
@@ -217,6 +257,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 自动化映射：
 
 - `tests/test_llm.py`：Structured Outputs 封装和错误分支；
+- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环和工具白名单；
 - `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
 - `tests/test_live_evaluation.py`：真实分类运行器的版本化元数据和报告落盘；
 - `tests/test_extraction_evaluation.py`、`tests/test_live_extraction_evaluation.py`：提取遗漏、编造风险提示和真实报告结构；

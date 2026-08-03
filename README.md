@@ -2,11 +2,12 @@
 
 一个面向个人工作的长期事务记忆 Agent。用户把日志、想法、会议结论、实验记录和排障证据输入系统后，Agent 会判断应追加到已有 `Bucket`、创建新 `Bucket`，还是先请求用户确认，并把原文与结构化结果保存为可追溯记忆。
 
-> 当前仓库已完成本地单用户 MVP：分类评估、风险门控、结构化提取、事务归档、纠错、Streamlit 界面和 SQLite 关键词搜索均已实现。
+> 当前仓库已完成本地单用户 Agent MVP：单一持久化对话、问题回答、受控工具 Harness、Bucket 分类与记忆、事务归档、纠错和 SQLite 搜索均已实现。
 
 ## 核心理念
 
-- 一个输入框，不要求用户预先整理文件夹。
+- 一个长期对话，不要求用户在聊天与记忆工具之间手工切换上下文。
+- 普通问题直接分析和回答；需要长期保存时由 Harness 按需调用 Bucket 工具。
 - Bucket 表示持续存在的事务上下文，不是无限增长的聊天记录。
 - 仅高置信度且候选唯一时自动归档；空工作区中有效的新建判断可直接创建首个 Bucket。
 - 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline 和 Decision。
@@ -15,13 +16,16 @@
 
 ## MVP 能力
 
-1. 从当前焦点和活跃 Bucket 中构造有限候选。
-2. 使用 OpenAI 官方或兼容中转站的 Structured Outputs 分类和提取。
-3. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
-4. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
-5. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
-6. 待确认的相同输入会复用当前分类结果，只有显式“重新分析”才再次调用模型。
-7. 在 Streamlit 中查看详情并通过关键词搜索历史。
+1. 在唯一的长期对话中持久化用户消息、助手回答和工具执行记录。
+2. 使用 OpenAI Responses API 或兼容的 Chat Completions 生成问题解决方案。
+3. 通过受控 Agent Harness 列出、搜索、读取和写入 Bucket 记忆。
+4. 从当前焦点和活跃 Bucket 中构造有限候选，并使用 Structured Outputs 分类和提取。
+5. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
+6. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
+7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
+8. 在 Streamlit 中使用 ChatGPT 风格对话界面，并保留完整的 Bucket 记忆管理页签。
+
+Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。
 
 ## 技术栈与目录
 
@@ -87,16 +91,17 @@ python -m app.live_extraction_evaluation \
 
 ## 文档阅读顺序
 
-1. [`docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md`](./docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md)：综合产品文档与后续完成规划。
-2. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
-3. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
-4. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
-5. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
-6. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
-7. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
-8. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
-9. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
-10. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+1. [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)：单会话、上下文、工具循环与安全边界。
+2. [`docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md`](./docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md)：综合产品文档与后续完成规划。
+3. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
+4. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
+5. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
+6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
+7. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
+8. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
+9. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
+10. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
+11. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
 
 ## 当前边界
 

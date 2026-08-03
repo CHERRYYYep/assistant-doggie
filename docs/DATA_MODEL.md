@@ -19,6 +19,7 @@ buckets 1 ── * decisions
 entries 1 ── * todos/evidences/timeline_events/decisions
 entries 1 ── * classification_records
 corrections record before/after snapshots for changed entries
+chat_messages form one independent, ordered singleton conversation timeline
 
 planned: buckets * ── * buckets through bucket_relations
 ```
@@ -164,7 +165,28 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | corrected | bool | 后续是否被用户纠错 |
 | created_at | datetime | 创建时间 |
 
-## 12. user_preferences（规划）
+## 12. chat_messages
+
+保存应用唯一长期对话中的消息。该表不按 conversation ID 分组，因为当前产品明确只有一个对话；按 `created_at` 顺序即可恢复时间线。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | string/uuid | 主键 |
+| role | string | user/assistant/tool |
+| content | text | 用户输入、助手回答或序列化工具输出 |
+| tool_name | string/null | tool 消息对应的注册工具名 |
+| tool_call_id | string/null | 模型工具调用 ID，用于审计和关联 |
+| details_json | json/null | 工具参数与结构化输出 |
+| created_at | datetime | 消息创建时间 |
+
+建议索引：
+
+- role
+- created_at
+
+对话上下文默认只加载最近 40 条 `user/assistant` 消息，较早消息仍完整保存在数据库中。工具记录用于 UI 展示和审计，不作为可执行指令重新注入模型。
+
+## 13. user_preferences（规划）
 
 该表尚未进入当前 SQLAlchemy 模型，以下为后续偏好学习规划。
 
@@ -189,7 +211,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 }
 ```
 
-## 13. 后续向量检索扩展
+## 14. 后续向量检索扩展
 
 当 entries 数量变多后，可增加：
 

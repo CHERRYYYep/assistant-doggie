@@ -172,6 +172,14 @@ def _default_client(endpoint: LLMEndpointConfig | None = None) -> Any:
         ) from exc
 
 
+def create_openai_client(
+    endpoint: LLMEndpointConfig | None = None,
+) -> Any:
+    """Create the configured OpenAI-compatible client for agent-style calls."""
+
+    return _default_client(endpoint)
+
+
 def _responses_refusal_text(response: Any) -> str | None:
     for item in getattr(response, "output", []) or []:
         for content in getattr(item, "content", []) or []:

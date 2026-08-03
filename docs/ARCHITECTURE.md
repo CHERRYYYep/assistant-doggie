@@ -6,13 +6,13 @@ MVP 使用可测试的单体服务架构：
 
 ```text
 Streamlit UI
-    ↓
-archive_service
-    ├─ classify_service ── llm.py ── OpenAI Responses API
-    ├─ extract_service  ── llm.py ── OpenAI Responses API
-    └─ bucket_service
-          ↓
-        SQLite
+    ├─ agent_service ── llm.py ── Responses API / Chat Completions
+    │      ├─ 对话历史 ───────────────────────────→ SQLite
+    │      └─ 受控工具 ──→ search/bucket/archive services
+    └─ archive_service
+           ├─ classify_service ── llm.py
+           ├─ extract_service  ── llm.py
+           └─ bucket_service ─────────────────────→ SQLite
 
 correction_service ──→ SQLite
 search_service     ──→ SQLite
@@ -20,6 +20,8 @@ view_service       ──→ Streamlit 展示数据
 ```
 
 普通 Python 函数足以表达当前流程，比提前引入复杂 Agent 框架更容易调试、测试和回滚。只有出现多角色协作、长流程状态机或复杂工具审批后，才需要考虑进一步编排。
+
+当前增加的 `agent_service` 是一个单 Agent、显式工具注册的轻量 Harness，而不是多 Agent 框架。它持久化唯一对话的消息，把最近对话交给模型，并执行 `list/search/get/archive/confirmed save` 等受控工具。模型没有任意本机代码执行权限。
 
 ## 2. 普通归档流程
 
