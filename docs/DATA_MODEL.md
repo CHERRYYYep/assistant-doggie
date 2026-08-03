@@ -16,8 +16,11 @@ buckets 1 ── * todos
 buckets 1 ── * evidences
 buckets 1 ── * timeline_events
 buckets 1 ── * decisions
-buckets * ── * buckets through bucket_relations
 entries 1 ── * todos/evidences/timeline_events/decisions
+entries 1 ── * classification_records
+corrections record before/after snapshots for changed entries
+
+planned: buckets * ── * buckets through bucket_relations
 ```
 
 ## 3. buckets
@@ -114,7 +117,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | reason | text/null | 决策原因 |
 | created_at | datetime | 创建时间 |
 
-## 9. bucket_relations
+## 9. bucket_relations（规划）
 
 用于表示 bucket 之间的关联，而不是强制单归属。
 
@@ -141,9 +144,29 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | after_json | json/text | 修改后快照 |
 | created_at | datetime | 创建时间 |
 
-## 11. user_preferences
+## 11. classification_records
 
-MVP 可以先建表但少用。
+保存每次分类的风险证据。即使结果为 `ask_user`，也可以记录审计，但在用户确认前不创建正式 Entry。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | string/uuid | 主键 |
+| raw_text | text | 本次分类的原始输入 |
+| action | string | append_existing/create_new/ask_user |
+| bucket_id | string/uuid/null | 模型建议或最终确认的 Bucket |
+| entry_id | string/uuid/null | 成功归档后关联的 Entry |
+| confidence | float | LLM 主观风险信号，不是正确概率 |
+| reason | text | 分类依据 |
+| candidate_bucket_ids | json | 服务端候选与模型建议候选 ID |
+| current_focus_bucket_id | string/uuid/null | 分类时的当前焦点 |
+| prompt_version | string | Prompt 版本 |
+| model_name | string | 模型名 |
+| corrected | bool | 后续是否被用户纠错 |
+| created_at | datetime | 创建时间 |
+
+## 12. user_preferences（规划）
+
+该表尚未进入当前 SQLAlchemy 模型，以下为后续偏好学习规划。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -166,7 +189,7 @@ MVP 可以先建表但少用。
 }
 ```
 
-## 12. 后续向量检索扩展
+## 13. 后续向量检索扩展
 
 当 entries 数量变多后，可增加：
 

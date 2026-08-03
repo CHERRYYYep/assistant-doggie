@@ -2,182 +2,96 @@
 
 ## 1. 总体架构
 
-MVP 采用简单单体架构：
+MVP 使用可测试的单体服务架构：
 
 ```text
 Streamlit UI
     ↓
 archive_service
-    ↓
-classify_service ── llm
-extract_service ─── llm
-    ↓
-bucket_service / correction_service / search_service
-    ↓
-SQLite
+    ├─ classify_service ── llm.py ── OpenAI Responses API
+    ├─ extract_service  ── llm.py ── OpenAI Responses API
+    └─ bucket_service
+          ↓
+        SQLite
+
+correction_service ──→ SQLite
+search_service     ──→ SQLite
+view_service       ──→ Streamlit 展示数据
 ```
 
-## 2. 为什么第一版不用复杂 Agent 框架
+普通 Python 函数足以表达当前流程，比提前引入复杂 Agent 框架更容易调试、测试和回滚。只有出现多角色协作、长流程状态机或复杂工具审批后，才需要考虑进一步编排。
 
-第一版目标是验证产品闭环，不是验证复杂编排能力。建议先用普通函数组织：
-
-- 更容易调试。
-- 更容易测试。
-- 更容易理解数据流。
-- 更适合新手。
-
-等以下情况出现后，再考虑 Agents SDK、LangGraph 或其他编排框架：
-
-- 有多个 specialist agent。
-- 需要长流程状态机。
-- 需要人工审批节点。
-- 需要工具调用审计。
-- 需要复杂回滚和可观测性。
-
-## 3. 核心流程：归档文本
+## 2. 普通归档流程
 
 ```text
-1. 用户输入 text
-2. archive_service 接收 text
-3. 判断是否为纠错/搜索/普通归档
-4. 如果是纠错：交给 correction_service
-5. 如果是搜索：交给 search_service
-6. 如果是普通归档：
-   6.1 读取 current_focus_bucket 和 active_buckets
-   6.2 classify_service 判断 append/create/ask
-   6.3 extract_service 提取结构化信息
-   6.4 bucket_service 写入 bucket、entry、todos、evidences、timeline
-   6.5 view_service 生成用户可读反馈
+1. 校验用户输入
+2. 读取活跃 Bucket，并把当前焦点排在候选首位
+3. classify_service 请求严格的 ClassificationResult
+4. 服务端验证模型引用的 Bucket ID
+5. 应用置信度与多候选门控
+6. 写 classification_records 审计
+7. ask_user：停止，不创建正式 Entry
+8. append/create：extract_service 请求 ExtractionResult
+9. 同一事务创建或追加 Entry，并写 Todo/Evidence/Timeline/Decision
+10. 更新标签、滚动摘要和最近活跃时间
+11. 返回 ArchiveResult
 ```
 
-## 4. 服务职责
+`archive_service` 自己创建 Session 时负责提交、回滚和关闭；调用方传入 Session 时，最终事务控制权属于调用方。
 
-### archive_service
+## 3. 服务职责
 
-总入口，负责调度。
+### `llm.py`
 
-主要函数：
+统一 OpenAI 配置与 Structured Outputs 调用，处理响应不完整、拒绝、Schema 校验失败和有限重试。业务服务不直接创建 OpenAI Client。
 
-```python
-def archive_user_input(text: str) -> ArchiveResult:
-    ...
-```
+### `classify_service`
 
-### classify_service
+构造有限候选，输出 `append_existing`、`create_new` 或 `ask_user`，校验模型返回的引用并执行风险门控。每次结果写入 `classification_records`，用于校准和纠错分析。
 
-负责判断归属。
+### `extract_service`
 
-输入：
+从单条原始输入提取 summary、todos、evidences、timeline events、decisions、hypotheses、entities 和 tags。当前持久化前五类结构和 tags；hypotheses、entities 暂只保留在返回结果中。
 
-- 用户输入。
-- 当前焦点 bucket。
-- 活跃 buckets。
+### `bucket_service`
 
-输出：
+负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。
 
-- action。
-- bucket_id 或新 bucket 信息。
-- confidence。
-- reason。
+### `correction_service`
 
-### extract_service
+支持移动指定或最近 Entry，并同步移动其派生记录；写入 Correction 前后快照，重建两个 Bucket 的摘要，并把关联分类审计标记为已纠错。
 
-负责结构化提取。
+### `search_service` 与 `view_service`
 
-输出：
+搜索服务使用 SQLite 关键词匹配标题、摘要、标签和 Entry 原文。展示服务将 ORM/Pydantic 对象转换为稳定的 UI 数据结构，避免业务逻辑散落在 Streamlit 回调中。
 
-- summary
-- todos
-- evidences
-- timeline_events
-- decisions
-- hypotheses
-- entities
-- tags
+## 4. 当前焦点与候选范围
 
-### bucket_service
+当前焦点来自用户最近归档或在 UI 中选择的 Bucket。分类时只发送当前焦点和最近活跃的有限候选，默认上限为 20。这样既减少 Token 消耗，也避免把完整历史暴露给每次分类调用。更旧内容通过搜索按需找回。
 
-负责数据库写入和读取。
-
-函数：
-
-```python
-create_bucket(...)
-append_entry(...)
-move_entry(...)
-merge_buckets(...)
-get_bucket_detail(...)
-list_active_buckets(...)
-```
-
-### correction_service
-
-负责自然语言纠错。
-
-第一版先支持规则 + LLM 混合：
-
-1. 规则判断“刚才那条”“不要放到”“改成”。
-2. 复杂命令再用 LLM 提取操作意图。
-
-### search_service
-
-负责历史检索。
-
-MVP：SQLite LIKE 搜索。
-
-后续：向量检索 + 关键词混合检索。
-
-### view_service
-
-负责把内部结构转换成用户可读展示。
-
-避免把 UI 文案散落在业务逻辑里。
-
-## 5. 当前焦点 bucket
-
-MVP 可用简单策略：
-
-- 最近一次成功归档的 bucket 就是 current_focus_bucket。
-- 当用户打开某个 bucket 详情，也可以把它设为 current_focus_bucket。
-- 用户说“继续这个”时优先使用 current_focus_bucket。
-
-后续可以增加 session_state 表。
-
-## 6. 低置信度处理
+## 5. 风险门控
 
 ```text
-confidence < 0.45
-    不写入数据库
-    返回候选 bucket 和问题
+confidence >= 0.85 且候选唯一 → 自动归档
+0.55 <= confidence < 0.85       → 用户确认
+confidence < 0.55               → 用户确认
+多个相似候选                    → 用户确认
 ```
 
-用户确认后再归档。
+阈值来自 `.env`，只是保守初值。`confidence` 是模型主观信号，不是正确概率；必须用固定标注集、实际纠错和高错误代价案例持续校准。低置信度输入可写分类审计，但不得在确认前污染正式 Bucket。
 
-MVP 可先简化：低置信度也先写入一个 `inbox` bucket，但提示用户确认。更稳妥的做法是不自动归档。
+## 6. 事务与错误处理
 
-## 7. 错误处理
+- OpenAI 配置或调用失败：明确报错，不伪造归档结果。
+- 输出不符合 Schema：有限重试后失败。
+- Bucket ID 无效：降级为确认，不进入持久化流程。
+- 数据库任一步失败：自动归档事务整体回滚。
+- 用户确认后：通过独立确认入口重新提取并保存。
 
-必须处理：
+MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 
-- OpenAI API 调用失败。
-- LLM 返回格式不符合 schema。
-- 数据库写入失败。
-- 用户输入为空。
-- bucket 不存在。
+## 7. 可观测性与评估
 
-建议策略：
+当前持久化分类动作、分数、原因、候选、焦点、Prompt 版本、模型名和纠错状态。固定 50 条标注集负责计算分类准确率、自动归档准确率、询问召回率与严重误合并数。真实模型评估使用独立命令，普通 Pytest 全部 mock LLM。
 
-- API 失败：保存原文到 inbox 或提示重试。
-- JSON 解析失败：重试一次；仍失败则保存原文但不结构化。
-- DB 失败：不要假装成功，明确提示。
-
-## 8. 可观测性
-
-即使是 MVP，也建议记录：
-
-- 每次分类的 action、confidence、reason。
-- 每次 LLM 调用耗时。
-- 每次纠错。
-- 每次搜索 query。
-
-先用日志文件即可。
+后续可增加调用耗时、Token、成本、搜索 query、摘要重建版本和用户确认选择等指标。

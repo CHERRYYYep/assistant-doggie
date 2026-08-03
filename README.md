@@ -1,87 +1,72 @@
 # Personal Work Memory Agent
 
-一个面向个人工作的碎片信息整理 Agent。用户只需要把日志、想法、会议结论、实验记录、排障证据等内容丢进一个输入框，系统自动判断应该归档到哪个 `bucket`，并沉淀为可追踪、可复用的工作资产。
+一个面向个人工作的长期事务记忆 Agent。用户把日志、想法、会议结论、实验记录和排障证据输入系统后，Agent 会判断应追加到已有 `Bucket`、创建新 `Bucket`，还是先请求用户确认，并把原文与结构化结果保存为可追溯记忆。
 
-> 当前仓库处于 **MVP 设计与脚手架阶段**。核心产品思路见 [`agent-product-thinking.md`](./agent-product-thinking.md)，开发落地文档见 [`docs/`](./docs)。
+> 当前仓库已完成本地单用户 MVP：分类评估、风险门控、结构化提取、事务归档、纠错、Streamlit 界面和 SQLite 关键词搜索均已实现。
 
 ## 核心理念
 
-- 用户体验：一个输入框，不要求用户手动建文件夹或整理笔记。
-- 系统内部：维护多个持续存在的工作对象 bucket。
-- 自动归档：高置信度直接归档，中置信度先归档再提示可修改，低置信度询问用户。
-- 结构化沉淀：把碎片输入变成摘要、时间线、证据、TODO、决策和结论。
-- 可纠错：用户可以用自然语言纠正分类、移动内容、合并 bucket。
+- 一个输入框，不要求用户预先整理文件夹。
+- Bucket 表示持续存在的事务上下文，不是无限增长的聊天记录。
+- 仅高置信度且候选唯一时自动归档；其他情况先确认。
+- 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline 和 Decision。
+- 所有派生信息可追溯到原文，误归档可移动并保留纠错记录。
+- `confidence` 是待校准的风险信号，不等于真实正确概率。
 
-## MVP 范围
+## MVP 能力
 
-第一版只验证一个闭环：
+1. 从当前焦点和活跃 Bucket 中构造有限候选。
+2. 使用 OpenAI Structured Outputs 分类和提取。
+3. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
+4. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
+5. 支持确认追加、确认新建和移动最近 Entry。
+6. 在 Streamlit 中查看详情并通过关键词搜索历史。
 
-1. 用户输入一段文本。
-2. 系统自动选择已有 bucket 或新建 bucket。
-3. 系统提取结构化信息。
-4. 系统保存原始输入和结构化结果。
-5. 系统反馈“放到了哪里”。
-6. 用户可以查看 bucket 的摘要、时间线、TODO、证据和原始记录。
+## 技术栈与目录
 
-## 推荐技术栈
+- Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
+- `app/`：模型、Schema、Prompt、LLM 封装和业务服务。
+- `ui/streamlit_app.py`：本地交互界面。
+- `tests/`：单元、集成、UI 测试与固定评估样例。
+- `docs/`：产品、架构、数据模型、测试和开发说明。
 
-面向新手，优先选择简单、可本地运行、易调试的方案：
-
-- Python
-- SQLite
-- SQLAlchemy
-- Pydantic
-- OpenAI API Structured Outputs
-- Streamlit
-- Pytest
-
-后续再升级到 FastAPI、PostgreSQL、向量检索、多端同步和多用户系统。
-
-## 目录结构
-
-```text
-.
-├── agent-product-thinking.md        # 原始产品思路
-├── README.md                        # 项目入口说明
-├── requirements.txt                 # Python 依赖建议
-├── .env.example                     # 环境变量示例
-├── docs/                            # 产品、架构、开发指导文档
-├── app/                             # 后端/Agent 逻辑脚手架
-├── ui/                              # Streamlit UI 脚手架
-└── tests/                           # 测试与样例输入
-```
-
-## 文档阅读顺序
-
-新手建议按顺序读：
-
-1. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
-2. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：第一版具体功能。
-3. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据怎么存。
-4. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：系统怎么流转。
-5. [`docs/COMPETITIVE_RESEARCH.md`](./docs/COMPETITIVE_RESEARCH.md)：参考产品和开源项目。
-6. [`docs/DESIGN_RECOMMENDATIONS.md`](./docs/DESIGN_RECOMMENDATIONS.md)：结合竞品后的设计建议。
-7. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：一步一步怎么开发。
-8. [`docs/PROMPTS.md`](./docs/PROMPTS.md)：分类与提取 Prompt。
-9. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：如何验收。
-10. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线图。
-
-## 快速开始，待实现
-
-当前只提供骨架。后续实现后，预期启动方式：
+## 快速开始
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# 在 .env 中填写 OPENAI_API_KEY 和可用的 OPENAI_MODEL
+python -m app.main
 streamlit run ui/streamlit_app.py
 ```
 
-## 当前开发原则
+运行自动化测试和规则分类基线：
 
-- 先做本地单用户 MVP，不急着做登录、权限、同步。
-- 先用 SQLite，不急着上复杂数据库。
-- 先做文本输入，不急着做截图、文件、语音。
-- 先做一个主流程，不急着做多 Agent。
-- 每个模块必须可单独测试。
+```bash
+pytest -q
+python -m app.evaluation --baseline
+```
+
+少量真实模型分类评估会产生 API 调用：
+
+```bash
+python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
+```
+
+## 文档阅读顺序
+
+1. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
+2. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
+3. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
+4. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
+5. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
+6. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
+7. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
+8. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
+9. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+
+## 当前边界
+
+MVP 暂不包含多用户、云同步、附件、向量检索和复杂 Agent 编排。`hypotheses` 与 `entities` 已能由 LLM 输出，但尚未持久化；滚动摘要是可重建缓存，原始 Entry 始终是事实来源。

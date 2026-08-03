@@ -175,14 +175,31 @@ MVP 目标：
 
 LLM 输出不稳定，所以测试分两层：
 
-1. mock LLM 输出，测试业务逻辑。
-2. 少量真实 LLM 调用，测试 prompt 效果。
+1. mock LLM 输出，测试业务逻辑；
+2. 少量真实 LLM 调用，测试 Prompt 和模型效果。
 
-不要让普通单元测试依赖真实 API，否则测试慢且花钱。
+不要让普通单元测试依赖真实 API，否则测试慢且花钱。常用命令：
+
+```bash
+pytest -q
+python -m app.evaluation --baseline
+python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
+```
+
+前两条不调用真实 API。最后一条会使用 `.env` 中的 Key 和模型、产生 API 费用，并把预测保存到临时文件。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。
 
 ## 6. 回归测试清单
 
-每次改 prompt 或分类逻辑后，至少手动跑：
+自动化映射：
+
+- `tests/test_llm.py`：Structured Outputs 封装和错误分支；
+- `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
+- `tests/test_archive_service.py`、`tests/test_extraction_and_bucket_memory.py`：事务归档和长期记忆；
+- `tests/test_correction_service.py`：纠错移动和审计；
+- `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
+- `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
+
+每次改 Prompt 或分类逻辑后，至少手动跑：
 
 - incident 新建。
 - incident 追加。
