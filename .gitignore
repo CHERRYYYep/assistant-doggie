@@ -36,6 +36,8 @@ dist/
 # Application runtime
 *.log
 .streamlit/secrets.toml
+classification-live-report.json
+extraction-live-report.json
 
 # OS and editors
 .DS_Store

@@ -6,6 +6,7 @@ from app.evaluation import (
     ClassificationPrediction,
     evaluate_classification,
     load_classification_cases,
+    load_predictions,
 )
 
 
@@ -111,3 +112,33 @@ def test_keyword_baseline_does_not_read_expected_labels():
 
     assert changed[0].action == original[0].action
     assert changed[0].bucket_id == original[0].bucket_id
+
+
+def test_classification_predictions_loader_accepts_versioned_report(tmp_path):
+    path = tmp_path / "classification-report.json"
+    path.write_text(
+        json.dumps(
+            {
+                "model_name": "test-model",
+                "prompt_version": "classification-v1",
+                "predictions": [
+                    {
+                        "id": "case-1",
+                        "action": "ask_user",
+                        "confidence": 0.4,
+                        "should_ask_user": True,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert load_predictions(path) == [
+        ClassificationPrediction(
+            id="case-1",
+            action="ask_user",
+            confidence=0.4,
+            should_ask_user=True,
+        )
+    ]

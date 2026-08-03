@@ -114,9 +114,15 @@ def load_classification_cases(path: str | Path) -> list[ClassificationCase]:
 
 
 def load_predictions(path: str | Path) -> list[ClassificationPrediction]:
+    """Load a prediction array or a versioned live-evaluation report."""
+
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        data = data.get("predictions")
     if not isinstance(data, list):
-        raise ValueError("prediction file must be a JSON array")
+        raise ValueError(
+            "prediction file must be a JSON array or contain a predictions array"
+        )
     return [ClassificationPrediction.model_validate(item) for item in data]
 
 

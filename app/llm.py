@@ -39,9 +39,15 @@ def _default_client() -> Any:
     if not os.getenv("OPENAI_API_KEY"):
         raise LLMConfigurationError("OPENAI_API_KEY is not configured")
 
-    from openai import OpenAI
+    try:
+        from openai import OpenAI
 
-    return OpenAI()
+        return OpenAI()
+    except Exception as exc:
+        raise LLMConfigurationError(
+            "OpenAI client initialization failed; check API and proxy configuration: "
+            f"{exc}"
+        ) from exc
 
 
 def _refusal_text(response: Any) -> str | None:
@@ -50,6 +56,29 @@ def _refusal_text(response: Any) -> str | None:
             if getattr(content, "type", None) == "refusal":
                 return getattr(content, "refusal", None) or "request refused"
     return None
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Return whether another model call could reasonably succeed.
+
+    Authentication, permission, malformed-request, missing-resource, and schema
+    contract HTTP errors require a configuration or code change. Retrying them
+    immediately wastes latency and API quota. Timeouts, connection errors, rate
+    limits, server errors, incomplete output, and local validation failures may
+    be transient and remain eligible for the small retry budget.
+    """
+
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if status_code in {408, 409, 429} or status_code >= 500:
+            return True
+        if 400 <= status_code < 500:
+            return False
+
+    if isinstance(exc, LLMResponseError) and "refused" in str(exc).casefold():
+        return False
+
+    return True
 
 
 def parse_with_schema(
@@ -74,11 +103,13 @@ def parse_with_schema(
     if max_retries < 0:
         raise ValueError("max_retries must be at least 0")
 
-    active_client = client or _default_client()
     active_model = configured_model(model)
+    active_client = client or _default_client()
     last_error: Exception | None = None
+    attempts_made = 0
 
     for attempt in range(max_retries + 1):
+        attempts_made = attempt + 1
         try:
             response = active_client.responses.parse(
                 model=active_model,
@@ -109,11 +140,11 @@ def parse_with_schema(
             raise
         except Exception as exc:
             last_error = exc
-            if attempt >= max_retries:
+            if attempt >= max_retries or not _is_retryable(exc):
                 break
             if retry_delay_seconds > 0:
                 time.sleep(retry_delay_seconds)
 
     raise LLMResponseError(
-        f"structured model call failed after {max_retries + 1} attempt(s): {last_error}"
+        f"structured model call failed after {attempts_made} attempt(s): {last_error}"
     ) from last_error

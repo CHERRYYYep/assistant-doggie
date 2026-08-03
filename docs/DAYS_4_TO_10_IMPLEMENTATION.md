@@ -32,7 +32,7 @@ python -m app.evaluation --baseline
 
 ## 3. 第五天：Structured Outputs 与分类
 
-`app/llm.py` 统一封装 `client.responses.parse(..., text_format=PydanticSchema)`，处理配置缺失、响应截断、拒绝、Schema 校验和有限重试。普通测试通过注入 fake client 隔离真实 API。
+`app/llm.py` 统一封装 `client.responses.parse(..., text_format=PydanticSchema)`，处理配置缺失、客户端初始化失败、响应截断、拒绝、Schema 校验和有限重试。普通测试通过注入 fake client 隔离真实 API。HTTP 400/401/403/404/422 等需要修正请求或配置的错误不会盲目重试；超时、连接失败、429、5xx、不完整输出和暂时性的校验失败才使用有限重试预算。这可以避免无效 Key 或错误代理配置重复消耗时间和请求额度。
 
 `app/services/classify_service.py` 只向模型提供当前焦点和有限的活跃 Bucket，并在模型返回后再次验证 Bucket ID。模型编造或引用无效 ID 时，系统不会写库，而是降级为 `ask_user`。这种“双重校验”很重要：Structured Outputs 保证字段形状正确，但不能保证业务引用真实存在。
 
@@ -70,6 +70,8 @@ tags            → Bucket.tags
 
 当前 `hypotheses` 和 `entities` 已存在于输出 Schema，但尚未持久化，应在确定查询方式和生命周期后再增加表，避免过早扩张数据模型。
 
+为避免“JSON 能解析”被误认为“内容正确”，新增 `tests/fixtures/extraction_cases.json`、`app/extraction_evaluation.py` 和 `app/live_extraction_evaluation.py`。固定案例由人编写必需事实术语和明确禁止出现的事实；评估器分别统计 Summary、Todo、Evidence、Timeline、Decision 的术语召回，并标记禁用内容和原文中不存在的数字。版本化报告保存参考日期、模型名、Prompt 版本和完整 `ExtractionResult`，便于人工逐条判断语义忠实性。数字检查只是高风险提示：它不能识别单位变化、错误因果关系或无数字的编造，因此不产生一个看似精确的“总体可信分数”。
+
 ## 6. 第八天：事务归档与纠错
 
 `archive_user_input()` 将分类、审计、提取和写库串成闭环。自动归档时，Bucket、Entry、派生记录和分类审计位于同一事务；任一步失败都不会返回成功。低置信度输入只保存审计记录，不创建正式 Entry。
@@ -104,14 +106,27 @@ git diff --check
 真实模型评估与普通 Pytest 分离，避免测试不稳定和意外 API 费用：
 
 ```bash
-python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
+python -m app.live_evaluation \
+  --limit 3 \
+  --output /tmp/classification-live-report.json
+python -m app.live_extraction_evaluation \
+  --limit 3 \
+  --reference-date 2026-08-03 \
+  --output /tmp/extraction-live-report.json
+```
+
+两种报告都保存 `generated_at`、`model_name`、`prompt_version`、案例路径、预测和指标；提取报告额外保存 `reference_date`。这样不同日期、模型或 Prompt 的结果不会被混在一起。已有报告可以离线重新计算：
+
+```bash
+python -m app.evaluation /tmp/classification-live-report.json
+python -m app.extraction_evaluation /tmp/extraction-live-report.json
 ```
 
 ## 9. 当前边界与下一步
 
 - 先用真实分类结果校准阈值，不把 LLM 自报分数直接解释为概率。
 - 为 `hypotheses`、`entities`、Todo 状态合并和决策替代关系设计持久化策略。
-- 增加摘要质量与事实忠实性评估，而不只验证 JSON 合法。
+- 扩充提取标注集并加入人工 Precision、事实忠实性和因果关系审查；当前自动评估主要覆盖必需术语召回和高风险编造提示。
 - 用真实纠错数据统计 Bucket 混淆对，改进候选召回和 Prompt。
 - 数据增长后再引入语义检索、冷热记忆和摘要快照。
 
@@ -120,10 +135,10 @@ python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
 已完成：
 
 ```text
-Pytest：40 passed
+Pytest：52 passed
 Python compileall：通过
 git diff --check：通过
 50 条规则分类基线：成功执行
 ```
 
-真实模型分类已按 `--limit 3` 尝试，但 OpenAI 返回 HTTP 401 `invalid_api_key`，因此没有生成真实预测文件，也没有继续执行真实提取。修复 `.env` 中的 API Key 后，应重新运行第 8 节命令；在成功前，不能把规则基线或 mock 测试表述为真实 LLM 准确率。
+2026-08-03 已再次执行真实分类和真实提取验收。保留 `ALL_PROXY=socks://127.0.0.1:7890/` 时，当前 httpx/OpenAI 客户端无法使用该代理形式；取消 `ALL_PROXY`、保留本机 HTTP/HTTPS 代理后，两项调用均到达 OpenAI，但返回 HTTP 401 `invalid_api_key`。改进后的 LLM 封装将 401 判为不可重试错误，因此每项只尝试一次，也没有生成不完整的报告文件。修复 `.env` 中的 API Key 后，应重新运行第 8 节两条真实评估命令；成功前不能把规则基线或 mock 测试表述为真实 LLM 准确率。

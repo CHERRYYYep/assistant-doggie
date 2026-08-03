@@ -42,18 +42,26 @@ python -m app.main
 streamlit run ui/streamlit_app.py
 ```
 
-运行自动化测试和规则分类基线：
+运行自动化测试和透明规则分类基线：
 
 ```bash
 pytest -q
 python -m app.evaluation --baseline
 ```
 
-少量真实模型分类评估会产生 API 调用：
+少量真实模型分类与提取评估会产生 API 调用：
 
 ```bash
-python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
+python -m app.live_evaluation \
+  --limit 3 \
+  --output /tmp/classification-live-report.json
+python -m app.live_extraction_evaluation \
+  --limit 3 \
+  --reference-date 2026-08-03 \
+  --output /tmp/extraction-live-report.json
 ```
+
+报告会保留模型名、Prompt 版本、生成时间、完整结构化输出和指标。分类报告可重新交给 `app.evaluation` 计算指标；提取报告可交给 `app.extraction_evaluation` 检查必需事实遗漏、禁用事实和原文中不存在的数字。自动检查只是人工语义审查的辅助，不能独立证明提取没有幻觉。
 
 ## 文档阅读顺序
 

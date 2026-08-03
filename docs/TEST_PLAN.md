@@ -160,11 +160,22 @@ MVP 目标：
 
 ### 结构化提取
 
-分别检查 Summary 忠实性、Todo Precision/Recall、Evidence 事实准确性、Timeline 时间保持和严重编造。MVP 目标：
+分别检查 Summary 忠实性、Todo Precision/Recall、Evidence 事实准确性、Timeline 时间保持和严重编造。`tests/fixtures/extraction_cases.json` 保存人工定义的必需术语与禁止事实；`app.extraction_evaluation` 自动计算各字段术语召回，并标记禁止事实和原文不存在的数字。
+
+自动检查不能判断改写后的语义、因果关系、否定表达、单位变化或无数字编造。每份真实报告仍需人工逐条回答：
+
+1. Summary 是否只包含原文事实；
+2. Todo 是否真的是未完成动作，是否有遗漏或误报；
+3. Evidence 是否能直接在原文定位；
+4. Decision 与 Hypothesis 是否被混淆；
+5. 时间表达是否被错误确定化。
+
+MVP 目标：
 
 - 提取内容人工可用率 >= 80%。
 - Evidence 严重编造为 0。
 - Todo Precision >= 85%，Recall >= 70%。
+- 固定必需事实术语召回率单独按字段报告，不合成为虚假的“总体置信度”。
 
 ### 纠错与搜索
 
@@ -183,10 +194,23 @@ LLM 输出不稳定，所以测试分两层：
 ```bash
 pytest -q
 python -m app.evaluation --baseline
-python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
+python -m app.live_evaluation \
+  --limit 3 \
+  --output /tmp/classification-live-report.json
+python -m app.live_extraction_evaluation \
+  --limit 3 \
+  --reference-date 2026-08-03 \
+  --output /tmp/extraction-live-report.json
 ```
 
-前两条不调用真实 API。最后一条会使用 `.env` 中的 Key 和模型、产生 API 费用，并把预测保存到临时文件。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。
+前两条不调用真实 API。后两条会使用 `.env` 中的 Key 和模型、产生 API 费用。报告必须保存模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。
+
+离线复算已有报告：
+
+```bash
+python -m app.evaluation /tmp/classification-live-report.json
+python -m app.extraction_evaluation /tmp/extraction-live-report.json
+```
 
 ## 6. 回归测试清单
 
@@ -194,6 +218,8 @@ python -m app.live_evaluation --limit 3 --output /tmp/classification-live.json
 
 - `tests/test_llm.py`：Structured Outputs 封装和错误分支；
 - `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
+- `tests/test_live_evaluation.py`：真实分类运行器的版本化元数据和报告落盘；
+- `tests/test_extraction_evaluation.py`、`tests/test_live_extraction_evaluation.py`：提取遗漏、编造风险提示和真实报告结构；
 - `tests/test_archive_service.py`、`tests/test_extraction_and_bucket_memory.py`：事务归档和长期记忆；
 - `tests/test_correction_service.py`：纠错移动和审计；
 - `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
