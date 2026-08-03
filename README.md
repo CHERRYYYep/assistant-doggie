@@ -86,15 +86,16 @@ python -m app.live_extraction_evaluation \
 
 ## 文档阅读顺序
 
-1. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
-2. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
-3. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
-4. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
-5. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
-6. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
-7. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
-8. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
-9. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+1. [`docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md`](./docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md)：综合产品文档与后续完成规划。
+2. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
+3. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
+4. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
+5. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
+6. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
+7. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
+8. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
+9. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
+10. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
 
 ## 当前边界
 
