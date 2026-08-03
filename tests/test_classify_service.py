@@ -4,6 +4,7 @@ from app.schemas import BucketView, ClassificationResult
 from app.services.classify_service import (
     ConfidencePolicy,
     apply_confidence_gate,
+    apply_low_information_reference_gate,
     build_bucket_candidates,
     classify_input,
 )
@@ -72,3 +73,39 @@ def test_confidence_gate_allows_high_unique_and_blocks_medium():
     gated = apply_confidence_gate(medium)
     assert gated.action == "ask_user"
     assert gated.should_ask_user is True
+
+
+def test_low_information_reference_gate_blocks_vague_high_confidence_append():
+    result = ClassificationResult(
+        action="append_existing",
+        bucket_id="payment",
+        confidence=0.97,
+        reason="看起来和支付相关。",
+    )
+
+    gated = apply_low_information_reference_gate(
+        "刚才那个支付相关的继续处理",
+        result,
+    )
+
+    assert gated.action == "ask_user"
+    assert gated.should_ask_user is True
+    assert gated.candidate_bucket_ids == ["payment"]
+    assert "已阻止高风险自动合并" in gated.reason
+
+
+def test_low_information_reference_gate_allows_concrete_status_update():
+    result = ClassificationResult(
+        action="append_existing",
+        bucket_id="payment",
+        confidence=0.97,
+        reason="明确延续支付问题。",
+    )
+
+    gated = apply_low_information_reference_gate(
+        "刚才那个支付问题恢复了",
+        result,
+    )
+
+    assert gated.action == "append_existing"
+    assert gated.bucket_id == "payment"

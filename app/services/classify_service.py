@@ -20,6 +20,51 @@ from app.schemas import BucketView, ClassificationResult
 
 SchemaParser = Callable[[str, str, type[BaseModel]], BaseModel]
 
+_VAGUE_REFERENCE_MARKERS = (
+    "刚才那个",
+    "刚才这个",
+    "那个问题",
+    "这个问题",
+    "那个事情",
+    "这个事情",
+    "那块",
+    "这块",
+    "相关的",
+)
+_LOW_INFORMATION_ACTION_MARKERS = (
+    "继续处理",
+    "再补一点",
+    "补一点",
+    "补一下",
+    "补充一下",
+    "跟进一下",
+    "处理一下",
+    "看一下",
+)
+_CONCRETE_FACT_MARKERS = (
+    "恢复",
+    "完成",
+    "决定",
+    "确认",
+    "回复说",
+    "导致",
+    "原因",
+    "失败",
+    "报错",
+    "错误率",
+    "日志",
+    "影响",
+    "降到",
+    "升到",
+    "验证",
+    "上线",
+    "回滚",
+    "阻塞",
+    "502",
+    "P99",
+    "QPS",
+)
+
 
 @dataclass(frozen=True)
 class ConfidencePolicy:
@@ -177,6 +222,44 @@ def apply_confidence_gate(
     )
 
 
+def _contains_digit_or_percent(text: str) -> bool:
+    return any(character.isdigit() or character == "%" for character in text)
+
+
+def _is_low_information_reference(text: str) -> bool:
+    """Detect vague continuations that should not auto-merge into memory."""
+
+    has_vague_reference = any(marker in text for marker in _VAGUE_REFERENCE_MARKERS)
+    has_low_information_action = any(
+        marker in text for marker in _LOW_INFORMATION_ACTION_MARKERS
+    )
+    has_concrete_fact = _contains_digit_or_percent(text) or any(
+        marker in text for marker in _CONCRETE_FACT_MARKERS
+    )
+    return has_vague_reference and has_low_information_action and not has_concrete_fact
+
+
+def apply_low_information_reference_gate(
+    text: str,
+    result: ClassificationResult,
+) -> ClassificationResult:
+    """Ask the user before auto-merging vague, low-information continuations."""
+
+    if result.action != "append_existing" or not _is_low_information_reference(text):
+        return result
+
+    likely_ids = list(result.candidate_bucket_ids)
+    if result.bucket_id and result.bucket_id not in likely_ids:
+        likely_ids.insert(0, result.bucket_id)
+
+    return _ask_user_result(
+        result,
+        question="输入只有模糊指代和低信息动作，请确认要追加到哪个 Bucket。",
+        candidate_ids=likely_ids,
+        reason_suffix="输入缺少可核验事实、状态变化、决策或待办，已阻止高风险自动合并。",
+    )
+
+
 def classify_input(
     text: str,
     active_buckets: Sequence[Bucket | BucketView],
@@ -211,6 +294,7 @@ def classify_input(
     )
     result = ClassificationResult.model_validate(parsed)
     result = validate_candidate_reference(result, candidates)
+    result = apply_low_information_reference_gate(cleaned, result)
     return apply_confidence_gate(result, policy=policy)
 
 
