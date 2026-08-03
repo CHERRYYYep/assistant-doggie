@@ -16,7 +16,7 @@ from app.evaluation import (
     evaluate_classification,
     load_classification_cases,
 )
-from app.llm import configured_model
+from app.llm import LLMApiMode, configured_endpoint, configured_model
 from app.prompts import CLASSIFICATION_PROMPT_VERSION
 from app.schemas import BucketView, ClassificationResult
 from app.services.classify_service import classify_input
@@ -31,6 +31,9 @@ class LiveClassificationReport(BaseModel):
 
     generated_at: datetime
     model_name: str
+    api_site: str
+    api_base_url: str
+    api_mode: LLMApiMode
     prompt_version: str
     cases_path: str
     case_count: int
@@ -52,6 +55,7 @@ def run_live_classification(
         raise ValueError("at least one classification case is required")
 
     active_model = configured_model(model_name)
+    active_endpoint = configured_endpoint()
     active_time = generated_at or datetime.now(timezone.utc)
     predictions: list[ClassificationPrediction] = []
 
@@ -89,6 +93,9 @@ def run_live_classification(
     return LiveClassificationReport(
         generated_at=active_time,
         model_name=active_model,
+        api_site=active_endpoint.site,
+        api_base_url=active_endpoint.base_url,
+        api_mode=active_endpoint.api_mode,
         prompt_version=CLASSIFICATION_PROMPT_VERSION,
         cases_path=cases_path,
         case_count=len(cases),

@@ -203,7 +203,7 @@ python -m app.live_extraction_evaluation \
   --output /tmp/extraction-live-report.json
 ```
 
-前两条不调用真实 API。后两条会使用 `.env` 中的 Key 和模型、产生 API 费用。报告必须保存模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。
+前两条不调用真实 API。后两条会使用 `.env` 中选定站点的 Base URL、Key、API 模式和模型，并可能产生费用。报告必须保存站点名、Base URL、API 模式、模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。中转站需分别验证其是否支持 Responses API 或 Chat Completions Structured Outputs。
 
 离线复算已有报告：
 

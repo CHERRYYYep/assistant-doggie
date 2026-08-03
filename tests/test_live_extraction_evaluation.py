@@ -10,7 +10,10 @@ from app.prompts import EXTRACTION_PROMPT_VERSION
 from app.schemas import ExtractionResult, TimelineEventExtract
 
 
-def test_live_extraction_report_keeps_raw_output_metrics_and_metadata(tmp_path):
+def test_live_extraction_report_keeps_raw_output_metrics_and_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_SITE", "test-relay")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_MODE", "chat_completions")
     case = ExtractionCase(
         id="payment",
         input="支付回调 10:20 开始失败，第三方返回 502，待补复盘。",
@@ -48,6 +51,9 @@ def test_live_extraction_report_keeps_raw_output_metrics_and_metadata(tmp_path):
     assert report.generated_at == generated_at
     assert report.reference_date == reference_date
     assert report.model_name == "test-model"
+    assert report.api_site == "test-relay"
+    assert report.api_base_url == "https://relay.example.com/v1"
+    assert report.api_mode == "chat_completions"
     assert report.prompt_version == EXTRACTION_PROMPT_VERSION
     assert report.cases_path == "fixtures/extraction.json"
     assert report.case_count == 1

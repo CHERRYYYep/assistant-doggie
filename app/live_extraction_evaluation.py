@@ -16,7 +16,7 @@ from app.extraction_evaluation import (
     evaluate_extractions,
     load_extraction_cases,
 )
-from app.llm import configured_model
+from app.llm import LLMApiMode, configured_endpoint, configured_model
 from app.prompts import EXTRACTION_PROMPT_VERSION
 from app.schemas import ExtractionResult
 from app.services.extract_service import extract_info
@@ -32,6 +32,9 @@ class LiveExtractionReport(BaseModel):
     generated_at: datetime
     reference_date: date
     model_name: str
+    api_site: str
+    api_base_url: str
+    api_mode: LLMApiMode
     prompt_version: str
     cases_path: str
     case_count: int
@@ -54,6 +57,7 @@ def run_live_extraction(
         raise ValueError("at least one extraction case is required")
 
     active_model = configured_model(model_name)
+    active_endpoint = configured_endpoint()
     active_date = reference_date or date.today()
     active_time = generated_at or datetime.now(timezone.utc)
     predictions: list[ExtractionPrediction] = []
@@ -71,6 +75,9 @@ def run_live_extraction(
         generated_at=active_time,
         reference_date=active_date,
         model_name=active_model,
+        api_site=active_endpoint.site,
+        api_base_url=active_endpoint.base_url,
+        api_mode=active_endpoint.api_mode,
         prompt_version=EXTRACTION_PROMPT_VERSION,
         cases_path=cases_path,
         case_count=len(cases),

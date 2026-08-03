@@ -37,13 +37,31 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-然后在 `.env` 填写：
+然后在 `.env` 填写。使用官方 OpenAI 时：
 
 ```text
-OPENAI_API_KEY=你的 key
-OPENAI_MODEL=你可用的模型
+OPENAI_SITE=official
+OPENAI_API_MODE=responses
+OPENAI_API_KEY=你的官方Key
+OPENAI_MODEL=官方账号可用的模型
 DATABASE_URL=sqlite:///./work_memory.db
 ```
+
+使用 OpenAI 兼容中转站时：
+
+```text
+OPENAI_SITE=my-relay
+OPENAI_BASE_URL=https://relay.example.com/v1
+OPENAI_API_MODE=responses
+OPENAI_API_KEY=中转站签发的Key
+OPENAI_MODEL=中转站支持的模型名
+DATABASE_URL=sqlite:///./work_memory.db
+```
+
+中转站不支持 Responses API 时，将 `OPENAI_API_MODE` 改为
+`chat_completions`。Base URL 应是 API 根路径，不能直接填
+`/responses` 或 `/chat/completions`。远程站点必须使用 HTTPS；仅本机服务
+允许 HTTP。不要把真实 Key 写入代码、文档或 Git。
 
 ### 1.4 运行占位 UI
 
@@ -189,7 +207,10 @@ def parse_with_schema(
     ...
 ```
 
-统一处理 API 配置、超时、拒绝、截断、Schema 校验失败和有限重试。业务服务中不要直接创建 OpenAI Client。
+统一处理站点选择、Base URL、API 模式、超时、拒绝、截断、Schema
+校验失败和有限重试。业务服务中不要直接创建 OpenAI Client。官方站点固定
+使用 `https://api.openai.com/v1`；自定义站点由 `OPENAI_BASE_URL` 指定，并可在
+`responses` 与 `chat_completions` 两种结构化调用模式间选择。
 
 ### 5.2 构造候选 Bucket
 

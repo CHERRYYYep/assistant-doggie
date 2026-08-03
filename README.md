@@ -16,7 +16,7 @@
 ## MVP 能力
 
 1. 从当前焦点和活跃 Bucket 中构造有限候选。
-2. 使用 OpenAI Structured Outputs 分类和提取。
+2. 使用 OpenAI 官方或兼容中转站的 Structured Outputs 分类和提取。
 3. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
 4. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
 5. 支持确认追加、确认新建和移动最近 Entry。
@@ -37,10 +37,31 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# 在 .env 中填写 OPENAI_API_KEY 和可用的 OPENAI_MODEL
+# 在 .env 中选择 API 站点，并填写该站点的 Key 与模型
 python -m app.main
 streamlit run ui/streamlit_app.py
 ```
+
+API 站点通过 `.env` 选择。官方 OpenAI 使用：
+
+```text
+OPENAI_SITE=official
+OPENAI_API_MODE=responses
+OPENAI_API_KEY=你的官方Key
+OPENAI_MODEL=该站点可用的模型
+```
+
+OpenAI 兼容中转站使用：
+
+```text
+OPENAI_SITE=my-relay
+OPENAI_BASE_URL=https://relay.example.com/v1
+OPENAI_API_MODE=responses
+OPENAI_API_KEY=中转站签发的Key
+OPENAI_MODEL=中转站支持的模型名
+```
+
+如果中转站没有实现 `/responses`，将 `OPENAI_API_MODE` 改为 `chat_completions`。`OPENAI_BASE_URL` 应填写 API 根路径（通常以 `/v1` 结尾），不要填写具体的 `/responses` 或 `/chat/completions` 路径。修改配置后重启应用。
 
 运行自动化测试和透明规则分类基线：
 
@@ -61,7 +82,7 @@ python -m app.live_extraction_evaluation \
   --output /tmp/extraction-live-report.json
 ```
 
-报告会保留模型名、Prompt 版本、生成时间、完整结构化输出和指标。分类报告可重新交给 `app.evaluation` 计算指标；提取报告可交给 `app.extraction_evaluation` 检查必需事实遗漏、禁用事实和原文中不存在的数字。自动检查只是人工语义审查的辅助，不能独立证明提取没有幻觉。
+报告会保留 API 站点、Base URL、接口模式、模型名、Prompt 版本、生成时间、完整结构化输出和指标。分类报告可重新交给 `app.evaluation` 计算指标；提取报告可交给 `app.extraction_evaluation` 检查必需事实遗漏、禁用事实和原文中不存在的数字。自动检查只是人工语义审查的辅助，不能独立证明提取没有幻觉。
 
 ## 文档阅读顺序
 

@@ -32,7 +32,7 @@ python -m app.evaluation --baseline
 
 ## 3. 第五天：Structured Outputs 与分类
 
-`app/llm.py` 统一封装 `client.responses.parse(..., text_format=PydanticSchema)`，处理配置缺失、客户端初始化失败、响应截断、拒绝、Schema 校验和有限重试。普通测试通过注入 fake client 隔离真实 API。HTTP 400/401/403/404/422 等需要修正请求或配置的错误不会盲目重试；超时、连接失败、429、5xx、不完整输出和暂时性的校验失败才使用有限重试预算。这可以避免无效 Key 或错误代理配置重复消耗时间和请求额度。
+`app/llm.py` 统一封装 OpenAI 官方与兼容中转站调用。`OPENAI_SITE` 选择站点，`OPENAI_BASE_URL` 指定中转站 API 根路径，`OPENAI_API_MODE` 在 `responses` 和 `chat_completions` 之间选择结构化接口；客户端始终显式使用选中站点的 Base URL。封装同时处理配置缺失、客户端初始化失败、响应截断、拒绝、Schema 校验和有限重试。普通测试通过注入 fake client 隔离真实 API。HTTP 400/401/403/404/422 等需要修正请求或配置的错误不会盲目重试；超时、连接失败、429、5xx、不完整输出和暂时性的校验失败才使用有限重试预算。这可以避免错误 Key、端点或代理配置重复消耗时间和请求额度。
 
 `app/services/classify_service.py` 只向模型提供当前焦点和有限的活跃 Bucket，并在模型返回后再次验证 Bucket ID。模型编造或引用无效 ID 时，系统不会写库，而是降级为 `ask_user`。这种“双重校验”很重要：Structured Outputs 保证字段形状正确，但不能保证业务引用真实存在。
 
@@ -115,7 +115,7 @@ python -m app.live_extraction_evaluation \
   --output /tmp/extraction-live-report.json
 ```
 
-两种报告都保存 `generated_at`、`model_name`、`prompt_version`、案例路径、预测和指标；提取报告额外保存 `reference_date`。这样不同日期、模型或 Prompt 的结果不会被混在一起。已有报告可以离线重新计算：
+两种报告都保存 `generated_at`、`api_site`、`api_base_url`、`api_mode`、`model_name`、`prompt_version`、案例路径、预测和指标；提取报告额外保存 `reference_date`。这样不同日期、模型或 Prompt 的结果不会被混在一起。已有报告可以离线重新计算：
 
 ```bash
 python -m app.evaluation /tmp/classification-live-report.json
@@ -135,10 +135,10 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 已完成：
 
 ```text
-Pytest：52 passed
+Pytest：58 passed
 Python compileall：通过
 git diff --check：通过
 50 条规则分类基线：成功执行
 ```
 
-2026-08-03 已再次执行真实分类和真实提取验收。保留 `ALL_PROXY=socks://127.0.0.1:7890/` 时，当前 httpx/OpenAI 客户端无法使用该代理形式；取消 `ALL_PROXY`、保留本机 HTTP/HTTPS 代理后，两项调用均到达 OpenAI，但返回 HTTP 401 `invalid_api_key`。改进后的 LLM 封装将 401 判为不可重试错误，因此每项只尝试一次，也没有生成不完整的报告文件。修复 `.env` 中的 API Key 后，应重新运行第 8 节两条真实评估命令；成功前不能把规则基线或 mock 测试表述为真实 LLM 准确率。
+2026-08-03 的 401 根因已重新定位：旧实现没有显式设置 Base URL，因此把中转站签发的 Key 发送到了 OpenAI 官方端点。当前封装已支持选择官方站点或 OpenAI 兼容中转站，并将实际 `api_site`、`api_base_url` 和 `api_mode` 写入真实评估报告。用户尚未提供并验证实际中转站 Base URL，所以本次只完成 mock 自动化验证；配置真实站点后仍需重新运行第 8 节两条真实评估命令。成功前不能把规则基线或 mock 测试表述为真实 LLM 准确率。

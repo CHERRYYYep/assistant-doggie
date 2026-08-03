@@ -11,7 +11,10 @@ from app.prompts import CLASSIFICATION_PROMPT_VERSION
 from app.schemas import ClassificationResult
 
 
-def test_live_classification_report_keeps_reproducibility_metadata(tmp_path):
+def test_live_classification_report_keeps_reproducibility_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_SITE", "test-relay")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://relay.example.com/v1")
+    monkeypatch.setenv("OPENAI_API_MODE", "chat_completions")
     case = ClassificationCase(
         id="append-payment",
         input="支付回调已经恢复",
@@ -52,6 +55,9 @@ def test_live_classification_report_keeps_reproducibility_metadata(tmp_path):
 
     assert report.generated_at == generated_at
     assert report.model_name == "test-model"
+    assert report.api_site == "test-relay"
+    assert report.api_base_url == "https://relay.example.com/v1"
+    assert report.api_mode == "chat_completions"
     assert report.prompt_version == CLASSIFICATION_PROMPT_VERSION
     assert report.cases_path == "fixtures/classification.json"
     assert report.case_count == 1
