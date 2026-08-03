@@ -1,4 +1,5 @@
 openai
+socksio
 pydantic
 python-dotenv
 sqlalchemy

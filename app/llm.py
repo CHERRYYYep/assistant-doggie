@@ -22,6 +22,14 @@ _API_MODE_ALIASES: dict[str, LLMApiMode] = {
     "chat_completions": "chat_completions",
     "chat-completions": "chat_completions",
 }
+_PROXY_ENV_VARS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
 
 
 class LLMError(RuntimeError):
@@ -136,8 +144,18 @@ def configured_endpoint(
     )
 
 
+def _normalize_proxy_environment() -> None:
+    """Normalize common proxy aliases before httpx/OpenAI client creation."""
+
+    for key in _PROXY_ENV_VARS:
+        value = os.getenv(key)
+        if value and value.strip().casefold().startswith("socks://"):
+            os.environ[key] = "socks5://" + value.strip()[len("socks://") :]
+
+
 def _default_client(endpoint: LLMEndpointConfig | None = None) -> Any:
     load_dotenv()
+    _normalize_proxy_environment()
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
         raise LLMConfigurationError("OPENAI_API_KEY is not configured")
