@@ -23,7 +23,7 @@
 5. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
 6. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
 7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
-8. 在同一个 Streamlit 页面中并排展示对话和 Bucket 记忆，不再提供重复的手工归档页签。
+8. Streamlit 主区域专注长期对话，Bucket 记忆放在可展开的独立侧边栏，不再提供重复的手工归档页签。
 
 Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。
 
