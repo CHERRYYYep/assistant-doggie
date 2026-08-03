@@ -7,7 +7,17 @@ from enum import Enum
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Enum as SqlEnum, Float, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Enum as SqlEnum,
+    Float,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -253,4 +263,30 @@ class Correction(Base):
     after_json: Mapped[dict[str, Any] | list[Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utc_now
+    )
+
+
+class ClassificationRecord(Base):
+    """Audit trail for every classification, including unarchived attempts."""
+
+    __tablename__ = "classification_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    raw_text: Mapped[str] = mapped_column(Text, nullable=False)
+    action: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    bucket_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    entry_id: Mapped[str | None] = mapped_column(
+        ForeignKey("entries.id", ondelete="SET NULL"), index=True
+    )
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    candidate_bucket_ids: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    current_focus_bucket_id: Mapped[str | None] = mapped_column(String(36))
+    prompt_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    corrected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utc_now, index=True
     )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -216,3 +217,81 @@ def _normalize_string_list(value: object) -> object:
             seen.add(cleaned)
 
     return normalized
+
+
+BucketStatusValue = Literal["active", "paused", "done", "archived"]
+ArchiveStatus = Literal["archived", "needs_confirmation"]
+
+
+class BucketView(OutputSchema):
+    """Bounded Bucket context exposed to the classifier."""
+
+    id: str
+    title: str
+    type: BucketTypeValue
+    status: BucketStatusValue
+    summary: str = ""
+    tags: list[str] = Field(default_factory=list)
+    last_active_at: datetime
+
+    @field_validator("id", "title")
+    @classmethod
+    def required_bucket_text(cls, value: str) -> str:
+        if not value:
+            raise ValueError("bucket id and title must not be empty")
+        return value
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def normalize_bucket_tags(cls, value: object) -> object:
+        return _normalize_string_list(value)
+
+
+class BucketSummaryResult(OutputSchema):
+    """A compact rolling summary for a long-lived Bucket."""
+
+    summary: str
+
+    @field_validator("summary")
+    @classmethod
+    def summary_must_have_content(cls, value: str) -> str:
+        if not value:
+            raise ValueError("summary must not be empty")
+        return value
+
+
+class ArchiveResult(OutputSchema):
+    """User-facing result of one archive attempt."""
+
+    status: ArchiveStatus
+    action: ClassificationAction
+    bucket_id: str | None = None
+    bucket_title: str | None = None
+    bucket_type: BucketTypeValue | None = None
+    entry_id: str | None = None
+    confidence: float
+    reason: str
+    question: str | None = None
+    candidate_bucket_ids: list[str] = Field(default_factory=list)
+    extraction: ExtractionResult | None = None
+
+    @field_validator("confidence")
+    @classmethod
+    def archive_confidence_is_probability(cls, value: float) -> float:
+        if not 0 <= value <= 1:
+            raise ValueError("confidence must be between 0 and 1")
+        return value
+
+
+class BucketSearchResult(OutputSchema):
+    """Compact search result for one matching Bucket."""
+
+    bucket_id: str
+    title: str
+    bucket_type: BucketTypeValue
+    status: BucketStatusValue
+    summary: str
+    tags: list[str] = Field(default_factory=list)
+    last_active_at: datetime
+    matched_entry_count: int = 0
+    score: int = 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import Select, select
@@ -14,9 +15,14 @@ from app.models import (
     Bucket,
     BucketStatus,
     BucketType,
+    Decision,
     Entry,
+    Evidence,
+    TimelineEvent,
+    Todo,
     utc_now,
 )
+from app.schemas import ExtractionResult
 
 
 @contextmanager
@@ -172,3 +178,196 @@ def get_bucket_detail(
     )
     with _session_scope(session) as active_session:
         return active_session.scalar(statement)
+
+
+@dataclass
+class SavedExtraction:
+    """ORM records created from one validated extraction result."""
+
+    todos: list[Todo]
+    evidences: list[Evidence]
+    timeline_events: list[TimelineEvent]
+    decisions: list[Decision]
+
+
+def _normalized_key(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _merge_tags(existing: Sequence[str], incoming: Sequence[str]) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for tag in [*existing, *incoming]:
+        cleaned = tag.strip()
+        key = cleaned.casefold()
+        if cleaned and key not in seen:
+            merged.append(cleaned)
+            seen.add(key)
+    return merged
+
+
+def update_bucket_summary(
+    bucket_id: str,
+    entry_summary: str,
+    *,
+    session: Session | None = None,
+    max_chars: int = 1200,
+) -> str:
+    """Merge a new entry summary into a bounded rolling Bucket summary.
+
+    The raw Entry remains the source of truth. This deterministic MVP strategy
+    preserves the first context fragment plus the newest non-duplicate facts;
+    a later LLM summarizer can rebuild the cache from Entries.
+    """
+
+    fragment = _clean_required_text(entry_summary, "entry_summary")
+    if max_chars < 100:
+        raise ValueError("max_chars must be at least 100")
+
+    with _session_scope(session) as active_session:
+        bucket = active_session.get(Bucket, bucket_id)
+        if bucket is None:
+            raise LookupError(f"bucket not found: {bucket_id}")
+
+        parts = [part.strip() for part in bucket.summary.split("\n") if part.strip()]
+        keys = {_normalized_key(part) for part in parts}
+        if _normalized_key(fragment) not in keys:
+            parts.append(fragment)
+
+        while len("\n".join(parts)) > max_chars and len(parts) > 2:
+            parts.pop(1)
+        summary = "\n".join(parts)
+        if len(summary) > max_chars:
+            summary = summary[: max_chars - 1].rstrip() + "…"
+
+        bucket.summary = summary
+        bucket.updated_at = utc_now()
+        active_session.flush()
+        return summary
+
+
+def rebuild_bucket_summary(
+    bucket_id: str,
+    *,
+    session: Session | None = None,
+    max_entries: int = 8,
+    max_chars: int = 1200,
+) -> str:
+    """Rebuild the rolling summary from the Bucket's surviving Entry summaries."""
+
+    if max_entries < 1:
+        raise ValueError("max_entries must be at least 1")
+
+    with _session_scope(session) as active_session:
+        bucket = active_session.get(Bucket, bucket_id)
+        if bucket is None:
+            raise LookupError(f"bucket not found: {bucket_id}")
+        summaries = list(
+            active_session.scalars(
+                select(Entry.summary)
+                .where(Entry.bucket_id == bucket_id, Entry.summary.is_not(None))
+                .order_by(Entry.created_at.desc())
+                .limit(max_entries)
+            ).all()
+        )
+        fragments = list(reversed([item.strip() for item in summaries if item and item.strip()]))
+        summary = "\n".join(dict.fromkeys(fragments))
+        if len(summary) > max_chars:
+            summary = summary[: max_chars - 1].rstrip() + "…"
+        bucket.summary = summary
+        bucket.updated_at = utc_now()
+        active_session.flush()
+        return summary
+
+
+def save_extraction(
+    bucket_id: str,
+    entry_id: str,
+    extraction: ExtractionResult,
+    *,
+    session: Session | None = None,
+) -> SavedExtraction:
+    """Persist validated facts and preserve their source Entry relationship."""
+
+    with _session_scope(session) as active_session:
+        bucket = active_session.get(Bucket, bucket_id)
+        if bucket is None:
+            raise LookupError(f"bucket not found: {bucket_id}")
+        entry = active_session.get(Entry, entry_id)
+        if entry is None or entry.bucket_id != bucket_id:
+            raise LookupError("entry does not belong to the target bucket")
+
+        existing_todos = {
+            _normalized_key(text)
+            for text in active_session.scalars(
+                select(Todo.text).where(Todo.bucket_id == bucket_id)
+            )
+        }
+        existing_evidence = {
+            _normalized_key(text)
+            for text in active_session.scalars(
+                select(Evidence.text).where(Evidence.bucket_id == bucket_id)
+            )
+        }
+        existing_decisions = {
+            _normalized_key(text)
+            for text in active_session.scalars(
+                select(Decision.text).where(Decision.bucket_id == bucket_id)
+            )
+        }
+        existing_timeline = {
+            (event_time, _normalized_key(text))
+            for event_time, text in active_session.execute(
+                select(TimelineEvent.event_time, TimelineEvent.text).where(
+                    TimelineEvent.bucket_id == bucket_id
+                )
+            )
+        }
+
+        todos = [
+            Todo(bucket_id=bucket_id, entry_id=entry_id, text=text)
+            for text in extraction.todos
+            if _normalized_key(text) not in existing_todos
+        ]
+        evidences = [
+            Evidence(
+                bucket_id=bucket_id,
+                entry_id=entry_id,
+                text=text,
+                source="llm-extracted",
+            )
+            for text in extraction.evidences
+            if _normalized_key(text) not in existing_evidence
+        ]
+        decisions = [
+            Decision(bucket_id=bucket_id, entry_id=entry_id, text=text)
+            for text in extraction.decisions
+            if _normalized_key(text) not in existing_decisions
+        ]
+        timeline_events = [
+            TimelineEvent(
+                bucket_id=bucket_id,
+                entry_id=entry_id,
+                event_time=event.event_time,
+                text=event.text,
+            )
+            for event in extraction.timeline_events
+            if (event.event_time, _normalized_key(event.text)) not in existing_timeline
+        ]
+
+        active_session.add_all([*todos, *evidences, *timeline_events, *decisions])
+        entry.summary = extraction.summary
+        bucket.tags = _merge_tags(bucket.tags, extraction.tags)
+        update_bucket_summary(
+            bucket_id,
+            extraction.summary,
+            session=active_session,
+        )
+        active_session.flush()
+
+        return SavedExtraction(
+            todos=todos,
+            evidences=evidences,
+            timeline_events=timeline_events,
+            decisions=decisions,
+        )

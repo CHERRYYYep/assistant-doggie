@@ -10,6 +10,7 @@ def test_init_db_creates_day_two_tables(tmp_path):
 
     assert set(inspect(engine).get_table_names()) == {
         "buckets",
+        "classification_records",
         "corrections",
         "decisions",
         "entries",

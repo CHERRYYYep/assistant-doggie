@@ -1,13 +1,14 @@
-"""Application entry point placeholder.
+"""Command-line entry point for initializing the local work-memory database."""
 
-MVP target:
-- expose archive_user_input(text)
-- later optionally expose FastAPI endpoints
-"""
+from __future__ import annotations
+
+from app.db import init_db
 
 
 def main() -> None:
-    print("Personal Work Memory Agent skeleton. See docs/DEVELOPMENT_GUIDE.md")
+    init_db()
+    print("Work Memory Agent database is ready.")
+    print("Start the UI with: streamlit run ui/streamlit_app.py")
 
 
 if __name__ == "__main__":
