@@ -89,7 +89,7 @@ tags            → Bucket.tags
 
 `ui/streamlit_app.py` 提供活跃 Bucket、当前焦点、输入框、分类理由、置信度提示、确认流程、Bucket 详情和最近 Entry 纠错。详情按 Todo、Evidence、Timeline、Decision 和原始 Entry 分区展示。
 
-UI 不隐藏不确定性：`needs_confirmation` 状态不会伪装成成功归档，用户必须明确选择已有 Bucket 或确认新建。
+UI 不隐藏不确定性：`needs_confirmation` 状态不会伪装成成功归档，用户必须明确选择已有 Bucket 或确认新建。 当前会话中，相同待确认输入会复用已有结果，除非用户显式点击“重新分析”；当没有任何 Bucket 时，UI 会提供可编辑的首个 Bucket 标题和类型，避免确认流程无操作入口。
 
 ## 8. 第十天：搜索与回归
 

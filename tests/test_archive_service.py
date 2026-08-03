@@ -57,7 +57,7 @@ def test_archive_flow_creates_bucket_entry_and_structured_records(session):
     assert len(detail.decisions) == 1
     assert record is not None
     assert record.entry_id == result.entry_id
-    assert record.prompt_version == "classification-v1"
+    assert record.prompt_version == "classification-v2"
 
 
 def test_archive_flow_appends_to_existing_bucket(session):
@@ -115,6 +115,32 @@ def test_uncertain_classification_records_audit_but_not_formal_memory(session):
     record = session.scalar(select(ClassificationRecord))
     assert record is not None
     assert record.action == "ask_user"
+
+
+def test_uncertain_new_bucket_suggestion_is_preserved_for_confirmation(session):
+    def classifier(_text, buckets, **_kwargs):
+        assert buckets == []
+        return ClassificationResult(
+            action="ask_user",
+            bucket_type="experiment",
+            title="接口 B 压测",
+            confidence=0.68,
+            reason="建议新建，但需要用户确认。",
+            should_ask_user=True,
+            question="是否创建新的压测 Bucket？",
+        )
+
+    result = archive_user_input(
+        "开始接口 B 压测",
+        classifier=classifier,
+        extractor=lambda *_args, **_kwargs: pytest.fail("should not extract"),
+        session=session,
+        model_name="mock-model",
+    )
+
+    assert result.status == "needs_confirmation"
+    assert result.bucket_title == "接口 B 压测"
+    assert result.bucket_type == "experiment"
 
 
 def test_confirmed_new_bucket_is_persisted_without_reclassification(session):

@@ -295,6 +295,13 @@ def classify_input(
     result = ClassificationResult.model_validate(parsed)
     result = validate_candidate_reference(result, candidates)
     result = apply_low_information_reference_gate(cleaned, result)
+
+    # A valid create-new decision cannot overwrite or pollute an existing Bucket
+    # when the workspace is empty. Let it bootstrap the first Bucket instead of
+    # forcing a confirmation solely because the model reported a medium score.
+    if not candidates and result.action == "create_new":
+        return result
+
     return apply_confidence_gate(result, policy=policy)
 
 

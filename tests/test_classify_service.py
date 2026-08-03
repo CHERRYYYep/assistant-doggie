@@ -109,3 +109,47 @@ def test_low_information_reference_gate_allows_concrete_status_update():
 
     assert gated.action == "append_existing"
     assert gated.bucket_id == "payment"
+
+
+def test_first_bucket_create_new_skips_confidence_confirmation_gate():
+    def parser(_system, user, _schema):
+        assert "最近活跃 Buckets：\n[]" in user
+        return ClassificationResult(
+            action="create_new",
+            bucket_type="task",
+            title="整理发布清单",
+            confidence=0.62,
+            reason="没有已有 Bucket，输入包含明确待办。",
+        )
+
+    result = classify_input(
+        "整理明天发布前的检查清单",
+        [],
+        parser=parser,
+        policy=ConfidencePolicy(),
+    )
+
+    assert result.action == "create_new"
+    assert result.title == "整理发布清单"
+    assert result.confidence == 0.62
+
+
+def test_empty_bucket_still_asks_for_pure_vague_reference():
+    def parser(_system, _user, _schema):
+        return ClassificationResult(
+            action="ask_user",
+            confidence=0.20,
+            reason="输入只有指代，无法识别主题。",
+            should_ask_user=True,
+            question="你指的是哪件事？",
+        )
+
+    result = classify_input(
+        "刚才那个继续处理",
+        [],
+        parser=parser,
+        policy=ConfidencePolicy(),
+    )
+
+    assert result.action == "ask_user"
+    assert result.question == "你指的是哪件事？"

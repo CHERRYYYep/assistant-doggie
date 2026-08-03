@@ -96,6 +96,7 @@ def archive_user_input(
             return ArchiveResult(
                 status="needs_confirmation",
                 action="ask_user",
+                bucket_title=classification.title,
                 bucket_type=classification.bucket_type,
                 confidence=classification.confidence,
                 reason=classification.reason,

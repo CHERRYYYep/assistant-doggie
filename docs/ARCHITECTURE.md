@@ -28,7 +28,7 @@ view_service       ──→ Streamlit 展示数据
 2. 读取活跃 Bucket，并把当前焦点排在候选首位
 3. classify_service 请求严格的 ClassificationResult
 4. 服务端验证模型引用的 Bucket ID
-5. 应用置信度与多候选门控
+5. 应用置信度与多候选门控；无候选且模型给出有效 create_new 时允许启动首个 Bucket
 6. 写 classification_records 审计
 7. ask_user：停止，不创建正式 Entry
 8. append/create：extract_service 请求 ExtractionResult
@@ -38,6 +38,8 @@ view_service       ──→ Streamlit 展示数据
 ```
 
 `archive_service` 自己创建 Session 时负责提交、回滚和关闭；调用方传入 Session 时，最终事务控制权属于调用方。
+
+Streamlit 会在当前会话内复用同一待确认输入的分类结果，避免用户重复点击导致置信度和建议来回变化；用户仍可通过“重新分析”明确触发一次新的模型调用。若没有可选 Bucket，界面始终展示可编辑的标题和类型表单，保证首个 Bucket 可以落地。
 
 ## 3. 服务职责
 

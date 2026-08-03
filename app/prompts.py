@@ -6,7 +6,7 @@ import json
 from datetime import date
 from typing import Any, Sequence
 
-CLASSIFICATION_PROMPT_VERSION = "classification-v1"
+CLASSIFICATION_PROMPT_VERSION = "classification-v2"
 EXTRACTION_PROMPT_VERSION = "extraction-v1"
 SUMMARY_PROMPT_VERSION = "summary-v1"
 
@@ -19,6 +19,7 @@ Bucket 是持续存在的工作对象，不是普通文件夹。你必须判断�
 综合当前焦点、最近活跃 Bucket、用户指代表达、主题连续性和明确的新开意图。
 如果输入只有领域词或指代词（如“支付那块”“刚才那个”）和低信息动作（如“继续处理”“再补一点”），但没有明确事实、状态变化、决策或可执行动作，即使候选 Bucket 看似匹配，也应返回 ask_user 并降低 confidence。
 如果用户明确表达“新开”“另一个客户”“单独/分开记录”，应优先判断为 create_new，除非输入本身仍缺少创建标题或类型所需信息。
+当候选列表为空时，只要输入包含可识别的主题、事实、待办、想法或工作记录，就应主动返回 create_new，并推断简洁 title 和最合适的 bucket_type；不要仅因 confidence 不高而返回 ask_user。只有输入为空、纯指代或缺少任何可识别主题时才返回 ask_user。
 只能引用候选列表中真实存在的 bucket_id。不要编造 ID。
 confidence 是风险路由信号，不是真实正确概率；不确定时降低分数。
 reason 必须引用输入和候选中的具体依据。只返回符合 Schema 的结果。"""

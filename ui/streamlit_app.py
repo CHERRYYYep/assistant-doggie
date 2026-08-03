@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from pathlib import Path
 
@@ -21,6 +22,88 @@ from app.services.bucket_service import get_bucket_detail, list_active_buckets
 from app.services.correction_service import move_latest_entry
 from app.services.search_service import search_buckets
 from app.services.view_service import archive_result_view, bucket_detail_view
+
+
+BUCKET_TYPES = (
+    "idea",
+    "task",
+    "incident",
+    "experiment",
+    "decision",
+    "meeting",
+    "knowledge",
+    "draft",
+)
+
+
+def _normalize_input_text(text: str) -> str:
+    """Normalize whitespace so repeated clicks reuse the same pending decision."""
+
+    return " ".join(text.split())
+
+
+def _can_reuse_pending_result(
+    text: str,
+    pending_text: str | None,
+    result_data: dict[str, object] | None,
+) -> bool:
+    """Return whether the same input already has a pending classification."""
+
+    return bool(
+        result_data
+        and result_data.get("status") == "needs_confirmation"
+        and pending_text
+        and _normalize_input_text(text) == _normalize_input_text(pending_text)
+    )
+
+
+def _fallback_bucket_title(text: str, *, max_length: int = 32) -> str:
+    """Build an editable title when the classifier did not suggest one."""
+
+    cleaned = _normalize_input_text(text)
+    if len(cleaned) <= max_length:
+        return cleaned
+    return f"{cleaned[:max_length].rstrip()}…"
+
+
+def _infer_bucket_type(text: str) -> str:
+    """Choose a safe editable Bucket type for first-Bucket bootstrap."""
+
+    lowered = text.lower()
+    marker_groups = (
+        ("incident", ("故障", "异常", "失败", "报错", "错误", "bug", "error", "502")),
+        ("meeting", ("会议", "纪要", "开会", "讨论会")),
+        ("decision", ("决定", "决策", "结论", "选定")),
+        ("experiment", ("实验", "压测", "测试", "验证", "benchmark")),
+        ("idea", ("想法", "点子", "建议", "灵感")),
+        ("draft", ("草稿", "初稿", "draft")),
+        ("task", ("待办", "需要", "记得", "跟进", "完成", "todo")),
+    )
+    for bucket_type, markers in marker_groups:
+        if any(marker in lowered for marker in markers):
+            return bucket_type
+    return "knowledge"
+
+
+def _pending_widget_suffix(text: str) -> str:
+    normalized = _normalize_input_text(text).encode("utf-8")
+    return hashlib.sha256(normalized).hexdigest()[:12]
+
+
+def _analyze_and_store(text: str) -> None:
+    """Run one classification attempt and store its stable UI state."""
+
+    with st.spinner("正在分类和提取……"):
+        result = archive_user_input(
+            text,
+            current_focus_bucket_id=st.session_state.current_bucket_id,
+        )
+    st.session_state.archive_result = archive_result_view(result)
+    if result.status == "archived":
+        st.session_state.current_bucket_id = result.bucket_id
+        st.session_state.pending_text = None
+    else:
+        st.session_state.pending_text = text
 
 
 def _show_archive_result(data: dict[str, object]) -> None:
@@ -133,19 +216,15 @@ def main() -> None:
         if st.button("分析并归档", type="primary", use_container_width=True):
             if not text.strip():
                 st.warning("请先输入内容。")
+            elif _can_reuse_pending_result(
+                text,
+                st.session_state.pending_text,
+                st.session_state.archive_result,
+            ):
+                st.info("相同内容已有待确认结果，本次已直接复用；如需重跑请点击“重新分析”。")
             else:
                 try:
-                    with st.spinner("正在分类和提取……"):
-                        result = archive_user_input(
-                            text,
-                            current_focus_bucket_id=st.session_state.current_bucket_id,
-                        )
-                    st.session_state.archive_result = archive_result_view(result)
-                    if result.status == "archived":
-                        st.session_state.current_bucket_id = result.bucket_id
-                        st.session_state.pending_text = None
-                    else:
-                        st.session_state.pending_text = text
+                    _analyze_and_store(text)
                     st.rerun()
                 except Exception as exc:
                     st.error(f"归档失败：{exc}")
@@ -154,43 +233,83 @@ def main() -> None:
         if result_data:
             _show_archive_result(result_data)
 
-        if st.session_state.pending_text and result_data:
+        pending_text = st.session_state.pending_text
+        if pending_text and result_data:
+            pending_suffix = _pending_widget_suffix(pending_text)
+            if st.button(
+                "重新分析（再次调用模型）",
+                key=f"reanalyze-{pending_suffix}",
+                use_container_width=True,
+            ):
+                try:
+                    _analyze_and_store(pending_text)
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"重新分析失败：{exc}")
+
             candidate_ids = result_data.get("candidate_bucket_ids", [])
             suggested_title = result_data.get("bucket_title")
             suggested_type = result_data.get("bucket_type")
 
-            if suggested_title and suggested_type and not candidate_ids:
-                st.info(f"建议新建：{suggested_title}（{suggested_type}）")
-                if st.button("确认创建并归档", use_container_width=True):
-                    try:
-                        confirmed = archive_confirmed_new_input(
-                            st.session_state.pending_text,
-                            str(suggested_title),
-                            str(suggested_type),
-                        )
-                        st.session_state.archive_result = archive_result_view(confirmed)
-                        st.session_state.current_bucket_id = confirmed.bucket_id
-                        st.session_state.pending_text = None
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"确认新建失败：{exc}")
-            elif active_buckets:
+            if not candidate_ids:
+                default_title = (
+                    str(suggested_title)
+                    if suggested_title
+                    else _fallback_bucket_title(pending_text)
+                )
+                default_type = (
+                    str(suggested_type)
+                    if suggested_type in BUCKET_TYPES
+                    else _infer_bucket_type(pending_text)
+                )
+                st.info("没有可用的目标 Bucket，可直接编辑下面的信息并创建新 Bucket。")
+                with st.form(key=f"create-bucket-{pending_suffix}"):
+                    new_title = st.text_input("Bucket 标题", value=default_title)
+                    new_type = st.selectbox(
+                        "Bucket 类型",
+                        options=BUCKET_TYPES,
+                        index=BUCKET_TYPES.index(default_type),
+                    )
+                    create_submitted = st.form_submit_button(
+                        "创建 Bucket 并归档",
+                        use_container_width=True,
+                    )
+                if create_submitted:
+                    if not new_title.strip():
+                        st.warning("Bucket 标题不能为空。")
+                    else:
+                        try:
+                            confirmed = archive_confirmed_new_input(
+                                pending_text,
+                                new_title,
+                                new_type,
+                            )
+                            st.session_state.archive_result = archive_result_view(confirmed)
+                            st.session_state.current_bucket_id = confirmed.bucket_id
+                            st.session_state.pending_text = None
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"创建 Bucket 失败：{exc}")
+
+            if active_buckets:
                 selectable = [
                     bucket
                     for bucket in active_buckets
                     if not candidate_ids or bucket.id in candidate_ids
                 ] or active_buckets
                 target_id = st.selectbox(
-                    "确认目标 Bucket",
+                    "确认已有 Bucket",
                     options=[bucket.id for bucket in selectable],
                     format_func=lambda item: bucket_by_id[item].title,
+                    key=f"confirm-existing-{pending_suffix}",
                 )
-                if st.button("确认并归档", use_container_width=True):
+                if st.button(
+                    "归档到选中的 Bucket",
+                    key=f"confirm-existing-button-{pending_suffix}",
+                    use_container_width=True,
+                ):
                     try:
-                        confirmed = archive_confirmed_input(
-                            st.session_state.pending_text,
-                            target_id,
-                        )
+                        confirmed = archive_confirmed_input(pending_text, target_id)
                         st.session_state.archive_result = archive_result_view(confirmed)
                         st.session_state.current_bucket_id = target_id
                         st.session_state.pending_text = None
