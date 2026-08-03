@@ -6,10 +6,12 @@ from app import db
 from app.db import init_db
 from app.llm import LLMEndpointConfig
 from app.services.agent_service import (
+    build_default_memory_context,
     execute_agent_tool,
     list_chat_messages,
     run_agent_turn,
 )
+from app.services.bucket_service import create_bucket
 
 
 @pytest.fixture
@@ -89,6 +91,9 @@ def test_responses_harness_executes_tool_and_persists_single_conversation(databa
     assert result.assistant_message.content.startswith("根据历史记录")
     assert executed == [("search_memory", {"query": "支付"})]
     assert len(client.responses.calls) == 2
+    first_input = client.responses.calls[0]["input"]
+    assert first_input[1]["role"] == "user"
+    assert "当前还没有活跃 Bucket" in first_input[1]["content"]
     second_input = client.responses.calls[1]["input"]
     assert any(item.get("type") == "function_call_output" for item in second_input if isinstance(item, dict))
     assert [message.role for message in list_chat_messages()] == [
@@ -191,15 +196,30 @@ def test_harness_reuses_persisted_dialogue_history(database_url):
     )
 
     input_items = second_client.responses.calls[0]["input"]
-    visible_messages = [
-        item for item in input_items if isinstance(item, dict) and item.get("role") != "system"
-    ]
-    assert [item["role"] for item in visible_messages] == [
+    assert "默认 Bucket 记忆概览" in input_items[1]["content"]
+    conversation_messages = input_items[2:]
+    assert [item["role"] for item in conversation_messages] == [
         "user",
         "assistant",
         "user",
     ]
-    assert visible_messages[1]["content"] == "项目代号是樱桃。"
+    assert conversation_messages[1]["content"] == "项目代号是樱桃。"
+
+
+def test_default_memory_context_contains_active_bucket_overview(database_url):
+    bucket = create_bucket(
+        "支付回调故障",
+        "incident",
+        summary="第三方回调持续返回 502。",
+        tags=["支付", "502"],
+    )
+
+    context = build_default_memory_context(current_focus_bucket_id=bucket.id)
+
+    assert bucket.id in context
+    assert "支付回调故障" in context
+    assert "第三方回调持续返回 502" in context
+    assert '"is_current_focus": true' in context
 
 
 def test_unknown_harness_tool_cannot_execute_arbitrary_code(database_url):

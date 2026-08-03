@@ -7,7 +7,7 @@
 ## 核心理念
 
 - 一个长期对话，不要求用户在聊天与记忆工具之间手工切换上下文。
-- 普通问题直接分析和回答；需要长期保存时由 Harness 按需调用 Bucket 工具。
+- 普通问题直接分析和回答；每轮默认加载活跃 Bucket 概览，并主动保存值得长期跟踪的工作事实。
 - Bucket 表示持续存在的事务上下文，不是无限增长的聊天记录。
 - 仅高置信度且候选唯一时自动归档；空工作区中有效的新建判断可直接创建首个 Bucket。
 - 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline 和 Decision。
@@ -23,7 +23,7 @@
 5. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
 6. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
 7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
-8. 在 Streamlit 中使用 ChatGPT 风格对话界面，并保留完整的 Bucket 记忆管理页签。
+8. 在同一个 Streamlit 页面中并排展示对话和 Bucket 记忆，不再提供重复的手工归档页签。
 
 Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。
 

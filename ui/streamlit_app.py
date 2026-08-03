@@ -1,8 +1,7 @@
-"""Streamlit interface for the single-conversation work-memory agent."""
+"""Unified Streamlit interface for conversation and Bucket memory."""
 
 from __future__ import annotations
 
-import hashlib
 import sys
 from pathlib import Path
 
@@ -13,375 +12,207 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.db import init_db
-from app.services.archive_service import (
-    archive_confirmed_input,
-    archive_confirmed_new_input,
-    archive_user_input,
-)
+from app.schemas import ChatMessageView
 from app.services.agent_service import list_chat_messages, run_agent_turn
 from app.services.bucket_service import get_bucket_detail, list_active_buckets
 from app.services.correction_service import move_latest_entry
 from app.services.search_service import search_buckets
-from app.services.view_service import archive_result_view, bucket_detail_view
+from app.services.view_service import bucket_detail_view
+
+_TOOL_LABELS = {
+    "list_active_buckets": "读取活跃 Bucket",
+    "search_memory": "搜索 Bucket 记忆",
+    "get_bucket_detail": "读取 Bucket 详情",
+    "archive_memory": "自动整理并写入记忆",
+    "save_to_existing_bucket": "写入已有 Bucket",
+    "create_bucket_and_save": "创建 Bucket 并写入",
+}
 
 
-BUCKET_TYPES = (
-    "idea",
-    "task",
-    "incident",
-    "experiment",
-    "decision",
-    "meeting",
-    "knowledge",
-    "draft",
-)
+def _tool_activity_label(message: ChatMessageView) -> str:
+    """Return a concise user-facing label for one persisted tool call."""
+
+    action = _TOOL_LABELS.get(message.tool_name or "", message.tool_name or "工具")
+    output = message.details.get("output") if isinstance(message.details, dict) else None
+    succeeded = not isinstance(output, dict) or output.get("ok", True)
+    marker = "✅" if succeeded else "⚠️"
+    return f"{marker} {action}"
 
 
-def _normalize_input_text(text: str) -> str:
-    """Normalize whitespace so repeated clicks reuse the same pending decision."""
+def _show_chat_timeline() -> None:
+    """Render the singleton conversation and its memory activity inline."""
 
-    return " ".join(text.split())
-
-
-def _can_reuse_pending_result(
-    text: str,
-    pending_text: str | None,
-    result_data: dict[str, object] | None,
-) -> bool:
-    """Return whether the same input already has a pending classification."""
-
-    return bool(
-        result_data
-        and result_data.get("status") == "needs_confirmation"
-        and pending_text
-        and _normalize_input_text(text) == _normalize_input_text(pending_text)
-    )
-
-
-def _fallback_bucket_title(text: str, *, max_length: int = 32) -> str:
-    """Build an editable title when the classifier did not suggest one."""
-
-    cleaned = _normalize_input_text(text)
-    if len(cleaned) <= max_length:
-        return cleaned
-    return f"{cleaned[:max_length].rstrip()}…"
-
-
-def _infer_bucket_type(text: str) -> str:
-    """Choose a safe editable Bucket type for first-Bucket bootstrap."""
-
-    lowered = text.lower()
-    marker_groups = (
-        ("incident", ("故障", "异常", "失败", "报错", "错误", "bug", "error", "502")),
-        ("meeting", ("会议", "纪要", "开会", "讨论会")),
-        ("decision", ("决定", "决策", "结论", "选定")),
-        ("experiment", ("实验", "压测", "测试", "验证", "benchmark")),
-        ("idea", ("想法", "点子", "建议", "灵感")),
-        ("draft", ("草稿", "初稿", "draft")),
-        ("task", ("待办", "需要", "记得", "跟进", "完成", "todo")),
-    )
-    for bucket_type, markers in marker_groups:
-        if any(marker in lowered for marker in markers):
-            return bucket_type
-    return "knowledge"
-
-
-def _pending_widget_suffix(text: str) -> str:
-    normalized = _normalize_input_text(text).encode("utf-8")
-    return hashlib.sha256(normalized).hexdigest()[:12]
-
-
-def _analyze_and_store(text: str) -> None:
-    """Run one classification attempt and store its stable UI state."""
-
-    with st.spinner("正在分类和提取……"):
-        result = archive_user_input(
-            text,
-            current_focus_bucket_id=st.session_state.current_bucket_id,
+    messages = list_chat_messages(limit=200)
+    if not messages:
+        st.info(
+            "直接开始对话即可。Doggie 每轮都会读取活跃 Bucket 概览，并自动判断哪些工作信息值得长期保存。"
         )
-    st.session_state.archive_result = archive_result_view(result)
-    if result.status == "archived":
-        st.session_state.current_bucket_id = result.bucket_id
-        st.session_state.pending_text = None
-    else:
-        st.session_state.pending_text = text
+        return
 
-
-def _show_archive_result(data: dict[str, object]) -> None:
-    if data["status"] == "needs_confirmation":
-        st.warning(data.get("question") or "需要确认归档位置。")
-    else:
-        st.success(f"已归档到：{data.get('bucket_title')}")
-
-    cols = st.columns(3)
-    cols[0].metric("动作", str(data.get("action")))
-    cols[1].metric("置信度", f"{float(data.get('confidence', 0)):.2f}")
-    cols[2].metric("类型", str(data.get("bucket_type") or "待确认"))
-    st.caption(str(data.get("reason") or ""))
-
-    if data.get("todos"):
-        st.write("**Todo**", data["todos"])
-    if data.get("evidences"):
-        st.write("**Evidence**", data["evidences"])
-    if data.get("timeline_events"):
-        st.write("**Timeline**", data["timeline_events"])
-    if data.get("decisions"):
-        st.write("**Decision**", data["decisions"])
+    for message in messages:
+        if message.role == "tool":
+            with st.expander(_tool_activity_label(message), expanded=False):
+                if message.details is not None:
+                    st.json(message.details)
+                else:
+                    st.code(message.content)
+            continue
+        with st.chat_message(message.role):
+            st.markdown(message.content)
 
 
 def _show_bucket_detail(bucket_id: str) -> None:
+    """Render one Bucket inside the unified memory panel."""
+
     detail = get_bucket_detail(bucket_id)
     if detail is None:
         st.error("Bucket 不存在或已删除。")
         return
+
     data = bucket_detail_view(detail)
-    st.subheader(data["title"])
+    st.markdown(f"### {data['title']}")
     st.caption(
         f"{data['type']} · {data['status']} · 最近更新 {data['last_active_at']}"
     )
     st.write(data["summary"] or "暂无摘要")
     if data["tags"]:
-        st.write("标签：", " · ".join(data["tags"]))
+        st.caption("标签：" + " · ".join(data["tags"]))
 
-    tabs = st.tabs(["Todo", "时间线", "证据", "决策", "原始记录"])
+    tabs = st.tabs(["Todo", "证据", "决策", "时间线", "原文"])
     with tabs[0]:
+        if not data["todos"]:
+            st.caption("暂无 Todo")
         for item in data["todos"]:
             st.write(f"- [{item['status']}] {item['text']}")
     with tabs[1]:
-        for item in data["timeline_events"]:
-            st.write(f"- {item['event_time'] or '时间未注明'}：{item['text']}")
-    with tabs[2]:
+        if not data["evidences"]:
+            st.caption("暂无证据")
         for item in data["evidences"]:
             st.write(f"- {item['text']}")
-    with tabs[3]:
+    with tabs[2]:
+        if not data["decisions"]:
+            st.caption("暂无决策")
         for item in data["decisions"]:
             st.write(f"- {item['text']}")
+    with tabs[3]:
+        if not data["timeline_events"]:
+            st.caption("暂无时间线")
+        for item in data["timeline_events"]:
+            st.write(f"- {item['event_time'] or '时间未注明'}：{item['text']}")
     with tabs[4]:
+        if not data["entries"]:
+            st.caption("暂无原始记录")
         for item in reversed(data["entries"]):
             with st.expander(item["summary"] or item["created_at"]):
                 st.write(item["raw_text"])
 
 
-def main() -> None:
-    st.set_page_config(page_title="Work Memory Agent", page_icon="🧠", layout="wide")
-    init_db()
-
-    st.title("🧠 Personal Work Memory Agent")
-    st.caption("单一长期对话、问题解决与受控记忆操作一体化 Agent")
-
-    if "current_bucket_id" not in st.session_state:
-        st.session_state.current_bucket_id = None
-    if "archive_result" not in st.session_state:
-        st.session_state.archive_result = None
-    if "pending_text" not in st.session_state:
-        st.session_state.pending_text = None
+def _show_memory_panel() -> None:
+    """Render Bucket browsing beside the conversation instead of in another page."""
 
     active_buckets = list_active_buckets()
     bucket_by_id = {bucket.id: bucket for bucket in active_buckets}
 
-    with st.sidebar:
-        st.header("活跃 Bucket")
-        if not active_buckets:
-            st.info("归档第一条内容后会在这里出现 Bucket。")
-        for bucket in active_buckets:
-            marker = "▶ " if bucket.id == st.session_state.current_bucket_id else ""
+    st.subheader("🗂️ Bucket 记忆")
+    st.caption("它是对话的默认记忆层：自动读取，遇到长期工作信息时主动写入。")
+    st.metric("活跃 Bucket", len(active_buckets))
+
+    search_query = st.text_input(
+        "搜索记忆",
+        key="memory-search-query",
+        placeholder="项目、故障、会议或结论关键词",
+    )
+    if search_query.strip():
+        candidates = search_buckets(search_query, limit=10)
+        if not candidates:
+            st.caption("没有找到匹配的 Bucket。")
+        for result in candidates:
             if st.button(
-                f"{marker}{bucket.title}\n({bucket.type.value})",
+                f"🔎 {result.title} · {result.bucket_type}",
+                key=f"search-{result.bucket_id}",
+                use_container_width=True,
+            ):
+                st.session_state.current_bucket_id = result.bucket_id
+                st.rerun()
+    else:
+        if not active_buckets:
+            st.info("还没有 Bucket。直接在对话中描述正在做的工作，Doggie 会自动判断是否创建。")
+        for bucket in active_buckets:
+            marker = "▶" if bucket.id == st.session_state.current_bucket_id else "○"
+            if st.button(
+                f"{marker} {bucket.title}\n{bucket.type.value}",
                 key=f"bucket-{bucket.id}",
                 use_container_width=True,
             ):
                 st.session_state.current_bucket_id = bucket.id
                 st.rerun()
 
+    selected_bucket_id = st.session_state.current_bucket_id
+    if selected_bucket_id:
         st.divider()
-        st.subheader("搜索")
-        search_query = st.text_input("关键词", key="search-query")
-        if search_query.strip():
-            for result in search_buckets(search_query, limit=10):
-                if st.button(
-                    f"{result.title} · {result.bucket_type}",
-                    key=f"search-{result.bucket_id}",
-                    use_container_width=True,
-                ):
-                    st.session_state.current_bucket_id = result.bucket_id
+        _show_bucket_detail(selected_bucket_id)
+
+    if active_buckets:
+        st.divider()
+        with st.expander("纠正最近一次记忆归档"):
+            correction_target = st.selectbox(
+                "移动到",
+                options=[bucket.id for bucket in active_buckets],
+                format_func=lambda item: bucket_by_id[item].title,
+                key="correction-target",
+            )
+            correction_reason = st.text_input(
+                "纠错说明",
+                value="把刚才那条移到正确的 Bucket",
+            )
+            if st.button("移动最近 Entry", use_container_width=True):
+                try:
+                    correction = move_latest_entry(
+                        correction_reason,
+                        target_bucket_id=correction_target,
+                    )
+                    st.session_state.current_bucket_id = correction_target
+                    st.success(f"纠错已记录：{correction.id}")
                     st.rerun()
+                except Exception as exc:
+                    st.error(f"纠错失败：{exc}")
 
-    chat_tab, memory_tab = st.tabs(["💬 对话助手", "🗂️ Bucket 记忆"])
 
-    with chat_tab:
+def main() -> None:
+    st.set_page_config(page_title="Doggie", page_icon="🧠", layout="wide")
+    init_db()
+
+    if "current_bucket_id" not in st.session_state:
+        st.session_state.current_bucket_id = None
+
+    st.title("🧠 Doggie")
+    st.caption(
+        "一个对话，一套长期记忆：正常回答问题，同时默认读取并智能维护 Bucket。"
+    )
+
+    chat_column, memory_column = st.columns([1.65, 1], gap="large")
+    with chat_column:
+        st.subheader("💬 对话与问题解决")
         st.caption(
-            "这是唯一的长期对话。Doggie 会结合聊天历史回答问题，并在需要时调用受控的 Bucket 记忆工具。"
+            "无需再切换归档页面。直接说出问题、进展、结论或下一步，记忆操作会显示在对话时间线中。"
         )
-        messages = list_chat_messages(limit=200)
-        if not messages:
-            st.info(
-                "你可以直接提问，例如：‘这个报错应该怎么排查？’；也可以说“记住这条结论”，让 Agent 操作 Bucket 记忆。"
-            )
-        for message in messages:
-            if message.role == "tool":
-                with st.expander(f"🔧 已调用 {message.tool_name or 'tool'}", expanded=False):
-                    if message.details is not None:
-                        st.json(message.details)
-                    else:
-                        st.code(message.content)
-                continue
-            with st.chat_message(message.role):
-                st.markdown(message.content)
+        _show_chat_timeline()
 
-        prompt = st.chat_input("向 Doggie 提问、讨论问题，或要求它保存和查找记忆……")
-        if prompt:
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            try:
-                with st.spinner("Doggie 正在思考并按需调用工具……"):
-                    run_agent_turn(prompt)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"对话失败：{exc}")
+    with memory_column:
+        _show_memory_panel()
 
-    with memory_tab:
-        input_column, detail_column = st.columns([1, 1])
-        with input_column:
-            st.subheader("归档新内容")
-            text = st.text_area(
-                "把碎片信息丢进来",
-                height=180,
-                placeholder="例如：支付回调 10:20 开始失败，第三方返回 502，待补复盘。",
-            )
-            if st.button("分析并归档", type="primary", use_container_width=True):
-                if not text.strip():
-                    st.warning("请先输入内容。")
-                elif _can_reuse_pending_result(
-                    text,
-                    st.session_state.pending_text,
-                    st.session_state.archive_result,
-                ):
-                    st.info("相同内容已有待确认结果，本次已直接复用；如需重跑请点击“重新分析”。")
-                else:
-                    try:
-                        _analyze_and_store(text)
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"归档失败：{exc}")
+    prompt = st.chat_input("向 Doggie 提问，或直接描述你的工作进展……")
+    if prompt:
+        try:
+            with st.spinner("Doggie 正在结合对话与 Bucket 记忆思考……"):
+                run_agent_turn(
+                    prompt,
+                    current_focus_bucket_id=st.session_state.current_bucket_id,
+                )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"对话失败：{exc}")
 
-            result_data = st.session_state.archive_result
-            if result_data:
-                _show_archive_result(result_data)
-
-            pending_text = st.session_state.pending_text
-            if pending_text and result_data:
-                pending_suffix = _pending_widget_suffix(pending_text)
-                if st.button(
-                    "重新分析（再次调用模型）",
-                    key=f"reanalyze-{pending_suffix}",
-                    use_container_width=True,
-                ):
-                    try:
-                        _analyze_and_store(pending_text)
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"重新分析失败：{exc}")
-
-                candidate_ids = result_data.get("candidate_bucket_ids", [])
-                suggested_title = result_data.get("bucket_title")
-                suggested_type = result_data.get("bucket_type")
-
-                if not candidate_ids:
-                    default_title = (
-                        str(suggested_title)
-                        if suggested_title
-                        else _fallback_bucket_title(pending_text)
-                    )
-                    default_type = (
-                        str(suggested_type)
-                        if suggested_type in BUCKET_TYPES
-                        else _infer_bucket_type(pending_text)
-                    )
-                    st.info("没有可用的目标 Bucket，可直接编辑下面的信息并创建新 Bucket。")
-                    with st.form(key=f"create-bucket-{pending_suffix}"):
-                        new_title = st.text_input("Bucket 标题", value=default_title)
-                        new_type = st.selectbox(
-                            "Bucket 类型",
-                            options=BUCKET_TYPES,
-                            index=BUCKET_TYPES.index(default_type),
-                        )
-                        create_submitted = st.form_submit_button(
-                            "创建 Bucket 并归档",
-                            use_container_width=True,
-                        )
-                    if create_submitted:
-                        if not new_title.strip():
-                            st.warning("Bucket 标题不能为空。")
-                        else:
-                            try:
-                                confirmed = archive_confirmed_new_input(
-                                    pending_text,
-                                    new_title,
-                                    new_type,
-                                )
-                                st.session_state.archive_result = archive_result_view(confirmed)
-                                st.session_state.current_bucket_id = confirmed.bucket_id
-                                st.session_state.pending_text = None
-                                st.rerun()
-                            except Exception as exc:
-                                st.error(f"创建 Bucket 失败：{exc}")
-
-                if active_buckets:
-                    selectable = [
-                        bucket
-                        for bucket in active_buckets
-                        if not candidate_ids or bucket.id in candidate_ids
-                    ] or active_buckets
-                    target_id = st.selectbox(
-                        "确认已有 Bucket",
-                        options=[bucket.id for bucket in selectable],
-                        format_func=lambda item: bucket_by_id[item].title,
-                        key=f"confirm-existing-{pending_suffix}",
-                    )
-                    if st.button(
-                        "归档到选中的 Bucket",
-                        key=f"confirm-existing-button-{pending_suffix}",
-                        use_container_width=True,
-                    ):
-                        try:
-                            confirmed = archive_confirmed_input(pending_text, target_id)
-                            st.session_state.archive_result = archive_result_view(confirmed)
-                            st.session_state.current_bucket_id = target_id
-                            st.session_state.pending_text = None
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"确认归档失败：{exc}")
-
-            if active_buckets:
-                with st.expander("纠正最近一次归档"):
-                    correction_target = st.selectbox(
-                        "移动到",
-                        options=[bucket.id for bucket in active_buckets],
-                        format_func=lambda item: bucket_by_id[item].title,
-                        key="correction-target",
-                    )
-                    correction_reason = st.text_input(
-                        "纠错说明",
-                        value="把刚才那条移到正确的 Bucket",
-                    )
-                    if st.button("移动最近 Entry"):
-                        try:
-                            correction = move_latest_entry(
-                                correction_reason,
-                                target_bucket_id=correction_target,
-                            )
-                            st.success(f"纠错已记录：{correction.id}")
-                            st.session_state.current_bucket_id = correction_target
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"纠错失败：{exc}")
-
-        with detail_column:
-            st.subheader("Bucket 详情")
-            if st.session_state.current_bucket_id:
-                _show_bucket_detail(st.session_state.current_bucket_id)
-            else:
-                st.info("从左侧选择一个 Bucket，或先归档一条内容。")
 
 if __name__ == "__main__":
     main()
