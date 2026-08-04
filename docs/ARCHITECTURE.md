@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层，以及仅面向隔离数据库的可写连接与原子事务基础。Rust 尚无公开业务写 API，也未接管生产运行时。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API。该 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 

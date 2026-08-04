@@ -6,12 +6,11 @@ use crate::{StoreError, migration, schema};
 
 /// Writable SQLite repository foundation for the validated Python business schema.
 ///
-/// This type deliberately has no public business mutation methods yet. Later
-/// typed write APIs can share its transaction boundary without exposing a raw
-/// writable `rusqlite::Connection` to application callers.
+/// Public mutation methods are strongly typed business operations. The raw
+/// writable connection and transaction closure remain private so application
+/// callers cannot bypass archive invariants with arbitrary SQL.
 pub struct WritableSqliteStore {
     connection: Connection,
-    #[allow(dead_code)]
     validated_schema_version: i64,
 }
 
@@ -48,8 +47,7 @@ impl WritableSqliteStore {
     /// Run one immediate transaction and commit only after the operation succeeds.
     ///
     /// Keeping this crate-private prevents application code from bypassing the
-    /// typed business write APIs that will be added in the next migration step.
-    #[allow(dead_code)]
+    /// typed business write APIs and their aggregate invariants.
     pub(crate) fn run_transaction<T>(
         &mut self,
         operation: impl FnOnce(&Transaction<'_>) -> Result<T, StoreError>,

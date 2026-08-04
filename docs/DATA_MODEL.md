@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2d）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2e）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义和写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复，以及仅在隔离数据库验证的可写连接和原子事务基础；它尚未提供具体业务写 API，也未参与生产业务写入。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API；该 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -260,7 +260,16 @@ R2d 可写事务边界：
 - `WritableSqliteStore::open_existing` 只允许以 `READ_WRITE` 打开已有文件；不会创建新数据库，也不会改变 `SqliteStore` 的 `READ_ONLY + query_only` 保证。
 - 打开时启用并验证 `foreign_keys`，检查受支持的 migration history，并执行完整九表 Schema 与完整性验证；不完整、损坏或未来版本数据库在进入事务前被拒绝。
 - crate 内部统一使用 `BEGIN IMMEDIATE`，成功才 commit，操作错误显式 rollback；打开后如 `schema_version` 变化，后续事务被拒绝。
-- 当前没有公开的 Bucket/Entry 等业务写入口。事务闭包保持 crate-private，防止调用方以任意 SQL 绕过未来的强类型和业务不变量校验。
-- 所有写测试都复制或生成到系统临时目录；正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
+- 原始事务闭包保持 crate-private，防止调用方以任意 SQL 绕过强类型和业务不变量校验。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖具体业务写 API、级联业务操作和 Python/Rust 最终状态等价演练。
+R2e 强类型归档写边界：
+
+- `ArchiveWriteRequest` 把已验证的 `ClassificationResult`、可选 `ExtractionResult` 和服务端审计上下文组合为一个聚合写请求；公开入口只有 `WritableSqliteStore::persist_archive_attempt`，不暴露任意 SQL 或零散 CRUD。
+- `ask_user` 只新增 `classification_records`；`append_existing` 原子写入 Entry、Todo/Evidence/TimelineEvent/Decision、Bucket tags/滚动摘要/活跃时间和关联分类审计；`create_new` 在同一事务先创建 Bucket，再执行完整归档。
+- 写入值保持 Python 语义：Entry `content_type=note`、Todo 初始 `open`、Evidence source 为 `llm-extracted`、ClassificationRecord `corrected=0`，分类候选保持服务端候选在前的有序合并。
+- 子记录去重只针对事务开始前已存在的 Bucket 记录，标签使用 Unicode casefold 去重，滚动摘要保留首片段和最新片段并限制为 1200 字符。
+- UUID v4 与 SQLAlchemy 风格 UTC 文本由 SQLite 事务内生成；全部 ID 和关系只在事务提交后返回。
+- 隔离测试覆盖 append/create/ask_user、缺失 Bucket、触发器制造的中途失败全回滚，以及 Python `archive_confirmed_input` 与 Rust 写入后的业务语义等价。
+- 所有写测试都生成到系统临时目录；该 API 尚未接入 Python Agent、UI 或仓库根目录数据库，正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
+
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖纠错、删除、聊天审计等其余业务写语义，也未完成生产写路径切换。

@@ -4,12 +4,14 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
+mod archive_write;
 mod migration;
 mod read;
 mod records;
 mod schema;
 mod write;
 
+pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
     SchemaState, inspect_database, migrate_database, restore_database,
@@ -158,6 +160,23 @@ pub enum StoreError {
         expected: i64,
         found: i64,
     },
+    InvalidWriteField {
+        field: &'static str,
+        reason: &'static str,
+    },
+    InvalidArchiveWrite {
+        action: &'static str,
+        reason: &'static str,
+    },
+    MissingRecord {
+        table: &'static str,
+        id: String,
+    },
+    JsonSerialization {
+        context: &'static str,
+        source: serde_json::Error,
+    },
+    InvalidGeneratedIdLength(usize),
 }
 
 impl Display for StoreError {
@@ -364,6 +383,28 @@ impl Display for StoreError {
                 formatter,
                 "SQLite schema changed after write-store validation: expected schema_version {expected}, found {found}"
             ),
+            Self::InvalidWriteField { field, reason } => {
+                write!(formatter, "invalid write field {field}: {reason}")
+            }
+            Self::InvalidArchiveWrite { action, reason } => {
+                write!(
+                    formatter,
+                    "invalid archive write for action {action}: {reason}"
+                )
+            }
+            Self::MissingRecord { table, id } => {
+                write!(formatter, "required {table} record was not found: {id}")
+            }
+            Self::JsonSerialization { context, source } => {
+                write!(
+                    formatter,
+                    "failed to serialize JSON for {context}: {source}"
+                )
+            }
+            Self::InvalidGeneratedIdLength(length) => write!(
+                formatter,
+                "SQLite random ID source returned {length} bytes instead of 16"
+            ),
         }
     }
 }
@@ -374,6 +415,7 @@ impl Error for StoreError {
             Self::Sqlite(error) => Some(error),
             Self::Io { source, .. } => Some(source),
             Self::InvalidJson { source, .. } => Some(source),
+            Self::JsonSerialization { source, .. } => Some(source),
             _ => None,
         }
     }

@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R2 进行中（R2a/R2b/R2c 与 R2d 事务基础已完成）——Rust 已能强类型只读查询完整九表、离线验证和迁移 Schema，并在隔离数据库上安全打开可写连接、执行原子事务和强制外键；具体业务写 API 与生产写路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2 进行中（R2a-R2e 已完成）——Rust 已能强类型只读查询完整九表、离线验证和迁移 Schema，并在隔离数据库上通过强类型聚合 API 原子写入 append/create/ask_user 归档；纠错、聊天等其余写语义和生产写路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -143,15 +143,24 @@ R2d 可写事务基础已完成：
 - crate 内部事务边界使用 `BEGIN IMMEDIATE`；操作成功才 commit，任一步返回错误都显式 rollback。
 - 打开时记录 SQLite `schema_version`，每次事务前重新检查连接保护、migration history 和 Schema 版本；已验证后发生 Schema 变化时拒绝写入。
 - 隔离临时数据库测试覆盖成功 commit、外键失败导致完整 rollback、坏 Schema 在写前拒绝，以及验证后 Schema 漂移拒绝。
-- 事务执行入口暂为 crate-private，避免应用调用方绕过下一阶段的强类型业务写 API；当前生产数据库仍只有 Python 可以写。
+- 原始事务执行入口保持 crate-private，应用调用方只能通过受控的强类型业务写 API 进入事务；当前生产数据库仍只有 Python 可以写。
+
+R2e 强类型归档聚合写 API 已完成：
+
+- 新增 `ClassificationAuditContext`、`ArchiveWriteRequest`、`ArchiveWriteOutcome` 和 `WritableSqliteStore::persist_archive_attempt`；调用方不能获得裸可写连接或任意 SQL 闭包。
+- `ask_user` 只保存 ClassificationRecord；`append_existing` 原子保存 Entry、结构化子记录、Bucket 缓存和关联审计；`create_new` 在同一事务创建 Bucket 并完成完整归档。
+- 保持 Python 的默认值、候选顺序、Unicode casefold 标签/文本匹配、仅针对事务前已有子记录去重，以及 1200 字符滚动摘要规则。
+- 在 SQLite 事务内生成 UUID v4 和兼容 SQLAlchemy 读取层的 UTC 文本时间；提交结果返回全部新建 ID。
+- 临时数据库测试覆盖 append/create/ask_user、缺失 Bucket、触发器在子记录写入中途失败后的完整回滚。
+- `tests/fixtures/apply_archive_write_fixture.py` 使用 mock extractor 调用 Python `archive_confirmed_input`；Rust 对相同初始数据库执行同一归档后，比较忽略随机 ID 和实际时间的最终业务语义。
 
 R2 尚未完成的范围：
 
-- 在事务基础上实现 Bucket、Entry、Todo/Evidence/TimelineEvent/Decision 和 ClassificationRecord 的强类型业务写 API。
-- 在隔离数据库演练新增、更新、删除、外键级联、失败回滚和 Python/Rust 最终状态等价。
+- 迁移纠错移动、删除/级联、聊天记录等其余业务写语义，并补齐对应跨语言等价测试。
+- 将强类型归档写 API 接入 Rust 服务层；当前 Python Agent、UI 和生产数据库均不调用它。
 - 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a/R2b/R2c/R2d 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并验证可写连接与原子事务安全属性；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求具体业务写入和跨语言最终状态等价。
+R2a-R2e 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并以强类型单事务 API 完成归档写入和 Python/Rust 最终状态等价演练；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义和生产切换准备完成。
 
 ### R3：归档、搜索与纠错服务
 
@@ -195,7 +204,7 @@ R2a/R2b/R2c/R2d 当前验收：Rust 可以强类型只读读取 Python 创建的
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础已完成；强类型业务写 API 待办 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API 已完成；其余写语义待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
