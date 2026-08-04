@@ -652,7 +652,7 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
-fn required_text(value: String, field: &'static str) -> Result<String, StoreError> {
+pub(crate) fn required_text(value: String, field: &'static str) -> Result<String, StoreError> {
     let cleaned = value.trim();
     if cleaned.is_empty() {
         Err(StoreError::InvalidWriteField {
@@ -664,14 +664,14 @@ fn required_text(value: String, field: &'static str) -> Result<String, StoreErro
     }
 }
 
-fn serialize_json<T: serde::Serialize + ?Sized>(
+pub(crate) fn serialize_json<T: serde::Serialize + ?Sized>(
     value: &T,
     context: &'static str,
 ) -> Result<String, StoreError> {
     serde_json::to_string(value).map_err(|source| StoreError::JsonSerialization { context, source })
 }
 
-fn current_timestamp(transaction: &Transaction<'_>) -> Result<String, StoreError> {
+pub(crate) fn current_timestamp(transaction: &Transaction<'_>) -> Result<String, StoreError> {
     Ok(transaction.query_row(
         "SELECT strftime('%Y-%m-%d %H:%M:%f000', 'now')",
         [],
@@ -679,7 +679,7 @@ fn current_timestamp(transaction: &Transaction<'_>) -> Result<String, StoreError
     )?)
 }
 
-fn new_uuid_v4(transaction: &Transaction<'_>) -> Result<String, StoreError> {
+pub(crate) fn new_uuid_v4(transaction: &Transaction<'_>) -> Result<String, StoreError> {
     let mut bytes: Vec<u8> =
         transaction.query_row("SELECT randomblob(16)", [], |row| row.get(0))?;
     if bytes.len() != 16 {

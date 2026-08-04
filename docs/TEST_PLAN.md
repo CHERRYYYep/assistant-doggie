@@ -25,6 +25,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `work-memory-store` 的九表必需表/列校验，以及非法 Bucket/Todo/分类/Chat 枚举、JSON 语法与类型、SQLite bool、时间戳和 limit 错误。
 - Rust migration history 的版本、名称、连续性和主键校验，以及备份路径互斥与不覆盖规则。
 - Rust 强类型归档写请求的字段组合、候选合并、Unicode casefold 去重和 1200 字符滚动摘要规则。
+- Rust Entry 移动请求的命令规范化、同 Bucket 类型化拒绝，以及摘要 Unicode 字符截断。
 
 ### 2.2 集成测试
 
@@ -39,7 +40,8 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Python SQLAlchemy 九表数据库到 Rust version 1 的升级、重复升级、已提交 WAL 数据备份、完整业务数据不变性、legacy 恢复、safety backup 和反向恢复。
 - 缺索引、外键损坏、未来 migration 版本、错误 migration 主键、已有备份文件和无效恢复源必须在修改目标前被拒绝。所有数据库和备份仅使用系统临时目录，不接触仓库根目录的 `work_memory.db`。
 - Rust 可写 store 只打开完整受支持的已有 Schema，强制 `foreign_keys`，并在隔离临时数据库验证成功 commit、外键错误后的完整 rollback，以及打开后 Schema 漂移拒绝。
-- Rust `persist_archive_attempt` 在临时 Python Schema 上覆盖 append/create/ask_user、缺失 Bucket、决策写入中途失败全事务 rollback；固定 Python helper 与 Rust 对同一 confirmed append 比较忽略随机 ID/时间后的 Bucket、Entry、子记录和分类审计最终语义。当前测试不代表业务写路径已切换。
+- Rust `persist_archive_attempt` 在临时 Python Schema 上覆盖 append/create/ask_user、缺失 Bucket、决策写入中途失败全事务 rollback；固定 Python helper 与 Rust 对同一 confirmed append 比较忽略随机 ID/时间后的 Bucket、Entry、子记录和分类审计最终语义。
+- Rust `move_entry` 在临时 Python Schema 上覆盖 Entry 与四类子记录移动、Correction 快照、关联分类纠错标记、双 Bucket 活跃时间与摘要重建、缺失记录、同 Bucket 拒绝和晚期触发器全事务 rollback；固定 Python helper 与 Rust 比较忽略随机 Correction UUID/实际时间后的最终业务语义。当前写测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 
@@ -297,6 +299,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/python_migration_compat.rs`：九表 Schema、legacy → version 1、幂等、业务数据不变性、恢复、safety backup 和损坏输入拒绝回归；所有路径只位于系统临时目录。
 - `rust/work-memory-store/src/write.rs` 单元测试：可写连接保护、`BEGIN IMMEDIATE` 成功提交、外键失败全事务回滚、坏 Schema 和 Schema 版本漂移拒绝；fixture 只位于系统临时目录。
 - `rust/work-memory-store/tests/archive_write.rs`：强类型 append/create/ask_user 归档、UUID/关系、Python 去重与摘要语义、缺失目标和触发器中途失败回滚，以及 `tests/fixtures/apply_archive_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
+- `rust/work-memory-store/tests/correction_write.rs`：强类型 Entry 移动、全子记录同步、Correction 快照、分类纠错标记、双 Bucket 摘要/活跃时间、缺失/同 Bucket 错误、晚期触发器回滚，以及 `tests/fixtures/apply_correction_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

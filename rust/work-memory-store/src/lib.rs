@@ -5,6 +5,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
 mod archive_write;
+mod correction_write;
 mod migration;
 mod read;
 mod records;
@@ -12,6 +13,7 @@ mod schema;
 mod write;
 
 pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
+pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
     SchemaState, inspect_database, migrate_database, restore_database,
@@ -165,6 +167,10 @@ pub enum StoreError {
         reason: &'static str,
     },
     InvalidArchiveWrite {
+        action: &'static str,
+        reason: &'static str,
+    },
+    InvalidCorrectionWrite {
         action: &'static str,
         reason: &'static str,
     },
@@ -390,6 +396,12 @@ impl Display for StoreError {
                 write!(
                     formatter,
                     "invalid archive write for action {action}: {reason}"
+                )
+            }
+            Self::InvalidCorrectionWrite { action, reason } => {
+                write!(
+                    formatter,
+                    "invalid correction write for action {action}: {reason}"
                 )
             }
             Self::MissingRecord { table, id } => {

@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2e）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2f）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API；该 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API 与 Entry 移动纠错 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -270,6 +270,13 @@ R2e 强类型归档写边界：
 - 子记录去重只针对事务开始前已存在的 Bucket 记录，标签使用 Unicode casefold 去重，滚动摘要保留首片段和最新片段并限制为 1200 字符。
 - UUID v4 与 SQLAlchemy 风格 UTC 文本由 SQLite 事务内生成；全部 ID 和关系只在事务提交后返回。
 - 隔离测试覆盖 append/create/ask_user、缺失 Bucket、触发器制造的中途失败全回滚，以及 Python `archive_confirmed_input` 与 Rust 写入后的业务语义等价。
-- 所有写测试都生成到系统临时目录；该 API 尚未接入 Python Agent、UI 或仓库根目录数据库，正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖纠错、删除、聊天审计等其余业务写语义，也未完成生产写路径切换。
+R2f Entry 移动纠错写边界：
+
+- `MoveEntryRequest` 规范化并校验非空纠错命令；`WritableSqliteStore::move_entry` 是唯一公开入口，同一事务移动 Entry 及其 Todo/Evidence/TimelineEvent/Decision。
+- Entry 保存原来源 Bucket 到 `moved_from_bucket_id`；Correction 保存包含有序子记录 ID 的前后 JSON 快照，所有关联 `classification_records` 标记为 `corrected=1`。
+- 来源和目标 Bucket 同时更新活跃时间，并分别从最多八条存活 Entry 摘要重建 1200 字符缓存；缺失 Entry、缺失目标 Bucket 和原目标相同均在产生业务修改前失败。
+- 隔离测试覆盖完整移动、两类缺失记录、同 Bucket 类型化错误、目标摘要重建触发器造成的晚期全事务回滚，以及 Python `move_entry` 与 Rust 最终业务语义等价。
+- 所有写测试都生成到系统临时目录；这些 API 尚未接入 Python Agent、UI 或仓库根目录数据库，正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
+
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖删除、聊天审计等其余业务写语义，也未完成生产写路径切换。
