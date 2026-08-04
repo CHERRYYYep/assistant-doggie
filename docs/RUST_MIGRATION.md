@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R2 进行中（R2a 已完成）——Rust 已能只读校验并查询 Python 创建的 Bucket/Entry SQLite 数据库；migration、其余表和全部写路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2 进行中（R2a、R2b 已完成）——Rust 已能只读查询 Bucket/Entry，并能离线验证九表 Schema、登记 migration version 1、创建一致性备份和安全恢复；其余七表强类型仓储及全部业务写路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -117,13 +117,23 @@ R2a 只读基础已完成，代码位置为 `rust/work-memory-store/`：
 - `list_active_buckets` 保持 Python 的 `active` 过滤以及 `last_active_at DESC, updated_at DESC` 排序；Entry 按 `created_at ASC` 读取。
 - `tests/fixtures/create_sqlite_compat_fixture.py` 只在临时路径创建固定 Python 数据库；Rust 集成测试验证 Schema、排序、过滤、字段、JSON 标签、SQLAlchemy 时间文本和只读配置。
 
+R2b migration 安全基础已完成：
+
+- 完整验证 Python 九张业务表的必需列、`id` 主键、显式索引列顺序、外键目标及 `CASCADE` / `SET NULL` 声明，并执行 `quick_check` 与 `foreign_key_check`。
+- 识别无 migration 表的 `LegacyPython` Schema，以及连续且受支持的 `Versioned(1)` history；version 1 使用 `adopt_python_schema_v1` 基线登记，不重建业务表。
+- `migrate_database` 在 `BEGIN IMMEDIATE` 写者保留锁下，通过独立只读连接和 SQLite Online Backup API 保存一致快照，验证备份后才在同一事务登记 version 1；重复升级不创建备份、不修改数据库。
+- `restore_database` 先验证恢复源，再保存目标 safety backup；恢复后重新验证，失败时尝试自动恢复 safety backup。
+- 提供 `work-memory-store-admin` 的 `inspect`、`migrate`、`restore` 离线命令；备份路径使用 create-new 语义，数据库、备份和 safety backup 路径必须互异。
+- Python fixture 已覆盖九表固定数据；跨语言测试比较升级前后全部业务 Schema 与行值，并覆盖升级、幂等、恢复、反向恢复、坏索引、坏外键、未来版本和已有备份拒绝。
+- 操作说明见 `docs/SQLITE_MIGRATIONS.md`。命令执行前仍必须停止所有应用数据库连接。
+
 R2 尚未完成的范围：
 
-- 建立带版本号的 migration 表、备份和恢复说明，并在隔离副本执行升级/回滚演练。
-- 实现 Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 仓储以及安全写事务。
-- 验证外键、级联和索引行为；在写路径切换前继续保持 Python 为唯一数据库写入者。
+- 实现 Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 的强类型仓储。
+- 实现安全业务写事务，并在隔离数据库演练新增、更新、删除、外键级联、失败回滚和 Python/Rust 最终状态等价。
+- 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a 验收：Rust 可以只读读取 Python 创建的临时数据库，测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求 migration 演练、全部仓储和隔离数据库上的写入语义验证。
+R2a/R2b 验收：Rust 可以只读读取 Python 创建的临时数据库，并在临时隔离副本完成 version 1 升级、备份和恢复；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求全部仓储和隔离数据库上的写入语义验证。
 
 ### R3：归档、搜索与纠错服务
 
@@ -167,7 +177,7 @@ R2a 验收：Rust 可以只读读取 Python 创建的临时数据库，测试不
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a 只读 Bucket/Entry 基础已完成；完整 R2 待办 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a 只读查询、R2b migration/备份恢复基础已完成；完整仓储与写事务待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
@@ -178,7 +188,7 @@ R2a 验收：Rust 可以只读读取 Python 创建的临时数据库，测试不
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
-rust/work-memory-store/           # R2a 已完成：只读 Bucket/Entry SQLite 兼容层
+rust/work-memory-store/           # R2a/R2b：只读查询、九表验证与离线 migration 安全层
 rust/work-memory-service/         # R3 计划：业务编排
 rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI

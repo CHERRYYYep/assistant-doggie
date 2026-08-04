@@ -25,12 +25,12 @@
 7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
 8. Streamlit 主区域专注长期对话，Bucket 记忆放在可展开的独立侧边栏，不再提供重复的手工归档页签。
 
-Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。 Rust 重构的边界、阶段、数据安全规则和当前完成度见 [`docs/RUST_MIGRATION.md`](./docs/RUST_MIGRATION.md)。
+Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。Rust 重构的边界、阶段、数据安全规则和当前完成度见 [`docs/RUST_MIGRATION.md`](./docs/RUST_MIGRATION.md)；离线 SQLite migration、备份与恢复操作见 [`docs/SQLITE_MIGRATIONS.md`](./docs/SQLITE_MIGRATIONS.md)。
 
 ## 技术栈与目录
 
 - 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，Python SQLite 的只读兼容层位于 `rust/work-memory-store/`，均尚未接管生产路径。
+- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 只读兼容与离线 migration 安全层位于 `rust/work-memory-store/`，均尚未接管生产路径。
 - `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。
@@ -84,6 +84,17 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Rust SQLite 离线检查、基线 migration 与恢复：
+
+```bash
+cargo run -p work-memory-store --bin work-memory-store-admin -- inspect DATABASE
+cargo run -p work-memory-store --bin work-memory-store-admin -- migrate DATABASE BACKUP
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  restore DATABASE BACKUP SAFETY_BACKUP
+```
+
+执行 `migrate` 或 `restore` 前必须停止 Python 应用、Streamlit 和其他数据库连接；输出备份路径必须尚不存在。当前命令只登记 Schema version 或执行显式恢复，不代表 Rust 已接管业务写入。完整操作顺序和失败恢复边界见 [`docs/SQLITE_MIGRATIONS.md`](./docs/SQLITE_MIGRATIONS.md)。
+
 少量真实模型分类与提取评估会产生 API 调用：
 
 ```bash
@@ -107,11 +118,12 @@ python -m app.live_extraction_evaluation \
 5. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
 6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：当前服务和数据流。
 7. [`docs/RUST_MIGRATION.md`](./docs/RUST_MIGRATION.md)：Rust 渐进重构阶段、边界与验收门槛。
-8. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
-9. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
-10. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
-11. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
-12. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+8. [`docs/SQLITE_MIGRATIONS.md`](./docs/SQLITE_MIGRATIONS.md)：离线 Schema 检查、升级备份和恢复流程。
+9. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
+10. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
+11. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
+12. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
+13. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
 
 ## 当前边界
 

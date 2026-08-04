@@ -7,7 +7,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app.db import get_session, init_db
-from app.models import Bucket, BucketStatus, BucketType, Entry
+from app.models import (
+    Bucket,
+    BucketStatus,
+    BucketType,
+    ChatMessage,
+    ClassificationRecord,
+    Correction,
+    Decision,
+    Entry,
+    Evidence,
+    TimelineEvent,
+    Todo,
+    TodoStatus,
+)
 
 ACTIVE_LATEST_ID = "11111111-1111-1111-1111-111111111111"
 ACTIVE_TIE_NEWER_ID = "22222222-2222-2222-2222-222222222222"
@@ -22,7 +35,7 @@ def utc(hour: int, minute: int = 0, microsecond: int = 0) -> datetime:
 
 
 def create_fixture(database_path: Path) -> None:
-    """Create the current SQLAlchemy schema and deterministic Bucket/Entry rows."""
+    """Create the current SQLAlchemy schema and deterministic rows for all tables."""
 
     if database_path.exists():
         raise FileExistsError(f"fixture database already exists: {database_path}")
@@ -111,9 +124,83 @@ def create_fixture(database_path: Path) -> None:
         ),
     ]
 
+    related_rows = [
+        Todo(
+            id="dddddddd-dddd-dddd-dddd-dddddddddddd",
+            bucket_id=ACTIVE_LATEST_ID,
+            entry_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            text="Confirm callback retries remain healthy.",
+            status=TodoStatus.OPEN,
+            due_date=utc(18),
+            created_at=utc(10, 5),
+            updated_at=utc(10, 10),
+        ),
+        Evidence(
+            id="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+            bucket_id=ACTIVE_LATEST_ID,
+            entry_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            text="The retry success rate returned to 99.9%.",
+            source="metrics/payment-callback",
+            created_at=utc(10, 15),
+        ),
+        TimelineEvent(
+            id="ffffffff-ffff-ffff-ffff-ffffffffffff",
+            bucket_id=ACTIVE_LATEST_ID,
+            entry_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            event_time="2026-08-04T10:00:00Z",
+            text="Proxy restarted and callback retries recovered.",
+            created_at=utc(10, 20),
+        ),
+        Decision(
+            id="12121212-1212-1212-1212-121212121212",
+            bucket_id=ACTIVE_LATEST_ID,
+            entry_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            text="Keep retry traffic on the recovered proxy pool.",
+            reason="Error rate stayed below the rollback threshold.",
+            created_at=utc(10, 25),
+        ),
+        ClassificationRecord(
+            id="13131313-1313-1313-1313-131313131313",
+            raw_text="Payment callback returned 502.",
+            action="append",
+            bucket_id=ACTIVE_LATEST_ID,
+            entry_id="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            confidence=0.91,
+            reason="Matches the active callback incident.",
+            candidate_bucket_ids=[ACTIVE_LATEST_ID, ACTIVE_TIE_NEWER_ID],
+            current_focus_bucket_id=ACTIVE_LATEST_ID,
+            prompt_version="classification-v1",
+            model_name="fixture-model",
+            corrected=False,
+            created_at=utc(9, 1),
+        ),
+        Correction(
+            id="14141414-1414-1414-1414-141414141414",
+            command_text="Move the retry note back to the incident.",
+            action="move_entry",
+            target_type="entry",
+            target_id="bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+            before_json={"bucket_id": PAUSED_ID},
+            after_json={"bucket_id": ACTIVE_LATEST_ID, "reason": "用户纠正"},
+            created_at=utc(10, 2),
+        ),
+        ChatMessage(
+            id="15151515-1515-1515-1515-151515151515",
+            role="assistant",
+            content="The callback incident was updated.",
+            tool_name="archive_entry",
+            tool_call_id="fixture-call-1",
+            details_json={"bucket_id": ACTIVE_LATEST_ID, "ok": True},
+            created_at=utc(10, 3),
+        ),
+    ]
+
     with get_session(database_url) as session:
         session.add_all(buckets)
+        session.flush()
         session.add_all(entries)
+        session.flush()
+        session.add_all(related_rows)
         session.commit()
 
 

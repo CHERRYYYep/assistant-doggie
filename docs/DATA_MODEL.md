@@ -221,15 +221,37 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容边界（R2a）
+## 15. Python/Rust SQLite 兼容与 migration 边界（R2a/R2b）
 
-当前 SQLite Schema 仍由 Python SQLAlchemy 定义和写入，Rust `work-memory-store` 只提供兼容读取，不参与生产写入或 migration。边界如下：
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义和写入。Rust `work-memory-store` 提供只读查询，以及必须离线执行的 Schema 检查、基线 migration、备份和恢复；它尚未参与生产业务写入。
 
-- Rust 以 SQLite `READ_ONLY` 模式打开已有文件，并额外启用 `PRAGMA query_only=ON`；打开时必须存在 `buckets`、`entries` 及其当前全部必需列。
+只读查询边界：
+
+- Rust 以 SQLite `READ_ONLY` 模式打开已有文件，并额外启用 `PRAGMA query_only=ON`；Bucket/Entry 查询打开时必须存在对应当前必需列，并拒绝不受支持的 migration history。
 - `buckets.tags` 在 SQLite 中是 JSON 文本，Rust 必须严格解码为 `list[string]` 等价的 `Vec<String>`；损坏 JSON 或非字符串数组应作为持久化数据错误返回。
 - `type` 和 `status` 使用 Python 枚举的精确小写值，不进行 trim 或大小写纠正；未知持久化值必须报错，不能静默映射。
 - SQLAlchemy SQLite 当前通常把 UTC datetime 写为 `2026-08-04 10:20:00.000000` 一类无时区偏移文本。Rust 保留原始文本，并按“Python 由 `utc_now()` 写入的无偏移 UTC”解析；兼容层同时接受合法 RFC 3339 文本，但不会重写原值。
 - 活跃 Bucket 查询保持 `status = active`、`last_active_at DESC`、`updated_at DESC` 和 `limit >= 1`；Bucket 的 Entry 保持 `created_at ASC`。
+
+R2b 增加 migration 元数据表：
+
+```sql
+CREATE TABLE schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+```
+
+当前只支持 version 1：`adopt_python_schema_v1`。无 `schema_migrations` 且九张业务表完整的数据库识别为 `LegacyPython`；升级时只创建 migration 表并登记基线，不重建或改写 `buckets`、`entries`、`todos`、`evidences`、`timeline_events`、`decisions`、`classification_records`、`corrections`、`chat_messages`。
+
+离线管理边界：
+
+- 检查九表必需列、`id` 主键、SQLAlchemy 显式索引及列顺序、外键目标和 `ON DELETE` 声明，并执行 `quick_check` 与 `foreign_key_check`。
+- migration 前在写者保留锁下使用 SQLite Online Backup API 创建并验证一致性备份；已是当前版本时不创建备份。
+- restore 前验证恢复源，并把被替换数据库保存为独立 safety backup；恢复验证失败时尝试自动回退。
+- migration、backup、restore 路径必须互异，输出备份路径必须不存在，不能覆盖已有文件。
+- 执行 `migrate` 或 `restore` 前必须停止 Python、Streamlit 和其他数据库连接；Python 与 Rust 不得同时写同一份生产数据库。
 - 跨语言测试只在系统临时目录生成数据库，不得读取、覆盖或迁移仓库根目录的 `work_memory.db`。
 
-R2a 尚未定义 migration 版本、写事务、外键/级联演练，也未覆盖其余七张表；这些仍属于完整 R2 范围。Python 和 Rust 不得同时写同一份生产数据库。
+完整命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其余七张表的强类型仓储、安全业务写事务和级联写入演练。
