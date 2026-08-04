@@ -119,6 +119,7 @@ confidence < 0.55               → 用户确认
 - Rust R2l `update_bucket_summary` 在隔离数据库提供产品级独立滚动摘要更新：校验并裁剪摘要片段，以 Unicode casefold/空白规范化去重，保留首段和最新事实并按 Python 字符数限制为最多 1200 字符（或调用方提供的至少 100 字符上限）；只修改 Bucket `summary` 与 `updated_at`，失败时事务回滚。
 - Rust R2m `rebuild_bucket_summary` 在隔离数据库提供产品级独立摘要重建：从按时间倒序选出的最新 Entry summary 窗口中清理空片段，再恢复时间顺序并按清理后的精确文本去重；默认最多八条、1200 字符，只更新 Bucket `summary` 与 `updated_at`，并与纠错移动共用同一实现。
 - Rust R2n `save_extraction` 在隔离数据库提供产品级独立提取保存：先按精确 ID 验证 Bucket 与 Entry 归属，再原子写入按调用前已有记录去重的四类结构化记录、Entry summary、合并标签和 1200 字符滚动摘要；不刷新 Bucket `last_active_at`，并与归档聚合写路径共用子记录和缓存更新实现。
+- Rust R2o `save_classification_record` 在隔离数据库提供产品级独立分类审计保存：只裁剪原始输入首尾空白，按“服务端候选在前、模型候选在后”做大小写敏感的精确保序去重，并保留已解析的焦点、Prompt 与模型元数据；单事务只新增一条 `classification_records`，不校验审计中的 Bucket ID 是否存在，也不修改 Bucket、Entry 或其他业务表。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

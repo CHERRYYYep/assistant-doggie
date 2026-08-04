@@ -201,14 +201,21 @@ fn persist_archive_attempt(
     let action = request.classification.action();
     let timestamp = current_timestamp(transaction)?;
     let classification_record_id = new_uuid_v4(transaction)?;
-    let candidate_bucket_ids = merged_candidate_bucket_ids(request);
+    let candidate_bucket_ids = merge_candidate_bucket_ids(
+        request.audit.candidate_bucket_ids(),
+        request.classification.candidate_bucket_ids(),
+    );
 
     if action == ClassificationAction::AskUser {
         insert_classification_record(
             transaction,
             &classification_record_id,
-            request,
+            request.raw_text(),
+            request.classification(),
             &candidate_bucket_ids,
+            request.audit.current_focus_bucket_id(),
+            request.audit.prompt_version(),
+            request.audit.model_name(),
             None,
             None,
             &timestamp,
@@ -271,8 +278,12 @@ fn persist_archive_attempt(
     insert_classification_record(
         transaction,
         &classification_record_id,
-        request,
+        request.raw_text(),
+        request.classification(),
         &candidate_bucket_ids,
+        request.audit.current_focus_bucket_id(),
+        request.audit.prompt_version(),
+        request.audit.model_name(),
         Some(&bucket.id),
         Some(&entry_id),
         &timestamp,
@@ -481,11 +492,15 @@ pub(crate) fn update_bucket_cache(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_classification_record(
+pub(crate) fn insert_classification_record(
     transaction: &Transaction<'_>,
     id: &str,
-    request: &ArchiveWriteRequest,
+    raw_text: &str,
+    classification: &ClassificationResult,
     candidate_bucket_ids: &[String],
+    current_focus_bucket_id: Option<&str>,
+    prompt_version: &str,
+    model_name: &str,
     bucket_id: Option<&str>,
     entry_id: Option<&str>,
     timestamp: &str,
@@ -502,16 +517,16 @@ fn insert_classification_record(
          ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0, ?12)",
         params![
             id,
-            request.raw_text,
-            request.classification.action().as_str(),
+            raw_text,
+            classification.action().as_str(),
             bucket_id,
             entry_id,
-            request.classification.confidence(),
-            request.classification.reason(),
+            classification.confidence(),
+            classification.reason(),
             candidates_json,
-            request.audit.current_focus_bucket_id(),
-            request.audit.prompt_version(),
-            request.audit.model_name(),
+            current_focus_bucket_id,
+            prompt_version,
+            model_name,
             timestamp,
         ],
     )?;
@@ -566,17 +581,16 @@ fn existing_timeline_keys(
     Ok(keys)
 }
 
-fn merged_candidate_bucket_ids(request: &ArchiveWriteRequest) -> Vec<String> {
+pub(crate) fn merge_candidate_bucket_ids(
+    server_candidate_bucket_ids: &[String],
+    result_candidate_bucket_ids: &[String],
+) -> Vec<String> {
     let mut seen = HashSet::new();
-    request
-        .audit
-        .candidate_bucket_ids
+    server_candidate_bucket_ids
         .iter()
-        .chain(request.classification.candidate_bucket_ids())
-        .filter_map(|value| {
-            let cleaned = value.trim();
-            (!cleaned.is_empty() && seen.insert(cleaned.to_owned())).then(|| cleaned.to_owned())
-        })
+        .chain(result_candidate_bucket_ids)
+        .filter(|value| seen.insert((*value).clone()))
+        .cloned()
         .collect()
 }
 

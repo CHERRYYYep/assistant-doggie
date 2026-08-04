@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2n）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2o）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API、独立 Bucket 摘要重建 API 与独立提取结果保存 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API、独立 Bucket 摘要重建 API、独立提取结果保存 API 与独立分类审计保存 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -339,5 +339,12 @@ R2n 独立提取结果保存写边界：
 - 新 Evidence 的 source 固定为 `llm-extracted`，Todo 使用 open/无 due date，Decision reason 为 NULL；`hypotheses` 与 `entities` 当前没有持久化表，保持不落库。返回值只暴露本次新建的四类结构化记录 ID。
 - 同一事务把 Entry `summary` 设为提取摘要，按 Unicode casefold 合并 Bucket 标签，并用 1200 字符滚动规则更新 Bucket `summary` 与 `updated_at`；`last_active_at`、Entry 其他字段、分类/纠错/聊天审计均不变。
 - 独立 API 与归档聚合写路径共用结构化记录插入和 Bucket 缓存更新实现；`tests/fixtures/apply_save_extraction_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确 ID、验证顺序、归属错误、批内重复、重复调用和晚期失败全事务回滚。
+
+R2o 独立分类审计保存写边界：
+
+- `SaveClassificationRecordRequest` 接收已验证的核心 `ClassificationResult`、服务端候选 ID、当前焦点、Prompt 版本和已解析模型名；只对原始输入执行 Python `strip()` 等价裁剪，空字符串仍可作为审计输入保存，其他服务端元数据保持精确值。模型配置解析仍由调用方负责，SQLite Store 不读取环境变量。
+- 候选 ID 按 Python `dict.fromkeys` 语义合并：服务端候选在前、模型结果候选在后，只删除大小写敏感的精确重复并保留第一次出现；服务端传入的空值或带空白值不会被 Store 额外清理，已验证的核心模型候选则继续遵循核心规范化规则。
+- 新记录使用 UUID v4、运行时 UTC 时间和 `corrected=false`；`bucket_id` 直接取分类结果且不验证该审计目标是否存在（create_new 必为 NULL，ask_user 保留已验证结果中的可选值），`entry_id` 始终为 NULL。create_new、append_existing 和 ask_user 都可独立记录，重复调用会产生独立审计行。
+- 事务只新增一条 `classification_records`，不修改 Bucket、Entry、结构化记录、Correction 或 ChatMessage；独立 API 与归档聚合写路径共用候选合并和审计插入实现。`tests/fixtures/apply_save_classification_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确元数据、全部 action、空输入、重复保存、缺失审计目标和插入失败回滚。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。

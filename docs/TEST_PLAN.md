@@ -55,6 +55,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `update_bucket_summary` 在临时 Python Schema 上覆盖 Unicode casefold/空白去重、默认与自定义字符上限、只更新 Bucket summary/`updated_at`、不刷新 `last_active_at`、精确/缺失 Bucket ID 和触发器失败全事务 rollback；固定 helper 调用 Python `update_bucket_summary` 并比较忽略运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 - Rust `rebuild_bucket_summary` 在临时 Python Schema 上覆盖最新非 NULL summary 窗口、limit 后空白过滤、时间正序恢复、清理后精确区分大小写去重、空结果清除缓存、非正字符上限、只更新 Bucket summary/`updated_at`、精确/缺失 Bucket ID 和触发器失败全事务 rollback；固定 helper 调用 Python `rebuild_bucket_summary` 并比较忽略运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 - Rust `save_extraction` 在临时 Python Schema 上覆盖 Bucket/Entry 归属校验顺序、事务前既有记录去重、批内规范化重复保留、四类结构化默认值与 UUID、Entry summary、Bucket 标签/滚动摘要、`last_active_at` 与审计隔离、重复调用和晚期失败全事务 rollback；固定 helper 调用 Python `save_extraction` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
+- Rust `save_classification_record` 在临时 Python Schema 上覆盖原始输入裁剪与空值保留、服务端元数据精确保留、服务端/模型候选精确保序去重、三种 action、缺失审计目标、UUID 与默认字段、重复审计、单表影响和插入失败全事务 rollback；固定 helper 调用 Python `save_classification_record` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 
@@ -320,6 +321,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/entry_append_write.rs`：强类型独立 Entry 追加、Python 可选字符串边界、置信度、UUID、Bucket 活跃时间、精确/缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_entry_append_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/bucket_summary_rebuild_write.rs`：强类型独立 Bucket 摘要重建、最新窗口与 limit 后过滤、时间正序、精确去重、非正字符上限、缓存字段隔离、精确/缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_bucket_summary_rebuild_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/extraction_write.rs`：强类型独立提取结果保存、精确 Bucket/Entry ID、验证顺序与归属、既有记录去重、批内规范化重复保留、四类结构化默认值、Entry/Bucket 缓存更新、重复调用、审计隔离、晚期失败回滚，以及 `tests/fixtures/apply_save_extraction_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
+- `rust/work-memory-store/tests/classification_write.rs`：强类型独立分类审计保存、输入裁剪与空值、服务端元数据、精确候选合并、三种 action、缺失目标、UUID/default、重复调用、单表影响、插入失败回滚，以及 `tests/fixtures/apply_save_classification_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

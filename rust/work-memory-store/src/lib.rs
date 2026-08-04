@@ -8,6 +8,7 @@ mod archive_write;
 mod bucket_summary_write;
 mod bucket_write;
 mod chat_write;
+mod classification_write;
 mod correction_write;
 mod delete_write;
 mod entry_write;
@@ -22,6 +23,7 @@ pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, Classification
 pub use bucket_summary_write::{RebuildBucketSummaryRequest, UpdateBucketSummaryRequest};
 pub use bucket_write::CreateBucketRequest;
 pub use chat_write::ChatMessageWriteRequest;
+pub use classification_write::{SaveClassificationRecordOutcome, SaveClassificationRecordRequest};
 pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
 pub use delete_write::{
     DeleteBucketOutcome, DeleteBucketRequest, DeleteEntryOutcome, DeleteEntryRequest,
