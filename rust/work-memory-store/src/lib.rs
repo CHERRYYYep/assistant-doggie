@@ -5,6 +5,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
 mod archive_write;
+mod bucket_write;
 mod chat_write;
 mod correction_write;
 mod delete_write;
@@ -15,6 +16,7 @@ mod schema;
 mod write;
 
 pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
+pub use bucket_write::CreateBucketRequest;
 pub use chat_write::ChatMessageWriteRequest;
 pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
 pub use delete_write::{

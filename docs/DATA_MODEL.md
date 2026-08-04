@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2i）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2j）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API 与独立 Entry 删除 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API 与独立 Bucket 创建 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -302,5 +302,12 @@ R2i 独立 Entry 删除写边界：
 - 所有受影响 Todo 同时刷新 `updated_at`，匹配 SQLAlchemy `onupdate=utc_now`；Bucket 的 summary、`updated_at`、`last_active_at` 不自动更新，Correction 与 ChatMessage 也保持不变。
 - 当前产品没有公开的 Python Entry 删除服务；`tests/fixtures/apply_entry_delete_fixture.py` 直接执行 SQLAlchemy `session.delete(entry)`，用于验证模型级关系更新和最终状态等价。
 - 隔离测试覆盖影响 ID、同/跨 Bucket 引用、精确 ID、缺失 Entry、删除触发器之前已执行的链接更新全事务回滚，以及除运行时时间外的 Python/Rust 最终业务状态等价。
+
+R2j 独立 Bucket 创建写边界：
+
+- `CreateBucketRequest` 使用强类型 `BucketType`，标题 trim 后不能为空，摘要 trim，标签逐项 trim 并丢弃空项，同时保持原顺序和重复值，匹配 Python `create_bucket` 服务。
+- `WritableSqliteStore::create_bucket` 在统一事务内生成 UUID v4 和 SQLite 兼容时间，创建 status 为 active 的单个 Bucket；不创建 Entry、结构化记录、ClassificationRecord、Correction 或 ChatMessage。
+- 返回完整 `StoredBucket`；插入触发器失败会回滚全部业务状态，调用方仍无法获得裸可写连接或任意 SQL 闭包。
+- `tests/fixtures/apply_bucket_create_fixture.py` 调用 Python `create_bucket`；隔离测试比较忽略随机 ID 和运行时时间后的 Python/Rust 最终服务语义。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。
