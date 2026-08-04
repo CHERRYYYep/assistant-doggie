@@ -10,7 +10,7 @@ use work_memory_core::{
 use crate::records::decode_bucket;
 use crate::{StoreError, StoredBucket, WritableSqliteStore};
 
-const DEFAULT_BUCKET_SUMMARY_LIMIT: usize = 1_200;
+pub(crate) const DEFAULT_BUCKET_SUMMARY_LIMIT: usize = 1_200;
 const DEFAULT_CONTENT_TYPE: &str = "note";
 const EXTRACTED_EVIDENCE_SOURCE: &str = "llm-extracted";
 
@@ -593,7 +593,7 @@ fn merge_tags(existing: &[String], incoming: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn merge_bucket_summary(existing: &str, fragment: &str, max_chars: usize) -> String {
+pub(crate) fn merge_bucket_summary(existing: &str, fragment: &str, max_chars: usize) -> String {
     let mut parts = existing
         .split('\n')
         .map(str::trim)

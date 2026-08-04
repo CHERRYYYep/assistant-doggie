@@ -28,6 +28,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust Entry 移动请求的命令规范化、同 Bucket 类型化拒绝，以及摘要 Unicode 字符截断。
 - Rust ChatMessage 写请求的内容裁剪、空值拒绝、JSON null 规范化和 scalar details 拒绝。
 - Rust Bucket 与 Entry 删除请求保留精确 ID，缺失目标使用类型化错误且不会产生业务修改。
+- Rust Bucket 滚动摘要更新请求的摘要裁剪、至少 100 字符上限、默认 1200 字符上限、精确 Bucket ID 和 Python 兼容校验顺序。
 
 ### 2.2 集成测试
 
@@ -49,6 +50,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `delete_entry` 在临时 Python Schema 上覆盖仅删除 Entry、同/跨 Bucket 结构化记录与审计保留、全部 Entry 外键清空、Todo `updated_at` 刷新、Bucket 缓存不变、精确/缺失 ID 和晚期失败全事务 rollback；固定 helper 直接执行 SQLAlchemy Entry 模型删除并比较最终业务状态。
 - Rust `create_bucket` 在临时 Python Schema 上覆盖标题/摘要/标签规范化、active 默认值、UUID、单 Bucket 行影响、无关联记录副作用和插入失败全事务 rollback；固定 helper 调用 Python `create_bucket` 并比较忽略随机 ID/运行时时间后的服务级最终语义。
 - Rust `append_entry` 在临时 Python Schema 上覆盖 raw text/content type/可选字段规范化、置信度、UUID、单 Entry 行影响、Bucket 活跃时间刷新、精确/缺失 Bucket ID 和晚期失败全事务 rollback；固定 helper 调用 Python `append_entry` 并比较服务级最终语义。当前写测试不代表业务写路径已切换。
+- Rust `update_bucket_summary` 在临时 Python Schema 上覆盖 Unicode casefold/空白去重、默认与自定义字符上限、只更新 Bucket summary/`updated_at`、不刷新 `last_active_at`、精确/缺失 Bucket ID 和触发器失败全事务 rollback；固定 helper 调用 Python `update_bucket_summary` 并比较忽略运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 

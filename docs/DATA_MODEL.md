@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2k）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2l）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API 与独立 Entry 追加 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API 与独立 Bucket 滚动摘要更新 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -316,5 +316,12 @@ R2k 独立 Entry 追加写边界：
 - `summary` 与 `classification_reason` 保持 Python 字符串真值边界：None 或空字符串写为 SQL NULL，非空纯空白字符串 trim 后写为空字符串。
 - `WritableSqliteStore::append_entry` 在统一事务内拒绝缺失 Bucket，生成 Entry UUID v4 和时间，只插入一条不可变 Entry，并把 Bucket `updated_at`、`last_active_at` 刷新为同一时间；Bucket title/type/status/summary/tags 与所有结构化、分类和纠错记录不变。
 - `tests/fixtures/apply_entry_append_fixture.py` 调用 Python `append_entry`；隔离测试覆盖规范化、单行影响、精确/缺失 Bucket ID、晚期 Bucket 更新时间触发器导致 Entry 插入回滚，以及忽略随机 ID/运行时时间后的服务级最终语义等价。
+
+R2l 独立 Bucket 滚动摘要更新写边界：
+
+- `UpdateBucketSummaryRequest` 保留精确 Bucket ID，`entry_summary` trim 后不能为空；默认 `max_chars` 为 1200，自定义上限必须至少为 100，校验顺序与 Python `update_bucket_summary` 一致。
+- 摘要按换行拆分并裁剪空白，使用 Unicode casefold 与空白折叠后的 key 避免追加语义重复片段；超限时优先保留第一段和最新片段，最终按 Unicode 字符数截断并追加省略号。
+- `WritableSqliteStore::update_bucket_summary` 在统一事务内拒绝缺失 Bucket，只更新目标 Bucket 的 `summary` 与 `updated_at`；`last_active_at`、标题、类型、状态、标签、Entry、结构化记录和审计记录均保持不变。
+- `tests/fixtures/apply_bucket_summary_update_fixture.py` 调用 Python `update_bucket_summary`；隔离测试覆盖默认/自定义上限、去重、精确/缺失 ID、触发器失败全事务回滚和忽略运行时时间后的服务级最终语义等价。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。
