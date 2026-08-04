@@ -7,6 +7,7 @@
 mod classification;
 mod domain;
 mod error;
+mod memory;
 
 pub use classification::{
     ConfidencePolicy, apply_confidence_gate, apply_low_information_reference_gate,
@@ -16,3 +17,6 @@ pub use domain::{
     BucketStatus, BucketType, BucketView, ClassificationAction, ClassificationResult,
 };
 pub use error::CoreError;
+pub use memory::{
+    ArchiveResult, ArchiveStatus, BucketSummaryResult, ExtractionResult, TimelineEventExtract,
+};

@@ -362,7 +362,7 @@ impl ClassificationResult {
     }
 }
 
-fn required_text(value: String, field: &'static str) -> Result<String, CoreError> {
+pub(crate) fn required_text(value: String, field: &'static str) -> Result<String, CoreError> {
     let cleaned = value.trim();
     if cleaned.is_empty() {
         Err(CoreError::EmptyText(field))
@@ -371,7 +371,7 @@ fn required_text(value: String, field: &'static str) -> Result<String, CoreError
     }
 }
 
-fn normalize_optional_text(value: Option<String>) -> Option<String> {
+pub(crate) fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|item| {
         let cleaned = item.trim();
         (!cleaned.is_empty()).then(|| cleaned.to_owned())

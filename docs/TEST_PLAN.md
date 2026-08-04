@@ -273,7 +273,8 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 自动化映射：
 
 - `tests/test_llm.py`：Structured Outputs 封装和错误分支；
-- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环和工具白名单；
+- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环、工具白名单和严格参数校验；
+- `tests/test_contract_fixtures.py`：Python 对共享 JSON golden fixture 的规范化和拒绝行为；
 - `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
 - `tests/test_live_evaluation.py`：真实分类运行器的版本化元数据和报告落盘；
 - `tests/test_extraction_evaluation.py`、`tests/test_live_extraction_evaluation.py`：提取遗漏、编造风险提示和真实报告结构；
@@ -281,7 +282,8 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `tests/test_correction_service.py`：纠错移动和审计；
 - `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
 - `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
-- `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归。
+- `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归；
+- `rust/work-memory-contracts/tests/contract_fixtures.rs`：Rust 对同一共享 JSON golden fixture 的规范化和拒绝行为。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

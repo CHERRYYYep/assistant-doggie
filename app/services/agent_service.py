@@ -18,7 +18,16 @@ from app.llm import (
     create_openai_client,
 )
 from app.models import BucketType, ChatMessage
-from app.schemas import AgentTurnResult, ChatMessageView
+from app.schemas import (
+    AgentTurnResult,
+    ArchiveMemoryArguments,
+    ChatMessageView,
+    CreateBucketAndSaveArguments,
+    GetBucketDetailArguments,
+    ListActiveBucketsArguments,
+    SaveToExistingBucketArguments,
+    SearchMemoryArguments,
+)
 from app.services.archive_service import (
     archive_confirmed_input,
     archive_confirmed_new_input,
@@ -135,6 +144,27 @@ _RESPONSE_TOOLS: list[dict[str, Any]] = [
         "strict": True,
     },
 ]
+
+_AGENT_TOOL_ARGUMENT_SCHEMAS = {
+    "list_active_buckets": ListActiveBucketsArguments,
+    "search_memory": SearchMemoryArguments,
+    "get_bucket_detail": GetBucketDetailArguments,
+    "archive_memory": ArchiveMemoryArguments,
+    "save_to_existing_bucket": SaveToExistingBucketArguments,
+    "create_bucket_and_save": CreateBucketAndSaveArguments,
+}
+
+
+def validate_agent_tool_arguments(
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate registered tool arguments against strict shared contracts."""
+
+    schema = _AGENT_TOOL_ARGUMENT_SCHEMAS.get(name)
+    if schema is None:
+        return arguments
+    return schema.model_validate(arguments).model_dump(mode="python")
 
 
 def build_default_memory_context(
@@ -337,7 +367,8 @@ def execute_agent_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Execute a registered tool without allowing arbitrary local code execution."""
 
     try:
-        return _tool_payload(name, arguments)
+        validated_arguments = validate_agent_tool_arguments(name, arguments)
+        return _tool_payload(name, validated_arguments)
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 

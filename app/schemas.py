@@ -317,3 +317,40 @@ class BucketSearchResult(OutputSchema):
     last_active_at: datetime
     matched_entry_count: int = 0
     score: int = 0
+
+
+class ListActiveBucketsArguments(OutputSchema):
+    """Arguments for listing recent active Buckets."""
+
+
+class SearchMemoryArguments(OutputSchema):
+    """Arguments for keyword memory search."""
+
+    query: str
+
+
+class GetBucketDetailArguments(OutputSchema):
+    """Arguments for loading one Bucket detail."""
+
+    bucket_id: str
+
+
+class ArchiveMemoryArguments(OutputSchema):
+    """Arguments for risk-gated automatic memory archival."""
+
+    text: str
+
+
+class SaveToExistingBucketArguments(OutputSchema):
+    """Arguments for a user-confirmed append."""
+
+    bucket_id: str
+    text: str
+
+
+class CreateBucketAndSaveArguments(OutputSchema):
+    """Arguments for a user-confirmed Bucket creation and append."""
+
+    title: str
+    bucket_type: BucketTypeValue
+    text: str

@@ -227,3 +227,45 @@ def test_unknown_harness_tool_cannot_execute_arbitrary_code(database_url):
 
     assert result["ok"] is False
     assert result["error"] == "unknown tool: run_shell"
+
+
+def test_registered_tool_rejects_unknown_arguments():
+    result = execute_agent_tool("search_memory", {"query": "支付", "limit": 10})
+
+    assert result["ok"] is False
+    assert result["error"].startswith("ValidationError:")
+    assert "Extra inputs are not permitted" in result["error"]
+
+
+def test_registered_tool_rejects_missing_required_arguments():
+    result = execute_agent_tool("get_bucket_detail", {})
+
+    assert result["ok"] is False
+    assert result["error"].startswith("ValidationError:")
+    assert "Field required" in result["error"]
+
+
+def test_registered_tool_normalizes_arguments_before_execution(monkeypatch):
+    executed = []
+
+    def fake_tool_payload(name, arguments):
+        executed.append((name, arguments))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "app.services.agent_service._tool_payload",
+        fake_tool_payload,
+    )
+
+    result = execute_agent_tool(
+        "save_to_existing_bucket",
+        {"bucket_id": " bucket-1 ", "text": " 故障恢复。 "},
+    )
+
+    assert result == {"ok": True}
+    assert executed == [
+        (
+            "save_to_existing_bucket",
+            {"bucket_id": "bucket-1", "text": "故障恢复。"},
+        )
+    ]

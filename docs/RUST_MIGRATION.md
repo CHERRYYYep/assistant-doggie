@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R0 已完成——建立 Rust workspace，并迁移分类领域契约与确定性风险门控。生产运行路径仍是 Python。
+> 当前阶段：R1 已完成——Rust 已具备严格 JSON 契约和 Python/Rust 共享 golden fixture；生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -81,16 +81,31 @@ cargo test --workspace
 pytest -q
 ```
 
-限制：R0 尚未接入 Python 生产路径，也未实现 JSON 反序列化、数据库或 LLM 调用。
+R0 阶段限制：尚未接入 Python 生产路径；JSON 反序列化已在 R1 补齐，数据库和 LLM 调用仍未迁移。
 
-### R1：跨语言契约与固定样例一致性
+### R1：跨语言契约与固定样例一致性（已完成）
 
-- 为 Rust 领域类型增加严格 JSON adapter，拒绝未知字段。
-- 迁移 `ExtractionResult`、`ArchiveResult` 和 Agent 工具参数/返回契约。
-- 让 Python 与 Rust 读取同一批 `tests/fixtures/` 样例。
-- 为规范化结果生成可比较的 JSON，建立差异测试。
+代码位置：`rust/work-memory-contracts/`、`rust/work-memory-core/src/memory.rs`、`tests/fixtures/contract_cases.json`。
 
-验收：分类和提取固定样例在两种实现中产生相同的规范化结果；所有未知字段、非法枚举和不一致 action 均被拒绝。
+已迁移：
+
+- 为分类、提取、归档、Bucket 视图、搜索结果、聊天消息和 Agent turn 增加严格 JSON adapter。
+- Rust adapter 使用 `deny_unknown_fields`，并保持 Pydantic 对普通字符串、可选字符串、字符串列表、枚举和时间戳的既有边界行为。
+- 迁移 `ExtractionResult`、`BucketSummaryResult`、`ArchiveResult` 领域类型，以及六个受控 Agent 工具的参数契约。
+- Python 工具执行入口在调用业务函数前使用严格 Pydantic Schema 校验，未知字段、缺少必填参数和非法 Bucket 类型不会进入执行层。
+- Python 与 Rust 共同读取 `tests/fixtures/contract_cases.json`；valid 案例比较规范化 JSON，invalid 案例验证拒绝行为。
+- golden fixture 覆盖分类、提取、Bucket 摘要、归档、Bucket 视图、聊天消息、Agent turn、搜索结果和工具参数。
+
+验收命令：
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
+pytest -q
+```
+
+限制：R1 只建立无 I/O 领域类型和 JSON 边界的一致性，Rust 尚未接入 SQLite、LLM 或 Python 生产调用链，也不会读写当前 `work_memory.db`。
 
 ### R2：SQLite 仓储与迁移机制
 
