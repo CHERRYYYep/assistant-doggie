@@ -358,14 +358,14 @@ fn insert_entry(
 }
 
 #[derive(Debug)]
-struct InsertedChildren {
-    todo_ids: Vec<String>,
-    evidence_ids: Vec<String>,
-    timeline_event_ids: Vec<String>,
-    decision_ids: Vec<String>,
+pub(crate) struct InsertedChildren {
+    pub(crate) todo_ids: Vec<String>,
+    pub(crate) evidence_ids: Vec<String>,
+    pub(crate) timeline_event_ids: Vec<String>,
+    pub(crate) decision_ids: Vec<String>,
 }
 
-fn insert_extracted_children(
+pub(crate) fn insert_extracted_children(
     transaction: &Transaction<'_>,
     bucket_id: &str,
     entry_id: &str,
@@ -461,7 +461,7 @@ fn insert_extracted_children(
     })
 }
 
-fn update_bucket_cache(
+pub(crate) fn update_bucket_cache(
     transaction: &Transaction<'_>,
     bucket: &StoredBucket,
     extraction: &ExtractionResult,
@@ -518,7 +518,7 @@ fn insert_classification_record(
     Ok(())
 }
 
-fn get_bucket(
+pub(crate) fn get_bucket(
     transaction: &Transaction<'_>,
     bucket_id: &str,
 ) -> Result<Option<StoredBucket>, StoreError> {

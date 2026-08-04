@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2m）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2n）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API 与独立 Bucket 摘要重建 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API、独立 Bucket 摘要重建 API 与独立提取结果保存 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -330,5 +330,14 @@ R2m 独立 Bucket 摘要重建写边界：
 - SQL 先按 `created_at DESC` 限制窗口，空字符串和纯空白 summary 也会占用窗口；随后 trim、丢弃空片段、恢复为时间正序，并按清理后的大小写敏感精确文本保留第一次出现，区别于滚动追加 API 的 Unicode casefold 去重。
 - 重建结果按 Python Unicode 字符和切片语义截断；没有存活 Entry summary 时会把旧缓存清空。事务只更新目标 Bucket 的 `summary` 与 `updated_at`，不刷新 `last_active_at`，也不修改其他业务表。
 - 独立 API 与 Rust `move_entry` 共用同一重建函数，避免纠错路径和公开重建路径漂移；`tests/fixtures/apply_bucket_summary_rebuild_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖窗口、去重、空缓存、非正字符上限、精确/缺失 ID 和触发器失败回滚。
+
+
+R2n 独立提取结果保存写边界：
+
+- `SaveExtractionRequest` 接收已验证的核心 `ExtractionResult` 并保留精确 Bucket/Entry ID；事务先查 Bucket，再验证 Entry 存在且属于目标 Bucket，缺失 Bucket、缺失 Entry 或归属不匹配都在业务修改前返回类型化错误。
+- Todo/Evidence/Decision 按 Unicode casefold 与空白折叠后的文本 key 对事务前已有记录去重，TimelineEvent 按精确 `event_time` 与规范化文本组合去重；与 Python 相同，去重集合不会在处理本批输入时扩展，因此同一批中的规范化重复项仍可分别保存。
+- 新 Evidence 的 source 固定为 `llm-extracted`，Todo 使用 open/无 due date，Decision reason 为 NULL；`hypotheses` 与 `entities` 当前没有持久化表，保持不落库。返回值只暴露本次新建的四类结构化记录 ID。
+- 同一事务把 Entry `summary` 设为提取摘要，按 Unicode casefold 合并 Bucket 标签，并用 1200 字符滚动规则更新 Bucket `summary` 与 `updated_at`；`last_active_at`、Entry 其他字段、分类/纠错/聊天审计均不变。
+- 独立 API 与归档聚合写路径共用结构化记录插入和 Bucket 缓存更新实现；`tests/fixtures/apply_save_extraction_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确 ID、验证顺序、归属错误、批内重复、重复调用和晚期失败全事务回滚。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。
