@@ -7,6 +7,7 @@ use std::path::PathBuf;
 mod archive_write;
 mod chat_write;
 mod correction_write;
+mod delete_write;
 mod migration;
 mod read;
 mod records;
@@ -16,6 +17,7 @@ mod write;
 pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
 pub use chat_write::ChatMessageWriteRequest;
 pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
+pub use delete_write::{DeleteBucketOutcome, DeleteBucketRequest};
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
     SchemaState, inspect_database, migrate_database, restore_database,

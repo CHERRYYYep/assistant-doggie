@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、事务性 Entry 移动纠错 API 与强类型 ChatMessage 追加 API。这些 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、事务性 Entry 移动纠错 API、强类型 ChatMessage 追加 API 与受控 Bucket 聚合删除 API。这些 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -112,6 +112,7 @@ confidence < 0.55               → 用户确认
 - Bucket ID 无效：降级为确认，不进入持久化流程。
 - 数据库任一步失败：自动归档事务整体回滚。
 - 用户确认后：通过独立确认入口重新提取并保存。
+- Rust R2h `delete_bucket` 仅在隔离数据库提供模型级 Bucket 聚合删除：依赖现有外键删除 Bucket 自有聚合、清空跨 Bucket 子记录和分类审计的 Entry 外键，并在任一步失败时整体回滚；当前产品没有对应的 Python 删除服务，生产路径尚未调用该 API。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

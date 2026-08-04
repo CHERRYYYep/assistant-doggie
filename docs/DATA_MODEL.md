@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2g）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2h）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API 与 ChatMessage 追加 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API 与 Bucket 聚合删除 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -287,4 +287,12 @@ R2g ChatMessage 追加写边界：
 - 新消息使用 UUID v4；时间戳至少比当前最新 ChatMessage 晚一微秒，从而保持 `created_at DESC, id DESC` 有界查询再反转后的追加/展示顺序。
 - 隔离测试覆盖三种角色、校验前无写入、单行影响范围、快速连续追加、触发器失败回滚，以及 Python/Rust 忽略随机 ID 和实际时间后的消息语义等价。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖删除/级联等其余业务写语义，也未完成服务层集成和生产写路径切换。
+R2h Bucket 聚合删除写边界：
+
+- `DeleteBucketRequest` 保留调用方提供的精确 Bucket ID；`WritableSqliteStore::delete_bucket` 在统一 `BEGIN IMMEDIATE` 事务中拒绝缺失 Bucket，并返回被删除的 Entry 与 Bucket 自有 Todo/Evidence/TimelineEvent/Decision ID，以及被清空 Entry 外键的 ClassificationRecord ID。
+- 删除依赖当前 Python Schema 的外键语义：Bucket、其 Entry 和 Bucket 自有结构化记录级联删除；关联 `classification_records.entry_id` 设为 NULL，而非外键的 `classification_records.bucket_id`、审计文本、Correction 和 ChatMessage 保持不变。
+- 若其他 Bucket 的 Todo/Evidence/TimelineEvent/Decision 指向被删 Entry，这些记录继续存在并把 `entry_id` 设为 NULL；Rust 还显式刷新存活 Todo 的 `updated_at`，匹配 SQLAlchemy `onupdate=utc_now`，其余三类记录没有更新时间字段。
+- 当前产品没有公开的 Python Bucket 删除服务；跨语言 fixture 直接执行 SQLAlchemy `session.delete(bucket)`，因此此处验证的是模型级级联/SET NULL 最终状态等价，而不是服务接口等价。
+- 隔离测试覆盖聚合影响报告、跨 Bucket 引用存活、缺失 Bucket 无修改、触发器失败全事务回滚和 Python/Rust 最终业务状态等价；所有数据库仅位于系统临时目录。
+
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖独立 Entry 删除及其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。
