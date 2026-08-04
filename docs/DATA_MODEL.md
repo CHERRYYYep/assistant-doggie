@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容与 migration 边界（R2a/R2b/R2c）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2d）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义和写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询，以及必须离线执行的 Schema 检查、基线 migration、备份和恢复；它尚未参与生产业务写入。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义和写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复，以及仅在隔离数据库验证的可写连接和原子事务基础；它尚未提供具体业务写 API，也未参与生产业务写入。
 
 只读查询边界：
 
@@ -255,4 +255,12 @@ CREATE TABLE schema_migrations (
 - 执行 `migrate` 或 `restore` 前必须停止 Python、Streamlit 和其他数据库连接；Python 与 Rust 不得同时写同一份生产数据库。
 - 跨语言测试只在系统临时目录生成数据库，不得读取、覆盖或迁移仓库根目录的 `work_memory.db`。
 
-完整命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖安全业务写事务和级联写入演练。
+R2d 可写事务边界：
+
+- `WritableSqliteStore::open_existing` 只允许以 `READ_WRITE` 打开已有文件；不会创建新数据库，也不会改变 `SqliteStore` 的 `READ_ONLY + query_only` 保证。
+- 打开时启用并验证 `foreign_keys`，检查受支持的 migration history，并执行完整九表 Schema 与完整性验证；不完整、损坏或未来版本数据库在进入事务前被拒绝。
+- crate 内部统一使用 `BEGIN IMMEDIATE`，成功才 commit，操作错误显式 rollback；打开后如 `schema_version` 变化，后续事务被拒绝。
+- 当前没有公开的 Bucket/Entry 等业务写入口。事务闭包保持 crate-private，防止调用方以任意 SQL 绕过未来的强类型和业务不变量校验。
+- 所有写测试都复制或生成到系统临时目录；正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
+
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖具体业务写 API、级联业务操作和 Python/Rust 最终状态等价演练。

@@ -37,6 +37,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Python SQLAlchemy 在临时路径创建完整九表数据库后，由 Rust 强类型只读验证全部记录字段、可选值、枚举、JSON、布尔值、时间格式、Bucket 子记录顺序和最近聊天窗口顺序。
 - Python SQLAlchemy 九表数据库到 Rust version 1 的升级、重复升级、已提交 WAL 数据备份、完整业务数据不变性、legacy 恢复、safety backup 和反向恢复。
 - 缺索引、外键损坏、未来 migration 版本、错误 migration 主键、已有备份文件和无效恢复源必须在修改目标前被拒绝。所有数据库和备份仅使用系统临时目录，不接触仓库根目录的 `work_memory.db`。
+- Rust 可写 store 只打开完整受支持的已有 Schema，强制 `foreign_keys`，并在隔离临时数据库验证成功 commit、外键错误后的完整 rollback，以及打开后 Schema 漂移拒绝；当前测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 
@@ -292,6 +293,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/store_validation.rs`：Rust SQLite 九表必需 Schema，以及损坏枚举、JSON、bool 和时间戳的错误分类。
 - `rust/work-memory-store/tests/python_sqlite_compat.rs`：Python 九表建库到 Rust 强类型只读查询的跨语言兼容回归，覆盖字段、可选值、JSON、枚举和排序；数据库只允许位于系统临时目录。
 - `rust/work-memory-store/tests/python_migration_compat.rs`：九表 Schema、legacy → version 1、幂等、业务数据不变性、恢复、safety backup 和损坏输入拒绝回归；所有路径只位于系统临时目录。
+- `rust/work-memory-store/src/write.rs` 单元测试：可写连接保护、`BEGIN IMMEDIATE` 成功提交、外键失败全事务回滚、坏 Schema 和 Schema 版本漂移拒绝；fixture 只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

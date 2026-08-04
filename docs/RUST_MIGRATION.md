@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R2 进行中（R2a、R2b 已完成）——Rust 已能只读查询 Bucket/Entry，并能离线验证九表 Schema、登记 migration version 1、创建一致性备份和安全恢复；其余七表强类型仓储及全部业务写路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2 进行中（R2a/R2b/R2c 与 R2d 事务基础已完成）——Rust 已能强类型只读查询完整九表、离线验证和迁移 Schema，并在隔离数据库上安全打开可写连接、执行原子事务和强制外键；具体业务写 API 与生产写路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -136,12 +136,22 @@ R2c 完整强类型只读仓储已完成：
 - Bucket 子记录保持 Python relationship 的 `created_at ASC`；最近聊天窗口保持 Python 的 `created_at DESC, id DESC` 截断后再反转为展示顺序。
 - 跨语言 fixture 覆盖九表字段、可选值、枚举、JSON、布尔值和排序；损坏数据测试覆盖非法 Todo status、分类 action/candidate JSON/bool、Chat role、JSON 类型和时间戳。
 
+R2d 可写事务基础已完成：
+
+- 新增独立的 `WritableSqliteStore::open_existing`；它只以 `READ_WRITE` 打开已存在文件，不会隐式创建数据库，也不会削弱 `SqliteStore` 的只读保证。
+- 可写 store 在返回前启用并验证 `PRAGMA foreign_keys=ON`，检查受支持的 migration history，并对九表执行完整列、主键、索引、外键和完整性验证。
+- crate 内部事务边界使用 `BEGIN IMMEDIATE`；操作成功才 commit，任一步返回错误都显式 rollback。
+- 打开时记录 SQLite `schema_version`，每次事务前重新检查连接保护、migration history 和 Schema 版本；已验证后发生 Schema 变化时拒绝写入。
+- 隔离临时数据库测试覆盖成功 commit、外键失败导致完整 rollback、坏 Schema 在写前拒绝，以及验证后 Schema 漂移拒绝。
+- 事务执行入口暂为 crate-private，避免应用调用方绕过下一阶段的强类型业务写 API；当前生产数据库仍只有 Python 可以写。
+
 R2 尚未完成的范围：
 
-- 实现安全业务写事务，并在隔离数据库演练新增、更新、删除、外键级联、失败回滚和 Python/Rust 最终状态等价。
+- 在事务基础上实现 Bucket、Entry、Todo/Evidence/TimelineEvent/Decision 和 ClassificationRecord 的强类型业务写 API。
+- 在隔离数据库演练新增、更新、删除、外键级联、失败回滚和 Python/Rust 最终状态等价。
 - 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a/R2b/R2c 验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，并在临时隔离副本完成 version 1 升级、备份和恢复；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求全部仓储和隔离数据库上的写入语义验证。
+R2a/R2b/R2c/R2d 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并验证可写连接与原子事务安全属性；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求具体业务写入和跨语言最终状态等价。
 
 ### R3：归档、搜索与纠错服务
 
@@ -185,7 +195,7 @@ R2a/R2b/R2c 验收：Rust 可以强类型只读读取 Python 创建的完整九�
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复基础已完成；安全写事务待办 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础已完成；强类型业务写 API 待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
@@ -196,7 +206,7 @@ R2a/R2b/R2c 验收：Rust 可以强类型只读读取 Python 创建的完整九�
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
-rust/work-memory-store/           # R2a/R2b/R2c：九表强类型只读仓储与离线 migration 安全层
+rust/work-memory-store/           # R2a-R2d：九表只读仓储、离线 migration 与隔离写事务基础
 rust/work-memory-service/         # R3 计划：业务编排
 rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI

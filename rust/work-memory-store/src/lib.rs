@@ -8,6 +8,7 @@ mod migration;
 mod read;
 mod records;
 mod schema;
+mod write;
 
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
@@ -19,6 +20,7 @@ pub use records::{
     StoredBucket, StoredChatMessage, StoredClassificationRecord, StoredCorrection, StoredDecision,
     StoredEntry, StoredEvidence, StoredTimelineEvent, StoredTimestamp, StoredTodo, TodoStatus,
 };
+pub use write::WritableSqliteStore;
 /// Failures at the SQLite compatibility boundary.
 #[derive(Debug)]
 pub enum StoreError {
@@ -147,6 +149,15 @@ pub enum StoreError {
         value: String,
     },
     InvalidLimit(usize),
+    WriteConnectionNotReady {
+        opened_read_only: bool,
+        query_only: bool,
+        foreign_keys: bool,
+    },
+    SchemaChangedAfterValidation {
+        expected: i64,
+        found: i64,
+    },
 }
 
 impl Display for StoreError {
@@ -341,6 +352,18 @@ impl Display for StoreError {
             Self::InvalidLimit(limit) => {
                 write!(formatter, "query limit must be at least 1, got {limit}")
             }
+            Self::WriteConnectionNotReady {
+                opened_read_only,
+                query_only,
+                foreign_keys,
+            } => write!(
+                formatter,
+                "SQLite write connection is not ready: opened_read_only={opened_read_only}, query_only={query_only}, foreign_keys={foreign_keys}"
+            ),
+            Self::SchemaChangedAfterValidation { expected, found } => write!(
+                formatter,
+                "SQLite schema changed after write-store validation: expected schema_version {expected}, found {found}"
+            ),
         }
     }
 }
