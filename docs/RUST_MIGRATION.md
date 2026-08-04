@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R1 已完成——Rust 已具备严格 JSON 契约和 Python/Rust 共享 golden fixture；生产运行路径仍是 Python。
+> 当前阶段：R2 进行中（R2a 已完成）——Rust 已能只读校验并查询 Python 创建的 Bucket/Entry SQLite 数据库；migration、其余表和全部写路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -107,14 +107,23 @@ pytest -q
 
 限制：R1 只建立无 I/O 领域类型和 JSON 边界的一致性，Rust 尚未接入 SQLite、LLM 或 Python 生产调用链，也不会读写当前 `work_memory.db`。
 
-### R2：SQLite 仓储与迁移机制
+### R2：SQLite 仓储与迁移机制（进行中）
 
-- Rust 只读打开现有 SQLite Schema，先实现 Bucket/Entry 查询。
-- 建立带版本号的 migration 表、备份和恢复说明。
-- 实现 Bucket、Entry、Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 仓储。
-- 在临时数据库上验证外键、级联、索引和时间格式兼容。
+R2a 只读基础已完成，代码位置为 `rust/work-memory-store/`：
 
-验收：Rust 可以读取 Python 创建的数据库；对隔离副本执行升级和回滚演练；不得直接修改用户本地数据库做测试。
+- 使用 SQLite `READ_ONLY` 打开标志和 `query_only` 防护，不创建数据库、不提供写接口。
+- 打开时校验 `buckets`、`entries` 表及当前查询所需全部列，区分 SQLite 错误、缺表、缺列、非法枚举、非法 JSON、非法时间戳和非法 limit。
+- 强类型读取 Bucket/Entry；`tags` 解码为字符串数组，Bucket type/status 映射到核心枚举。
+- `list_active_buckets` 保持 Python 的 `active` 过滤以及 `last_active_at DESC, updated_at DESC` 排序；Entry 按 `created_at ASC` 读取。
+- `tests/fixtures/create_sqlite_compat_fixture.py` 只在临时路径创建固定 Python 数据库；Rust 集成测试验证 Schema、排序、过滤、字段、JSON 标签、SQLAlchemy 时间文本和只读配置。
+
+R2 尚未完成的范围：
+
+- 建立带版本号的 migration 表、备份和恢复说明，并在隔离副本执行升级/回滚演练。
+- 实现 Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 仓储以及安全写事务。
+- 验证外键、级联和索引行为；在写路径切换前继续保持 Python 为唯一数据库写入者。
+
+R2a 验收：Rust 可以只读读取 Python 创建的临时数据库，测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求 migration 演练、全部仓储和隔离数据库上的写入语义验证。
 
 ### R3：归档、搜索与纠错服务
 
@@ -157,8 +166,8 @@ pytest -q
 |---|---|---|---|
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
-| JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | Rust adapter crate | R1 待办 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | Rust persistence crate | R2 待办 |
+| JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a 只读 Bucket/Entry 基础已完成；完整 R2 待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
@@ -168,8 +177,8 @@ pytest -q
 ```text
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
-rust/work-memory-contracts/       # R1 计划：JSON/API 契约
-rust/work-memory-store/           # R2 计划：SQLite 与 migration
+rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
+rust/work-memory-store/           # R2a 已完成：只读 Bucket/Entry SQLite 兼容层
 rust/work-memory-service/         # R3 计划：业务编排
 rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI

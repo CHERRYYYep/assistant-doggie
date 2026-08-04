@@ -220,3 +220,16 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 - 外部向量库 ID。
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
+
+## 15. Python/Rust SQLite 兼容边界（R2a）
+
+当前 SQLite Schema 仍由 Python SQLAlchemy 定义和写入，Rust `work-memory-store` 只提供兼容读取，不参与生产写入或 migration。边界如下：
+
+- Rust 以 SQLite `READ_ONLY` 模式打开已有文件，并额外启用 `PRAGMA query_only=ON`；打开时必须存在 `buckets`、`entries` 及其当前全部必需列。
+- `buckets.tags` 在 SQLite 中是 JSON 文本，Rust 必须严格解码为 `list[string]` 等价的 `Vec<String>`；损坏 JSON 或非字符串数组应作为持久化数据错误返回。
+- `type` 和 `status` 使用 Python 枚举的精确小写值，不进行 trim 或大小写纠正；未知持久化值必须报错，不能静默映射。
+- SQLAlchemy SQLite 当前通常把 UTC datetime 写为 `2026-08-04 10:20:00.000000` 一类无时区偏移文本。Rust 保留原始文本，并按“Python 由 `utc_now()` 写入的无偏移 UTC”解析；兼容层同时接受合法 RFC 3339 文本，但不会重写原值。
+- 活跃 Bucket 查询保持 `status = active`、`last_active_at DESC`、`updated_at DESC` 和 `limit >= 1`；Bucket 的 Entry 保持 `created_at ASC`。
+- 跨语言测试只在系统临时目录生成数据库，不得读取、覆盖或迁移仓库根目录的 `work_memory.db`。
+
+R2a 尚未定义 migration 版本、写事务、外键/级联演练，也未覆盖其余七张表；这些仍属于完整 R2 范围。Python 和 Rust 不得同时写同一份生产数据库。

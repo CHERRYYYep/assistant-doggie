@@ -22,6 +22,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - schema 校验。
 - Agent 工具参数解析、工具白名单和历史消息装配。
 - Rust `work-memory-core` 的领域校验、候选排序和风险门控。
+- Rust `work-memory-store` 的必需表/列校验及非法枚举、JSON、时间戳、limit 错误。
 
 ### 2.2 集成测试
 
@@ -32,6 +33,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - 创建 bucket + entry + structured records。
 - Responses API 与 Chat Completions 的多轮工具调用。
 - 单一对话在多次请求之间的上下文复用。
+- Python SQLAlchemy 在临时路径建库后，由 Rust 只读验证 Bucket/Entry Schema、过滤、排序、字段、JSON 标签和时间格式。
 
 ### 2.3 手动测试
 
@@ -284,6 +286,8 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
 - `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归；
 - `rust/work-memory-contracts/tests/contract_fixtures.rs`：Rust 对同一共享 JSON golden fixture 的规范化和拒绝行为。
+- `rust/work-memory-store/tests/store_validation.rs`：Rust SQLite 必需 Schema 与损坏持久化值的错误分类。
+- `rust/work-memory-store/tests/python_sqlite_compat.rs`：Python 建库到 Rust 只读查询的跨语言兼容回归；数据库只允许位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

@@ -1,0 +1,12 @@
+[package]
+name = "work-memory-store"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Read-only SQLite compatibility layer for Personal Work Memory Agent"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+rusqlite = { version = "0.34", features = ["bundled"] }
+serde_json = "1"
+work-memory-core = { path = "../work-memory-core" }
