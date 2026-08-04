@@ -1,5 +1,7 @@
 # 系统架构设计
 
+> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；`rust/work-memory-core/` 已迁移确定性分类领域逻辑，但尚未接入运行时。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)。
+
 ## 1. 总体架构
 
 MVP 使用可测试的单体服务架构：

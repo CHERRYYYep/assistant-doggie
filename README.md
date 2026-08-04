@@ -25,12 +25,13 @@
 7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
 8. Streamlit 主区域专注长期对话，Bucket 记忆放在可展开的独立侧边栏，不再提供重复的手工归档页签。
 
-Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。
+Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。 Rust 重构的边界、阶段、数据安全规则和当前完成度见 [`docs/RUST_MIGRATION.md`](./docs/RUST_MIGRATION.md)。
 
 ## 技术栈与目录
 
-- Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- `app/`：模型、Schema、Prompt、LLM 封装和业务服务。
+- 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
+- 渐进重构目标：Rust；第一阶段领域核心位于 `rust/work-memory-core/`，尚未接管生产路径。
+- `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。
 - `docs/`：产品、架构、数据模型、测试和开发说明。
@@ -68,11 +69,19 @@ OPENAI_MODEL=中转站支持的模型名
 
 如果中转站没有实现 `/responses`，将 `OPENAI_API_MODE` 改为 `chat_completions`。`OPENAI_BASE_URL` 应填写 API 根路径（通常以 `/v1` 结尾），不要填写具体的 `/responses` 或 `/chat/completions` 路径。修改配置后重启应用。
 
-运行自动化测试和透明规则分类基线：
+运行 Python 自动化测试、Rust workspace 测试和透明规则分类基线：
 
 ```bash
 pytest -q
+cargo test --workspace
 python -m app.evaluation --baseline
+```
+
+Rust 格式与静态检查：
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 少量真实模型分类与提取评估会产生 API 调用：
@@ -96,12 +105,13 @@ python -m app.live_extraction_evaluation \
 3. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
 4. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
 5. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
-6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
-7. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
-8. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
-9. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
-10. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
-11. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：当前服务和数据流。
+7. [`docs/RUST_MIGRATION.md`](./docs/RUST_MIGRATION.md)：Rust 渐进重构阶段、边界与验收门槛。
+8. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
+9. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
+10. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
+11. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
+12. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
 
 ## 当前边界
 

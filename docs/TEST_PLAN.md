@@ -21,6 +21,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - correction_service 的规则部分。
 - schema 校验。
 - Agent 工具参数解析、工具白名单和历史消息装配。
+- Rust `work-memory-core` 的领域校验、候选排序和风险门控。
 
 ### 2.2 集成测试
 
@@ -245,6 +246,9 @@ LLM 输出不稳定，所以测试分两层：
 
 ```bash
 pytest -q
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --locked
 python -m app.evaluation --baseline
 python -m app.live_evaluation \
   --limit 3 \
@@ -255,7 +259,7 @@ python -m app.live_extraction_evaluation \
   --output /tmp/extraction-live-report.json
 ```
 
-前两条不调用真实 API。后两条会使用 `.env` 中选定站点的 Base URL、Key、API 模式和模型，并可能产生费用。报告必须保存站点名、Base URL、API 模式、模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。中转站需分别验证其是否支持 Responses API 或 Chat Completions Structured Outputs。
+`pytest`、Cargo 检查和规则基线不调用真实 API。两个 `live` 命令会使用 `.env` 中选定站点的 Base URL、Key、API 模式和模型，并可能产生费用。报告必须保存站点名、Base URL、API 模式、模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。中转站需分别验证其是否支持 Responses API 或 Chat Completions Structured Outputs。
 
 离线复算已有报告：
 
@@ -277,6 +281,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `tests/test_correction_service.py`：纠错移动和审计；
 - `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
 - `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
+- `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 
