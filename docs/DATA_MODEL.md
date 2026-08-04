@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2j）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2k）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API 与独立 Bucket 创建 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API 与独立 Entry 追加 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -309,5 +309,12 @@ R2j 独立 Bucket 创建写边界：
 - `WritableSqliteStore::create_bucket` 在统一事务内生成 UUID v4 和 SQLite 兼容时间，创建 status 为 active 的单个 Bucket；不创建 Entry、结构化记录、ClassificationRecord、Correction 或 ChatMessage。
 - 返回完整 `StoredBucket`；插入触发器失败会回滚全部业务状态，调用方仍无法获得裸可写连接或任意 SQL 闭包。
 - `tests/fixtures/apply_bucket_create_fixture.py` 调用 Python `create_bucket`；隔离测试比较忽略随机 ID 和运行时时间后的 Python/Rust 最终服务语义。
+
+R2k 独立 Entry 追加写边界：
+
+- `AppendEntryRequest` 保留精确 Bucket ID；`raw_text` 和 `content_type` trim 后不能为空，置信度必须在 0 到 1 之间且不能为 NaN。
+- `summary` 与 `classification_reason` 保持 Python 字符串真值边界：None 或空字符串写为 SQL NULL，非空纯空白字符串 trim 后写为空字符串。
+- `WritableSqliteStore::append_entry` 在统一事务内拒绝缺失 Bucket，生成 Entry UUID v4 和时间，只插入一条不可变 Entry，并把 Bucket `updated_at`、`last_active_at` 刷新为同一时间；Bucket title/type/status/summary/tags 与所有结构化、分类和纠错记录不变。
+- `tests/fixtures/apply_entry_append_fixture.py` 调用 Python `append_entry`；隔离测试覆盖规范化、单行影响、精确/缺失 Bucket ID、晚期 Bucket 更新时间触发器导致 Entry 插入回滚，以及忽略随机 ID/运行时时间后的服务级最终语义等价。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。

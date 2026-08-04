@@ -47,7 +47,8 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `append_chat_message` 在临时 Python Schema 上覆盖 user/assistant/tool、内容裁剪、工具元数据与 details、UUID、单行影响、连续追加顺序和触发器失败全事务 rollback；固定 Python helper 与 Rust 比较忽略随机 ID/实际时间后的最终消息语义。
 - Rust `delete_bucket` 在临时 Python Schema 上覆盖 Bucket/Entry/自有结构化记录级联、ClassificationRecord Entry 外键清空、跨 Bucket 结构化记录存活、Todo `updated_at` 刷新、缺失目标无修改和触发器失败全事务 rollback；由于没有产品级 Python 删除服务，固定 helper 直接执行 SQLAlchemy 模型删除，并对比除运行时时间外的最终业务状态。
 - Rust `delete_entry` 在临时 Python Schema 上覆盖仅删除 Entry、同/跨 Bucket 结构化记录与审计保留、全部 Entry 外键清空、Todo `updated_at` 刷新、Bucket 缓存不变、精确/缺失 ID 和晚期失败全事务 rollback；固定 helper 直接执行 SQLAlchemy Entry 模型删除并比较最终业务状态。
-- Rust `create_bucket` 在临时 Python Schema 上覆盖标题/摘要/标签规范化、active 默认值、UUID、单 Bucket 行影响、无关联记录副作用和插入失败全事务 rollback；固定 helper 调用 Python `create_bucket` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
+- Rust `create_bucket` 在临时 Python Schema 上覆盖标题/摘要/标签规范化、active 默认值、UUID、单 Bucket 行影响、无关联记录副作用和插入失败全事务 rollback；固定 helper 调用 Python `create_bucket` 并比较忽略随机 ID/运行时时间后的服务级最终语义。
+- Rust `append_entry` 在临时 Python Schema 上覆盖 raw text/content type/可选字段规范化、置信度、UUID、单 Entry 行影响、Bucket 活跃时间刷新、精确/缺失 Bucket ID 和晚期失败全事务 rollback；固定 helper 调用 Python `append_entry` 并比较服务级最终语义。当前写测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 
@@ -310,6 +311,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/delete_write.rs`：受控 Bucket 聚合删除、影响 ID、跨 Bucket 引用的 SET NULL 与 Todo 更新时间、缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_bucket_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/entry_delete_write.rs`：受控独立 Entry 删除、清空链接的影响 ID、同/跨 Bucket 子记录存活、Todo 更新时间、Bucket/审计保持、精确与缺失 ID、晚期失败回滚，以及 `tests/fixtures/apply_entry_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/bucket_create_write.rs`：强类型独立 Bucket 创建、Python 规范化、active 默认值、UUID、单行影响、无关联副作用、插入失败回滚，以及 `tests/fixtures/apply_bucket_create_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
+- `rust/work-memory-store/tests/entry_append_write.rs`：强类型独立 Entry 追加、Python 可选字符串边界、置信度、UUID、Bucket 活跃时间、精确/缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_entry_append_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

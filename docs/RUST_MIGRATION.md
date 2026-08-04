@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-04
-> 当前阶段：R2 进行中（R2a-R2j 已完成）——Rust 已能强类型只读查询完整九表、离线验证和迁移 Schema，并在隔离数据库上通过强类型 API 写入 append/create/ask_user 归档、Entry 移动纠错、单条 ChatMessage、Bucket 聚合删除、独立 Entry 删除和独立 Bucket 创建；其他剩余 CRUD、服务层集成和生产写路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2 进行中（R2a-R2k 已完成）——Rust 已能强类型只读查询完整九表、离线验证和迁移 Schema，并在隔离数据库上通过强类型 API 写入 append/create/ask_user 归档、Entry 移动纠错、单条 ChatMessage、Bucket 聚合删除、独立 Entry 删除、独立 Bucket 创建和独立 Entry 追加；其他剩余 CRUD、服务层集成和生产写路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -191,19 +191,25 @@ R2j 强类型独立 Bucket 创建 API 已完成：
 - 每次调用在统一事务内生成 UUID v4 和 SQLite 兼容时间，只创建一个 active Bucket 并返回完整 `StoredBucket`，不附带 Entry、结构化记录或审计记录。
 - 临时数据库测试覆盖请求规范化、单行影响、无关联行副作用和插入触发器失败全回滚；`tests/fixtures/apply_bucket_create_fixture.py` 调用 Python `create_bucket`，用于比较忽略随机 ID 和运行时时间后的服务级最终语义。
 
+R2k 强类型独立 Entry 追加 API 已完成：
+
+- 新增 `AppendEntryRequest` 和 `WritableSqliteStore::append_entry`；请求保留精确 Bucket ID，raw text 与 content type trim 后不能为空，置信度限制为有限的 0 到 1。
+- 可选 summary 和 classification reason 匹配 Python 字符串真值/trim 边界；事务只生成并插入一条 Entry，再把 Bucket 更新时间和活跃时间设为 Entry 创建时间，不修改 Bucket 摘要、标签、状态或任何派生/审计记录。
+- 缺失 Bucket 在写前返回类型化错误；临时数据库测试覆盖规范化、单行影响、精确 ID、缺失目标和晚期 Bucket 更新时间触发器造成的 Entry 插入全回滚。`tests/fixtures/apply_entry_append_fixture.py` 调用 Python `append_entry`，用于比较服务级最终语义。
+
 R2 尚未完成的范围：
 
 - 迁移其他剩余 CRUD 写语义，并补齐对应跨语言等价测试。
-- 将强类型归档、纠错、聊天、Bucket/Entry 删除和独立 Bucket 创建 API 接入 Rust 服务层；当前 Python Agent、UI 和生产数据库均不调用它们。
+- 将强类型归档、纠错、聊天、Bucket/Entry 删除、独立 Bucket 创建和独立 Entry 追加 API 接入 Rust 服务层；当前 Python Agent、UI 和生产数据库均不调用它们。
 - 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a-R2j 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并以受控强类型事务 API 完成归档、Entry 移动纠错、单条 ChatMessage 追加、Bucket 聚合删除、独立 Entry 删除和独立 Bucket 创建及 Python/Rust 最终状态等价演练；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义、服务层集成和生产切换准备完成。
+R2a-R2k 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并以受控强类型事务 API 完成归档、Entry 移动纠错、单条 ChatMessage 追加、Bucket 聚合删除、独立 Entry 删除、独立 Bucket 创建和独立 Entry 追加及 Python/Rust 最终状态等价演练；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义、服务层集成和生产切换准备完成。
 
 ### R3：归档、搜索与纠错服务
 
 - 迁移其余 Bucket/Entry CRUD、关键词搜索、详情聚合和滚动摘要。
 - 迁移 `archive_user_input` 单事务闭环。
-- 把已完成的确认追加、确认新建、独立 Bucket 创建、Entry 移动纠错、Bucket 聚合删除和独立 Entry 删除持久化能力接入 Rust 服务编排。
+- 把已完成的确认追加、确认新建、独立 Bucket 创建、独立 Entry 追加、Entry 移动纠错、Bucket 聚合删除和独立 Entry 删除持久化能力接入 Rust 服务编排。
 - 使用同一输入和隔离数据库对比 Python/Rust 最终状态。
 
 验收：正常、确认、失败回滚和纠错场景均达到数据库状态等价；Rust 成为这些写路径的唯一所有者后，才移除对应 Python 业务逻辑。
@@ -241,7 +247,7 @@ R2a-R2j 当前验收：Rust 可以强类型只读读取 Python 创建的完整�
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API 已完成；其余写语义与集成待办 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API、R2k 独立 Entry 追加 API 已完成；其余写语义与集成待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
@@ -252,7 +258,7 @@ R2a-R2j 当前验收：Rust 可以强类型只读读取 Python 创建的完整�
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
-rust/work-memory-store/           # R2a-R2j：九表读取/migration、隔离事务及归档/纠错/聊天/删除/Bucket 创建写 API
+rust/work-memory-store/           # R2a-R2k：九表读取/migration、隔离事务及归档/纠错/聊天/删除/Bucket/Entry 基础写 API
 rust/work-memory-service/         # R3 计划：业务编排
 rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI

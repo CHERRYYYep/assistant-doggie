@@ -9,6 +9,7 @@ mod bucket_write;
 mod chat_write;
 mod correction_write;
 mod delete_write;
+mod entry_write;
 mod migration;
 mod read;
 mod records;
@@ -22,6 +23,7 @@ pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
 pub use delete_write::{
     DeleteBucketOutcome, DeleteBucketRequest, DeleteEntryOutcome, DeleteEntryRequest,
 };
+pub use entry_write::AppendEntryRequest;
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
     SchemaState, inspect_database, migrate_database, restore_database,
