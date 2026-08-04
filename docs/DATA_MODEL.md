@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2f）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2g）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API 与 Entry 移动纠错 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API 与 ChatMessage 追加 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -279,4 +279,12 @@ R2f Entry 移动纠错写边界：
 - 隔离测试覆盖完整移动、两类缺失记录、同 Bucket 类型化错误、目标摘要重建触发器造成的晚期全事务回滚，以及 Python `move_entry` 与 Rust 最终业务语义等价。
 - 所有写测试都生成到系统临时目录；这些 API 尚未接入 Python Agent、UI 或仓库根目录数据库，正式切换前继续禁止 Python 与 Rust 同时写生产数据库。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖删除、聊天审计等其余业务写语义，也未完成生产写路径切换。
+R2g ChatMessage 追加写边界：
+
+- `ChatMessageWriteRequest` 的角色使用 `ChatRole::User/Assistant/Tool`，从类型层排除未知角色；`content` 与 Python 一样裁剪并拒绝空值。
+- `tool_name` 和 `tool_call_id` 保留调用方原值，不自动 trim；details 只接受 object、array 或 null，Rust 写入时把 null 规范化为 SQL NULL，读取层同时把 Python JSON `null` 与 SQL NULL 解释为无 details。
+- `WritableSqliteStore::append_chat_message` 一次只追加一条消息并独立提交或回滚，匹配当前 Python `add_chat_message` 的自有 Session 语义，不宣称完整 Agent turn 原子化。
+- 新消息使用 UUID v4；时间戳至少比当前最新 ChatMessage 晚一微秒，从而保持 `created_at DESC, id DESC` 有界查询再反转后的追加/展示顺序。
+- 隔离测试覆盖三种角色、校验前无写入、单行影响范围、快速连续追加、触发器失败回滚，以及 Python/Rust 忽略随机 ID 和实际时间后的消息语义等价。
+
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖删除/级联等其余业务写语义，也未完成服务层集成和生产写路径切换。

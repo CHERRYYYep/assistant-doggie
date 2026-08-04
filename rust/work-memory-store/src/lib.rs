@@ -5,6 +5,7 @@ use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
 
 mod archive_write;
+mod chat_write;
 mod correction_write;
 mod migration;
 mod read;
@@ -13,6 +14,7 @@ mod schema;
 mod write;
 
 pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
+pub use chat_write::ChatMessageWriteRequest;
 pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
 pub use migration::{
     LATEST_SCHEMA_VERSION, MigrationOutcome, MigrationRecord, RestoreOutcome, SchemaInfo,
@@ -24,6 +26,7 @@ pub use records::{
     StoredBucket, StoredChatMessage, StoredClassificationRecord, StoredCorrection, StoredDecision,
     StoredEntry, StoredEvidence, StoredTimelineEvent, StoredTimestamp, StoredTodo, TodoStatus,
 };
+pub use work_memory_contracts::ChatRole;
 pub use write::WritableSqliteStore;
 /// Failures at the SQLite compatibility boundary.
 #[derive(Debug)]

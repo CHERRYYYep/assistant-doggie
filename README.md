@@ -30,7 +30,7 @@ Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs
 ## 技术栈与目录
 
 - 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层、隔离写事务基础、强类型归档聚合写 API 和 Entry 移动纠错 API 位于 `rust/work-memory-store/`。Rust 写 API 目前只在临时隔离数据库验证，所有 Rust 组件均未接管生产路径。
+- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层、隔离写事务基础、强类型归档聚合写 API、Entry 移动纠错 API 和 ChatMessage 追加 API 位于 `rust/work-memory-store/`。Rust 写 API 目前只在临时隔离数据库验证，所有 Rust 组件均未接管生产路径。
 - `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。
