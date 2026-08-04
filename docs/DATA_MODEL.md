@@ -221,9 +221,9 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2l）
+## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2m）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API 与独立 Bucket 滚动摘要更新 API；这些 API 尚未接入生产调用链。
+当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API 与独立 Bucket 摘要重建 API；这些 API 尚未接入生产调用链。
 
 只读查询边界：
 
@@ -323,5 +323,12 @@ R2l 独立 Bucket 滚动摘要更新写边界：
 - 摘要按换行拆分并裁剪空白，使用 Unicode casefold 与空白折叠后的 key 避免追加语义重复片段；超限时优先保留第一段和最新片段，最终按 Unicode 字符数截断并追加省略号。
 - `WritableSqliteStore::update_bucket_summary` 在统一事务内拒绝缺失 Bucket，只更新目标 Bucket 的 `summary` 与 `updated_at`；`last_active_at`、标题、类型、状态、标签、Entry、结构化记录和审计记录均保持不变。
 - `tests/fixtures/apply_bucket_summary_update_fixture.py` 调用 Python `update_bucket_summary`；隔离测试覆盖默认/自定义上限、去重、精确/缺失 ID、触发器失败全事务回滚和忽略运行时时间后的服务级最终语义等价。
+
+R2m 独立 Bucket 摘要重建写边界：
+
+- `RebuildBucketSummaryRequest` 保留精确 Bucket ID，默认读取最新八条非 NULL Entry summary，并把 `max_entries < 1` 作为类型化校验错误；`max_chars` 默认 1200，暂时保留现有 Python 服务未校验非正值时的切片行为，而不擅自改变生产语义。
+- SQL 先按 `created_at DESC` 限制窗口，空字符串和纯空白 summary 也会占用窗口；随后 trim、丢弃空片段、恢复为时间正序，并按清理后的大小写敏感精确文本保留第一次出现，区别于滚动追加 API 的 Unicode casefold 去重。
+- 重建结果按 Python Unicode 字符和切片语义截断；没有存活 Entry summary 时会把旧缓存清空。事务只更新目标 Bucket 的 `summary` 与 `updated_at`，不刷新 `last_active_at`，也不修改其他业务表。
+- 独立 API 与 Rust `move_entry` 共用同一重建函数，避免纠错路径和公开重建路径漂移；`tests/fixtures/apply_bucket_summary_rebuild_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖窗口、去重、空缓存、非正字符上限、精确/缺失 ID 和触发器失败回滚。
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。

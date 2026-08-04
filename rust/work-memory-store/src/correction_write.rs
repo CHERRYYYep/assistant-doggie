@@ -1,14 +1,12 @@
-use std::collections::HashSet;
-
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::Serialize;
 
 use crate::archive_write::{current_timestamp, new_uuid_v4, required_text, serialize_json};
+use crate::bucket_summary_write::{DEFAULT_REBUILD_ENTRY_LIMIT, rebuild_bucket_summary};
 use crate::{StoreError, WritableSqliteStore};
 
 const MOVE_ENTRY_ACTION: &str = "move_entry";
-const SUMMARY_ENTRY_LIMIT: usize = 8;
-const SUMMARY_CHARACTER_LIMIT: usize = 1_200;
+const SUMMARY_CHARACTER_LIMIT: i64 = 1_200;
 
 /// A validated request to move one Entry and its derived records to another Bucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,8 +205,18 @@ fn move_entry(
         [&request.entry_id],
     )?;
 
-    rebuild_bucket_summary(transaction, &source_bucket_id)?;
-    rebuild_bucket_summary(transaction, &request.target_bucket_id)?;
+    rebuild_bucket_summary(
+        transaction,
+        &source_bucket_id,
+        DEFAULT_REBUILD_ENTRY_LIMIT,
+        SUMMARY_CHARACTER_LIMIT,
+    )?;
+    rebuild_bucket_summary(
+        transaction,
+        &request.target_bucket_id,
+        DEFAULT_REBUILD_ENTRY_LIMIT,
+        SUMMARY_CHARACTER_LIMIT,
+    )?;
 
     Ok(MoveEntryOutcome {
         correction_id,
@@ -287,54 +295,11 @@ fn update_child_bucket(
     Ok(())
 }
 
-fn rebuild_bucket_summary(
-    transaction: &Transaction<'_>,
-    bucket_id: &str,
-) -> Result<String, StoreError> {
-    let mut statement = transaction.prepare(
-        "SELECT summary FROM entries
-         WHERE bucket_id = ?1 AND summary IS NOT NULL
-         ORDER BY created_at DESC
-         LIMIT ?2",
-    )?;
-    let rows = statement.query_map(params![bucket_id, SUMMARY_ENTRY_LIMIT], |row| {
-        row.get::<_, String>(0)
-    })?;
-    let mut newest_first = rows.collect::<Result<Vec<_>, _>>()?;
-    newest_first.reverse();
-
-    let mut seen = HashSet::new();
-    let fragments = newest_first
-        .into_iter()
-        .filter_map(|summary| {
-            let cleaned = summary.trim();
-            (!cleaned.is_empty() && seen.insert(cleaned.to_owned())).then(|| cleaned.to_owned())
-        })
-        .collect::<Vec<_>>();
-    let summary = truncate_summary(fragments.join("\n"), SUMMARY_CHARACTER_LIMIT);
-    let timestamp = current_timestamp(transaction)?;
-    transaction.execute(
-        "UPDATE buckets SET summary = ?2, updated_at = ?3 WHERE id = ?1",
-        params![bucket_id, summary, timestamp],
-    )?;
-    Ok(summary)
-}
-
-fn truncate_summary(summary: String, max_chars: usize) -> String {
-    if summary.chars().count() <= max_chars {
-        return summary;
-    }
-    let mut truncated = summary.chars().take(max_chars - 1).collect::<String>();
-    let new_len = truncated.trim_end().len();
-    truncated.truncate(new_len);
-    truncated.push('…');
-    truncated
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{MoveEntryRequest, truncate_summary};
+    use super::MoveEntryRequest;
     use crate::StoreError;
+    use crate::bucket_summary_write::truncate_summary;
 
     #[test]
     fn request_trims_command_and_rejects_empty_commands() {

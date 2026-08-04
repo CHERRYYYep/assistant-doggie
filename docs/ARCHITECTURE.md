@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、事务性 Entry 移动纠错 API、强类型 ChatMessage 追加 API、受控 Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API 与独立 Bucket 滚动摘要更新 API。这些 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、事务性 Entry 移动纠错 API、强类型 ChatMessage 追加 API、受控 Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API 与独立 Bucket 摘要重建 API。这些 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -117,6 +117,7 @@ confidence < 0.55               → 用户确认
 - Rust R2j `create_bucket` 在隔离数据库提供产品级独立 Bucket 创建：校验并规范化标题、摘要和标签，只创建 active Bucket，不附带 Entry、结构化记录或分类审计；事务失败不留下部分状态，行为与 Python `create_bucket` 服务等价。
 - Rust R2k `append_entry` 在隔离数据库提供产品级独立 Entry 追加：校验输入并保留精确 Bucket ID，只新增原始 Entry、刷新 Bucket 更新时间和活跃时间，不运行提取、不改变摘要/标签，也不写分类审计；晚期 Bucket 更新失败会回滚 Entry。
 - Rust R2l `update_bucket_summary` 在隔离数据库提供产品级独立滚动摘要更新：校验并裁剪摘要片段，以 Unicode casefold/空白规范化去重，保留首段和最新事实并按 Python 字符数限制为最多 1200 字符（或调用方提供的至少 100 字符上限）；只修改 Bucket `summary` 与 `updated_at`，失败时事务回滚。
+- Rust R2m `rebuild_bucket_summary` 在隔离数据库提供产品级独立摘要重建：从按时间倒序选出的最新 Entry summary 窗口中清理空片段，再恢复时间顺序并按清理后的精确文本去重；默认最多八条、1200 字符，只更新 Bucket `summary` 与 `updated_at`，并与纠错移动共用同一实现。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 
