@@ -22,7 +22,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - schema 校验。
 - Agent 工具参数解析、工具白名单和历史消息装配。
 - Rust `work-memory-core` 的领域校验、候选排序和风险门控。
-- Rust `work-memory-store` 的必需表/列校验及非法枚举、JSON、时间戳、limit 错误。
+- Rust `work-memory-store` 的九表必需表/列校验，以及非法 Bucket/Todo/分类/Chat 枚举、JSON 语法与类型、SQLite bool、时间戳和 limit 错误。
 - Rust migration history 的版本、名称、连续性和主键校验，以及备份路径互斥与不覆盖规则。
 
 ### 2.2 集成测试
@@ -34,7 +34,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - 创建 bucket + entry + structured records。
 - Responses API 与 Chat Completions 的多轮工具调用。
 - 单一对话在多次请求之间的上下文复用。
-- Python SQLAlchemy 在临时路径建库后，由 Rust 只读验证 Bucket/Entry Schema、过滤、排序、字段、JSON 标签和时间格式。
+- Python SQLAlchemy 在临时路径创建完整九表数据库后，由 Rust 强类型只读验证全部记录字段、可选值、枚举、JSON、布尔值、时间格式、Bucket 子记录顺序和最近聊天窗口顺序。
 - Python SQLAlchemy 九表数据库到 Rust version 1 的升级、重复升级、已提交 WAL 数据备份、完整业务数据不变性、legacy 恢复、safety backup 和反向恢复。
 - 缺索引、外键损坏、未来 migration 版本、错误 migration 主键、已有备份文件和无效恢复源必须在修改目标前被拒绝。所有数据库和备份仅使用系统临时目录，不接触仓库根目录的 `work_memory.db`。
 
@@ -289,8 +289,8 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
 - `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归；
 - `rust/work-memory-contracts/tests/contract_fixtures.rs`：Rust 对同一共享 JSON golden fixture 的规范化和拒绝行为。
-- `rust/work-memory-store/tests/store_validation.rs`：Rust SQLite 必需 Schema 与损坏持久化值的错误分类。
-- `rust/work-memory-store/tests/python_sqlite_compat.rs`：Python 建库到 Rust 只读查询的跨语言兼容回归；数据库只允许位于系统临时目录。
+- `rust/work-memory-store/tests/store_validation.rs`：Rust SQLite 九表必需 Schema，以及损坏枚举、JSON、bool 和时间戳的错误分类。
+- `rust/work-memory-store/tests/python_sqlite_compat.rs`：Python 九表建库到 Rust 强类型只读查询的跨语言兼容回归，覆盖字段、可选值、JSON、枚举和排序；数据库只允许位于系统临时目录。
 - `rust/work-memory-store/tests/python_migration_compat.rs`：九表 Schema、legacy → version 1、幂等、业务数据不变性、恢复、safety backup 和损坏输入拒绝回归；所有路径只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：

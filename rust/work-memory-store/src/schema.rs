@@ -359,6 +359,13 @@ pub(crate) fn validate_table_columns(
     Ok(())
 }
 
+pub(crate) fn validate_repository_schema(connection: &Connection) -> Result<(), StoreError> {
+    for table in PYTHON_TABLES {
+        validate_table_columns(connection, table.name, table.columns)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_full_python_schema(connection: &Connection) -> Result<(), StoreError> {
     for table in PYTHON_TABLES {
         validate_table_columns(connection, table.name, table.columns)?;

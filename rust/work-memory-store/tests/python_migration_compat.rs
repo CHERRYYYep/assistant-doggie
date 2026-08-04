@@ -85,7 +85,7 @@ fn migrates_and_restores_the_complete_python_database_without_business_changes()
                 id, role, content, tool_name, tool_call_id, details_json, created_at
              ) VALUES (?1, 'user', 'Committed in WAL', NULL, NULL, NULL, ?2)",
             params![
-                "16161616-1616-1616-1616-161616161616",
+                "17171717-1717-1717-1717-171717171717",
                 "2026-08-04 10:04:00.000000"
             ],
         )

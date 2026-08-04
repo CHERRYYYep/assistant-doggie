@@ -127,13 +127,21 @@ R2b migration 安全基础已完成：
 - Python fixture 已覆盖九表固定数据；跨语言测试比较升级前后全部业务 Schema 与行值，并覆盖升级、幂等、恢复、反向恢复、坏索引、坏外键、未来版本和已有备份拒绝。
 - 操作说明见 `docs/SQLITE_MIGRATIONS.md`。命令执行前仍必须停止所有应用数据库连接。
 
+R2c 完整强类型只读仓储已完成：
+
+- `SqliteStore::open_read_only` 现在校验全部九张业务表及读取所需列，仍使用 SQLite `READ_ONLY` 和 `query_only` 双重只读防护。
+- 新增 Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 的公开强类型记录与主键查询；Bucket 子记录、Entry 分类审计、目标纠错审计和最近聊天窗口均有专用查询 API。
+- Todo status、分类 action、Chat role 分别映射为受控 Rust 枚举；分类 action 复用 `work-memory-core::ClassificationAction`，Chat role 复用 `work-memory-contracts::ChatRole`。
+- `candidate_bucket_ids` 严格解码为字符串数组；Correction 快照和 Chat details 只接受 object、array 或 null；SQLite bool 只接受 0/1，所有 datetime 字段使用统一时间解码。
+- Bucket 子记录保持 Python relationship 的 `created_at ASC`；最近聊天窗口保持 Python 的 `created_at DESC, id DESC` 截断后再反转为展示顺序。
+- 跨语言 fixture 覆盖九表字段、可选值、枚举、JSON、布尔值和排序；损坏数据测试覆盖非法 Todo status、分类 action/candidate JSON/bool、Chat role、JSON 类型和时间戳。
+
 R2 尚未完成的范围：
 
-- 实现 Todo、Evidence、TimelineEvent、Decision、ClassificationRecord、Correction、ChatMessage 的强类型仓储。
 - 实现安全业务写事务，并在隔离数据库演练新增、更新、删除、外键级联、失败回滚和 Python/Rust 最终状态等价。
 - 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a/R2b 验收：Rust 可以只读读取 Python 创建的临时数据库，并在临时隔离副本完成 version 1 升级、备份和恢复；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求全部仓储和隔离数据库上的写入语义验证。
+R2a/R2b/R2c 验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，并在临时隔离副本完成 version 1 升级、备份和恢复；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求全部仓储和隔离数据库上的写入语义验证。
 
 ### R3：归档、搜索与纠错服务
 
@@ -177,7 +185,7 @@ R2a/R2b 验收：Rust 可以只读读取 Python 创建的临时数据库，并�
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a 只读查询、R2b migration/备份恢复基础已完成；完整仓储与写事务待办 |
+| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复基础已完成；安全写事务待办 |
 | Bucket/Archive/Search/Correction | `app/services/` | Rust service crates | R3 待办 |
 | Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
@@ -188,7 +196,7 @@ R2a/R2b 验收：Rust 可以只读读取 Python 创建的临时数据库，并�
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
-rust/work-memory-store/           # R2a/R2b：只读查询、九表验证与离线 migration 安全层
+rust/work-memory-store/           # R2a/R2b/R2c：九表强类型只读仓储与离线 migration 安全层
 rust/work-memory-service/         # R3 计划：业务编排
 rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
