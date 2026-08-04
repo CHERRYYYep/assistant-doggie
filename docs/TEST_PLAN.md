@@ -27,7 +27,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust 强类型归档写请求的字段组合、候选合并、Unicode casefold 去重和 1200 字符滚动摘要规则。
 - Rust Entry 移动请求的命令规范化、同 Bucket 类型化拒绝，以及摘要 Unicode 字符截断。
 - Rust ChatMessage 写请求的内容裁剪、空值拒绝、JSON null 规范化和 scalar details 拒绝。
-- Rust Bucket 删除请求保留精确 ID，缺失 Bucket 使用类型化错误且不会产生业务修改。
+- Rust Bucket 与 Entry 删除请求保留精确 ID，缺失目标使用类型化错误且不会产生业务修改。
 
 ### 2.2 集成测试
 
@@ -45,7 +45,8 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `persist_archive_attempt` 在临时 Python Schema 上覆盖 append/create/ask_user、缺失 Bucket、决策写入中途失败全事务 rollback；固定 Python helper 与 Rust 对同一 confirmed append 比较忽略随机 ID/时间后的 Bucket、Entry、子记录和分类审计最终语义。
 - Rust `move_entry` 在临时 Python Schema 上覆盖 Entry 与四类子记录移动、Correction 快照、关联分类纠错标记、双 Bucket 活跃时间与摘要重建、缺失记录、同 Bucket 拒绝和晚期触发器全事务 rollback；固定 Python helper 与 Rust 比较忽略随机 Correction UUID/实际时间后的最终业务语义。
 - Rust `append_chat_message` 在临时 Python Schema 上覆盖 user/assistant/tool、内容裁剪、工具元数据与 details、UUID、单行影响、连续追加顺序和触发器失败全事务 rollback；固定 Python helper 与 Rust 比较忽略随机 ID/实际时间后的最终消息语义。
-- Rust `delete_bucket` 在临时 Python Schema 上覆盖 Bucket/Entry/自有结构化记录级联、ClassificationRecord Entry 外键清空、跨 Bucket 结构化记录存活、Todo `updated_at` 刷新、缺失目标无修改和触发器失败全事务 rollback；由于没有产品级 Python 删除服务，固定 helper 直接执行 SQLAlchemy 模型删除，并对比除运行时时间外的最终业务状态。当前写测试不代表业务写路径已切换。
+- Rust `delete_bucket` 在临时 Python Schema 上覆盖 Bucket/Entry/自有结构化记录级联、ClassificationRecord Entry 外键清空、跨 Bucket 结构化记录存活、Todo `updated_at` 刷新、缺失目标无修改和触发器失败全事务 rollback；由于没有产品级 Python 删除服务，固定 helper 直接执行 SQLAlchemy 模型删除，并对比除运行时时间外的最终业务状态。
+- Rust `delete_entry` 在临时 Python Schema 上覆盖仅删除 Entry、同/跨 Bucket 结构化记录与审计保留、全部 Entry 外键清空、Todo `updated_at` 刷新、Bucket 缓存不变、精确/缺失 ID 和晚期失败全事务 rollback；固定 helper 直接执行 SQLAlchemy Entry 模型删除并比较最终业务状态。当前写测试不代表业务写路径已切换。
 
 ### 2.3 手动测试
 
@@ -306,6 +307,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/correction_write.rs`：强类型 Entry 移动、全子记录同步、Correction 快照、分类纠错标记、双 Bucket 摘要/活跃时间、缺失/同 Bucket 错误、晚期触发器回滚，以及 `tests/fixtures/apply_correction_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/chat_write.rs`：强类型 ChatMessage 追加、三种角色、字段规范化与保持、UUID、单行影响、连续追加顺序、触发器回滚，以及 `tests/fixtures/apply_chat_write_fixture.py` 驱动的 Python/Rust 最终消息语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/delete_write.rs`：受控 Bucket 聚合删除、影响 ID、跨 Bucket 引用的 SET NULL 与 Todo 更新时间、缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_bucket_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
+- `rust/work-memory-store/tests/entry_delete_write.rs`：受控独立 Entry 删除、清空链接的影响 ID、同/跨 Bucket 子记录存活、Todo 更新时间、Bucket/审计保持、精确与缺失 ID、晚期失败回滚，以及 `tests/fixtures/apply_entry_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 
