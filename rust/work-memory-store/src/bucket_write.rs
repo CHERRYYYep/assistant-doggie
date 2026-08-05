@@ -63,7 +63,7 @@ fn create_bucket(
     transaction: &Transaction<'_>,
     request: &CreateBucketRequest,
 ) -> Result<StoredBucket, StoreError> {
-    let bucket_id = new_uuid_v4(transaction)?;
+    let bucket_id = new_uuid_v4();
     let timestamp = current_timestamp(transaction)?;
     let tags_json = serialize_json(&request.tags, "buckets.tags")?;
 

@@ -306,7 +306,7 @@ R2i 独立 Entry 删除写边界：
 R2j 独立 Bucket 创建写边界：
 
 - `CreateBucketRequest` 使用强类型 `BucketType`，标题 trim 后不能为空，摘要 trim，标签逐项 trim 并丢弃空项，同时保持原顺序和重复值，匹配 Python `create_bucket` 服务。
-- `WritableSqliteStore::create_bucket` 在统一事务内生成 UUID v4 和 SQLite 兼容时间，创建 status 为 active 的单个 Bucket；不创建 Entry、结构化记录、ClassificationRecord、Correction 或 ChatMessage。
+- `WritableSqliteStore::create_bucket` 在统一事务内由 `uuid` crate 生成 UUID v4，并写入 SQLite 兼容时间，创建 status 为 active 的单个 Bucket；不创建 Entry、结构化记录、ClassificationRecord、Correction 或 ChatMessage。
 - 返回完整 `StoredBucket`；插入触发器失败会回滚全部业务状态，调用方仍无法获得裸可写连接或任意 SQL 闭包。
 - `tests/fixtures/apply_bucket_create_fixture.py` 调用 Python `create_bucket`；隔离测试比较忽略随机 ID 和运行时时间后的 Python/Rust 最终服务语义。
 
@@ -443,7 +443,7 @@ R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归�
 - `append_chat_message` 在服务内部构造 `ChatMessageWriteRequest`，不暴露 Store request、连接、SQL 或事务闭包。角色从类型层限定为 user/assistant/tool；内容按 Python 规则 trim 并拒绝空值。
 - details 只接受 object、array 或 null；JSON null 规范化为 SQL NULL。`tool_name` 与 `tool_call_id` 在数据库中精确保留，包括首尾空白。
 - 稳定结果投影 `ChatMessageSaveResult` 返回提交后的 UUID、角色、内容、工具元数据、details 和时间。为匹配 Python `ChatMessageView` 的 Pydantic 行为，结果中的可选工具字符串会 trim；该投影不反向修改数据库中的精确值。
-- 每次调用在独立事务中只新增一条 ChatMessage，生成 UUID v4，并保证 `created_at` 严格晚于当前最新消息，从而保持最近窗口截断再反转后的追加顺序。重复内容不会去重；非法请求在写入前拒绝，插入失败不修改九表。
+- 每次调用在独立事务中只新增一条 ChatMessage，由 `uuid` crate 生成 UUID v4，并保证 `created_at` 严格晚于当前最新消息，从而保持最近窗口截断再反转后的追加顺序。重复内容不会去重；非法请求在写入前拒绝，插入失败不修改九表。
 - `tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 与 `rust/work-memory-service/tests/chat.rs` 比较重复 user、tool、assistant、JSON null、非法输入和插入失败场景的 Python/Rust 返回结果及九表最终语义；随机消息 ID/时间被规范化，数据库只位于系统临时目录且不调用真实模型。
 
 R3i 只接通单条聊天消息的独立持久化，不提供完整 Agent turn 的跨消息事务，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。

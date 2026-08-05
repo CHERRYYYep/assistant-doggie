@@ -82,7 +82,7 @@ fn append_chat_message(
     transaction: &Transaction<'_>,
     request: &ChatMessageWriteRequest,
 ) -> Result<StoredChatMessage, StoreError> {
-    let id = new_uuid_v4(transaction)?;
+    let id = new_uuid_v4();
     let created_at = next_chat_timestamp(transaction)?;
     let details_json = request
         .details_json

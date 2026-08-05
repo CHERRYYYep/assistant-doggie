@@ -1,5 +1,8 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
+use std::net::{Ipv4Addr, Ipv6Addr};
+
+use url::{Host, Url};
 
 pub const OFFICIAL_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -142,67 +145,27 @@ impl Error for LlmConfigurationError {}
 
 fn normalize_base_url(value: &str) -> Result<String, LlmConfigurationError> {
     let cleaned = value.trim().trim_end_matches('/');
-    let (scheme, remainder) = cleaned
-        .split_once("://")
-        .ok_or(LlmConfigurationError::InvalidBaseUrl)?;
-    let scheme = scheme.to_ascii_lowercase();
-    if !matches!(scheme.as_str(), "http" | "https") || remainder.is_empty() {
+    let parsed = Url::parse(cleaned).map_err(|_| LlmConfigurationError::InvalidBaseUrl)?;
+
+    if !matches!(parsed.scheme(), "http" | "https") {
         return Err(LlmConfigurationError::InvalidBaseUrl);
     }
-    if remainder.contains('?') || remainder.contains('#') {
+    if parsed.query().is_some() || parsed.fragment().is_some() {
         return Err(LlmConfigurationError::QueryOrFragmentInBaseUrl);
     }
-
-    let authority = remainder.split('/').next().unwrap_or_default();
-    if authority.is_empty() || authority.chars().any(char::is_whitespace) {
-        return Err(LlmConfigurationError::InvalidBaseUrl);
-    }
-    if authority.contains('@') {
+    if !parsed.username().is_empty() || parsed.password().is_some() {
         return Err(LlmConfigurationError::CredentialsInBaseUrl);
     }
 
-    let hostname = authority_hostname(authority)?;
-    let is_local = matches!(
-        hostname.to_ascii_lowercase().as_str(),
-        "localhost" | "127.0.0.1" | "::1"
-    );
-    if scheme == "http" && !is_local {
+    let host = parsed.host().ok_or(LlmConfigurationError::InvalidBaseUrl)?;
+    let is_local = match host {
+        Host::Domain(hostname) => hostname.eq_ignore_ascii_case("localhost"),
+        Host::Ipv4(address) => address == Ipv4Addr::new(127, 0, 0, 1),
+        Host::Ipv6(address) => address == Ipv6Addr::LOCALHOST,
+    };
+    if parsed.scheme() == "http" && !is_local {
         return Err(LlmConfigurationError::InsecureRemoteBaseUrl);
     }
 
     Ok(cleaned.to_owned())
-}
-
-fn authority_hostname(authority: &str) -> Result<&str, LlmConfigurationError> {
-    if let Some(remainder) = authority.strip_prefix('[') {
-        let closing = remainder
-            .find(']')
-            .ok_or(LlmConfigurationError::InvalidBaseUrl)?;
-        let hostname = &remainder[..closing];
-        let suffix = &remainder[closing + 1..];
-        if hostname.is_empty()
-            || (!suffix.is_empty()
-                && (!suffix.starts_with(':')
-                    || suffix[1..].is_empty()
-                    || !suffix[1..].bytes().all(|byte| byte.is_ascii_digit())))
-        {
-            return Err(LlmConfigurationError::InvalidBaseUrl);
-        }
-        return Ok(hostname);
-    }
-
-    if authority.matches(':').count() > 1 {
-        return Err(LlmConfigurationError::InvalidBaseUrl);
-    }
-    let (hostname, port) = authority
-        .split_once(':')
-        .map_or((authority, None), |(hostname, port)| (hostname, Some(port)));
-    if hostname.is_empty()
-        || port.is_some_and(|value| {
-            value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit())
-        })
-    {
-        return Err(LlmConfigurationError::InvalidBaseUrl);
-    }
-    Ok(hostname)
 }

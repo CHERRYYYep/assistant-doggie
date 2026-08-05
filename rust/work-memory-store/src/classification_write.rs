@@ -85,7 +85,7 @@ impl WritableSqliteStore {
     ) -> Result<SaveClassificationRecordOutcome, StoreError> {
         self.run_transaction(|transaction| {
             let timestamp = current_timestamp(transaction)?;
-            let classification_record_id = new_uuid_v4(transaction)?;
+            let classification_record_id = new_uuid_v4();
             let candidate_bucket_ids = merge_candidate_bucket_ids(
                 request.server_candidate_bucket_ids(),
                 request.classification().candidate_bucket_ids(),

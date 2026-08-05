@@ -1,8 +1,7 @@
-use std::collections::HashSet;
-use std::fmt::Write as _;
-
 use rusqlite::{Transaction, params};
+use std::collections::HashSet;
 use unicode_casefold::UnicodeCaseFold;
+use uuid::Uuid;
 use work_memory_core::{
     ArchiveStatus, BucketType, ClassificationAction, ClassificationResult, ExtractionResult,
 };
@@ -210,7 +209,7 @@ fn persist_archive_attempt(
 ) -> Result<ArchiveWriteOutcome, StoreError> {
     let action = request.classification.action();
     let timestamp = current_timestamp(transaction)?;
-    let classification_record_id = new_uuid_v4(transaction)?;
+    let classification_record_id = new_uuid_v4();
     let candidate_bucket_ids = merge_candidate_bucket_ids(
         request.audit.candidate_bucket_ids(),
         request.classification.candidate_bucket_ids(),
@@ -323,7 +322,7 @@ fn insert_bucket(
     extraction: &ExtractionResult,
     timestamp: &str,
 ) -> Result<StoredBucket, StoreError> {
-    let id = new_uuid_v4(transaction)?;
+    let id = new_uuid_v4();
     let title = request
         .classification
         .title()
@@ -355,7 +354,7 @@ fn insert_entry(
     extraction: &ExtractionResult,
     timestamp: &str,
 ) -> Result<String, StoreError> {
-    let entry_id = new_uuid_v4(transaction)?;
+    let entry_id = new_uuid_v4();
     transaction.execute(
         "INSERT INTO entries (
             id, bucket_id, raw_text, summary, content_type,
@@ -407,7 +406,7 @@ pub(crate) fn insert_extracted_children(
         if existing_todos.contains(&normalized_key(text)) {
             continue;
         }
-        let id = new_uuid_v4(transaction)?;
+        let id = new_uuid_v4();
         transaction.execute(
             "INSERT INTO todos (
                 id, bucket_id, entry_id, text, status, due_date, created_at, updated_at
@@ -422,7 +421,7 @@ pub(crate) fn insert_extracted_children(
         if existing_evidences.contains(&normalized_key(text)) {
             continue;
         }
-        let id = new_uuid_v4(transaction)?;
+        let id = new_uuid_v4();
         transaction.execute(
             "INSERT INTO evidences (id, bucket_id, entry_id, text, source, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -447,7 +446,7 @@ pub(crate) fn insert_extracted_children(
         if existing_timeline.contains(&key) {
             continue;
         }
-        let id = new_uuid_v4(transaction)?;
+        let id = new_uuid_v4();
         transaction.execute(
             "INSERT INTO timeline_events (
                 id, bucket_id, entry_id, event_time, text, created_at
@@ -469,7 +468,7 @@ pub(crate) fn insert_extracted_children(
         if existing_decisions.contains(&normalized_key(text)) {
             continue;
         }
-        let id = new_uuid_v4(transaction)?;
+        let id = new_uuid_v4();
         transaction.execute(
             "INSERT INTO decisions (id, bucket_id, entry_id, text, reason, created_at)
              VALUES (?1, ?2, ?3, ?4, NULL, ?5)",
@@ -707,34 +706,27 @@ pub(crate) fn current_timestamp(transaction: &Transaction<'_>) -> Result<String,
     )?)
 }
 
-pub(crate) fn new_uuid_v4(transaction: &Transaction<'_>) -> Result<String, StoreError> {
-    let mut bytes: Vec<u8> =
-        transaction.query_row("SELECT randomblob(16)", [], |row| row.get(0))?;
-    if bytes.len() != 16 {
-        return Err(StoreError::InvalidGeneratedIdLength(bytes.len()));
-    }
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-
-    let mut id = String::with_capacity(36);
-    for (index, byte) in bytes.iter().enumerate() {
-        if matches!(index, 4 | 6 | 8 | 10) {
-            id.push('-');
-        }
-        write!(&mut id, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    Ok(id)
+pub(crate) fn new_uuid_v4() -> String {
+    Uuid::new_v4().to_string()
 }
 
 #[cfg(test)]
 mod tests {
+    use uuid::{Uuid, Variant};
     use work_memory_core::{BucketType, ClassificationResult, ExtractionResult};
 
     use super::{
         ArchiveWriteRequest, ClassificationAuditContext, case_fold, merge_bucket_summary,
-        merge_tags, normalized_key,
+        merge_tags, new_uuid_v4, normalized_key,
     };
     use crate::StoreError;
+
+    #[test]
+    fn generated_ids_use_uuid_crate_v4() {
+        let id = Uuid::parse_str(&new_uuid_v4()).expect("uuid crate must produce a valid UUID");
+        assert_eq!(id.get_version_num(), 4);
+        assert_eq!(id.get_variant(), Variant::RFC4122);
+    }
 
     #[test]
     fn normalization_matches_python_casefold_and_whitespace_rules() {

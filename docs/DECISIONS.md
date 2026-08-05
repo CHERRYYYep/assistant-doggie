@@ -126,3 +126,25 @@
 - [`ureq 3.3.0 API documentation`](https://docs.rs/ureq/3.3.0/ureq/)
 - [`ureq 3.3.0 source and feature list`](https://github.com/algesten/ureq/tree/3.3.0)
 - [`reqwest blocking client documentation`](https://docs.rs/reqwest/latest/reqwest/blocking/)
+
+## ADR-008：标准 UUID 与 URL 语法复用社区 crate
+
+状态：接受（2026-08-05）
+
+决定：
+
+- `work-memory-store` 使用社区 `uuid` crate 的 `Uuid::new_v4()` 生成新记录 ID，不再通过 SQLite `randomblob(16)` 手动设置版本位、变体位和字符串格式。
+- `work-memory-agent` 使用社区 `url` crate 的 `Url::parse`、host、port、credentials、query 和 fragment 解析能力，不再手写 URL authority 与 IPv6/端口语法解析。
+- 项目仍保留自己的业务策略：official/custom site 选择、远程 custom URL 必须 HTTPS、loopback 才允许 HTTP、禁止 credentials/query/fragment，以及保留原有 Base URL 尾斜杠规范化。
+- `uuid` 和 `url` 只替代标准格式/语法解析，不改变 SQLite 事务、跨语言 fixture 或 endpoint 安全策略。
+
+原因：
+
+- UUID v4 和 URL 语法属于已有稳定标准，手工实现会重复承担边界条件和安全风险。
+- 业务层仍需要 Python 兼容和安全门控，因此只替换底层标准能力，不引入 ORM 或更重的 Agent 框架。
+
+验收：
+
+- Rust 写路径继续通过 UUID v4 格式测试和 Python/Rust 最终语义 fixture 对比。
+- endpoint fixture 继续逐值验证 official/custom、IPv6、credentials、query、fragment 和不安全远程 HTTP 行为。
+- `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、Rust workspace tests 和 Python 回归测试通过。

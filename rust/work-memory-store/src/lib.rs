@@ -206,7 +206,6 @@ pub enum StoreError {
         context: &'static str,
         source: serde_json::Error,
     },
-    InvalidGeneratedIdLength(usize),
 }
 
 impl Display for StoreError {
@@ -452,10 +451,6 @@ impl Display for StoreError {
                     "failed to serialize JSON for {context}: {source}"
                 )
             }
-            Self::InvalidGeneratedIdLength(length) => write!(
-                formatter,
-                "SQLite random ID source returned {length} bytes instead of 16"
-            ),
         }
     }
 }

@@ -96,7 +96,7 @@ fn append_entry(
             id: request.bucket_id.clone(),
         })?;
     let timestamp = current_timestamp(transaction)?;
-    let entry_id = new_uuid_v4(transaction)?;
+    let entry_id = new_uuid_v4();
 
     transaction.execute(
         "INSERT INTO entries (

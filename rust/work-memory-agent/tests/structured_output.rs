@@ -4,8 +4,8 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 use work_memory_agent::{
-    LlmApiMode, LlmEndpointConfig, LlmError, LlmHttpRequest, LlmHttpResponse, LlmTransportError,
-    StructuredOutputAdapter, StructuredOutputTransport,
+    LlmApiMode, LlmConfigurationError, LlmEndpointConfig, LlmError, LlmHttpRequest,
+    LlmHttpResponse, LlmTransportError, StructuredOutputAdapter, StructuredOutputTransport,
 };
 use work_memory_contracts::{
     BucketSummaryContract, ClassificationContract, ExtractionContract, StructuredOutputContract,
@@ -151,6 +151,36 @@ fn endpoint_configuration_and_strict_schemas_match_python() {
     assert_eq!(
         BucketSummaryContract::strict_json_schema(),
         schemas[BucketSummaryContract::SCHEMA_NAME]
+    );
+}
+
+#[test]
+fn endpoint_parser_keeps_security_policy_around_community_url_parsing() {
+    assert_eq!(
+        LlmEndpointConfig::resolve(
+            Some("local-gateway"),
+            Some("http://localhost:8000/v1/"),
+            Some("responses"),
+        )
+        .unwrap()
+        .base_url(),
+        "http://localhost:8000/v1"
+    );
+    assert_eq!(
+        LlmEndpointConfig::resolve(
+            Some("local-gateway"),
+            Some("http://127.0.0.2:8000/v1"),
+            Some("responses"),
+        ),
+        Err(LlmConfigurationError::InsecureRemoteBaseUrl)
+    );
+    assert_eq!(
+        LlmEndpointConfig::resolve(
+            Some("relay"),
+            Some("https://relay.example:not-a-port/v1"),
+            Some("responses"),
+        ),
+        Err(LlmConfigurationError::InvalidBaseUrl)
     );
 }
 

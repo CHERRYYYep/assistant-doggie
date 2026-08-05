@@ -150,7 +150,7 @@ R2e 强类型归档聚合写 API 已完成：
 - 新增 `ClassificationAuditContext`、`ArchiveWriteRequest`、`ArchiveWriteOutcome` 和 `WritableSqliteStore::persist_archive_attempt`；调用方不能获得裸可写连接或任意 SQL 闭包。
 - `ask_user` 只保存 ClassificationRecord；`append_existing` 原子保存 Entry、结构化子记录、Bucket 缓存和关联审计；`create_new` 在同一事务创建 Bucket 并完成完整归档。
 - 保持 Python 的默认值、候选顺序、Unicode casefold 标签/文本匹配、仅针对事务前已有子记录去重，以及 1200 字符滚动摘要规则。
-- 在 SQLite 事务内生成 UUID v4 和兼容 SQLAlchemy 读取层的 UTC 文本时间；提交结果返回全部新建 ID。
+- 在 Store operation 执行期间由 `uuid` crate 生成 UUID v4，并在同一 SQLite 事务内写入兼容 SQLAlchemy 读取层的 UTC 文本时间；提交结果返回全部新建 ID。
 - 临时数据库测试覆盖 append/create/ask_user、缺失 Bucket、触发器在子记录写入中途失败后的完整回滚。
 - `tests/fixtures/apply_archive_write_fixture.py` 使用 mock extractor 调用 Python `archive_confirmed_input`；Rust 对相同初始数据库执行同一归档后，比较忽略随机 ID 和实际时间的最终业务语义。
 
@@ -166,7 +166,7 @@ R2g 强类型 ChatMessage 追加 API 已完成：
 
 - 新增 `ChatMessageWriteRequest` 和 `WritableSqliteStore::append_chat_message`；角色使用 `ChatRole`，内容按 Python 规则 trim 并拒绝空值，可选工具元数据保持原值。
 - details 只接受 object、array 或 null；null 写为 SQL NULL，而读取层把 SQL NULL 与 Python JSON `null` 都规范化为无 details。
-- 每次调用只在独立事务中追加一条消息，生成 UUID v4，并保证时间戳严格晚于当前最新消息，以稳定保持最近窗口的追加/展示顺序；当前没有引入完整 Agent turn 事务。
+- 每次调用只在独立事务中追加一条消息，由 `uuid` crate 生成 UUID v4，并保证时间戳严格晚于当前最新消息，以稳定保持最近窗口的追加/展示顺序；当前没有引入完整 Agent turn 事务。
 - 临时数据库测试覆盖三种角色、字段保持、校验前拒绝、单表单行影响、连续追加顺序和触发器失败全回滚。
 - `tests/fixtures/apply_chat_write_fixture.py` 调用 Python `add_chat_message`；Rust 对相同初始数据库追加同一 user/tool/assistant 序列后，比较忽略随机 ID 和实际时间的最终消息语义。
 
@@ -188,7 +188,7 @@ R2i 受控独立 Entry 删除 API 已完成：
 R2j 强类型独立 Bucket 创建 API 已完成：
 
 - 新增 `CreateBucketRequest` 和 `WritableSqliteStore::create_bucket`；Bucket 类型使用核心强类型，标题 trim 后不能为空，摘要 trim，标签逐项 trim、丢弃空项并保留顺序与重复值。
-- 每次调用在统一事务内生成 UUID v4 和 SQLite 兼容时间，只创建一个 active Bucket 并返回完整 `StoredBucket`，不附带 Entry、结构化记录或审计记录。
+- 每次调用在统一事务内由 `uuid` crate 生成 UUID v4，并写入 SQLite 兼容时间，只创建一个 active Bucket 并返回完整 `StoredBucket`，不附带 Entry、结构化记录或审计记录。
 - 临时数据库测试覆盖请求规范化、单行影响、无关联行副作用和插入触发器失败全回滚；`tests/fixtures/apply_bucket_create_fixture.py` 调用 Python `create_bucket`，用于比较忽略随机 ID 和运行时时间后的服务级最终语义。
 
 R2k 强类型独立 Entry 追加 API 已完成：

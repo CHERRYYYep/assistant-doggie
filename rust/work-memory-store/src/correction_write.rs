@@ -315,7 +315,7 @@ fn move_entry(
     };
     let before_json = serialize_json(&before, "corrections.before_json")?;
     let after_json = serialize_json(&after, "corrections.after_json")?;
-    let correction_id = new_uuid_v4(transaction)?;
+    let correction_id = new_uuid_v4();
     let correction_timestamp = current_timestamp(transaction)?;
     transaction.execute(
         "INSERT INTO corrections (

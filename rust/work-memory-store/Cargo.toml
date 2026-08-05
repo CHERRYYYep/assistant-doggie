@@ -15,5 +15,6 @@ rusqlite = { version = "0.34", features = ["backup", "bundled"] }
 serde = "1"
 serde_json = "1"
 unicode-casefold = "0.2"
+uuid = { version = "1", features = ["v4"] }
 work-memory-contracts = { path = "../work-memory-contracts" }
 work-memory-core = { path = "../work-memory-core" }
