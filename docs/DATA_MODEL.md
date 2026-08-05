@@ -347,4 +347,15 @@ R2o 独立分类审计保存写边界：
 - 新记录使用 UUID v4、运行时 UTC 时间和 `corrected=false`；`bucket_id` 直接取分类结果且不验证该审计目标是否存在（create_new 必为 NULL，ask_user 保留已验证结果中的可选值），`entry_id` 始终为 NULL。create_new、append_existing 和 ask_user 都可独立记录，重复调用会产生独立审计行。
 - 事务只新增一条 `classification_records`，不修改 Bucket、Entry、结构化记录、Correction 或 ChatMessage；独立 API 与归档聚合写路径共用候选合并和审计插入实现。`tests/fixtures/apply_save_classification_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确元数据、全部 action、空输入、重复保存、缺失审计目标和插入失败回滚。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成服务层集成和生产写路径切换。
+完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成生产写路径切换。
+
+## 16. Rust Bucket 查询服务边界（R3a）
+
+`work-memory-service::BucketQueryService` 是首个 Rust 业务编排层，当前只持有经完整 Schema 校验、migration 历史校验和 `query_only` 保护的 `SqliteStore`：
+
+- `list_active_buckets` 保持 Python 的 active 过滤、`last_active_at DESC, updated_at DESC` 排序和正数 limit 校验。
+- `get_bucket` 使用调用方提供的精确主键，不裁剪、不创建兜底记录；缺失时返回 `None`。
+- `get_bucket_detail` 仅在 Bucket 存在时组合 Bucket、Entry、Todo、Evidence、TimelineEvent 和 Decision，并保持各关系按 `created_at ASC` 的 Python 顺序；分类、纠错和聊天审计不属于当前产品详情视图。
+- `tests/fixtures/export_bucket_query_fixture.py` 在同一 Python 创建的临时数据库上调用权威 Python 服务并导出完整 JSON；Rust 集成测试逐字段比较活跃列表、单 Bucket、缺失结果和详情聚合。
+
+R3a 只证明隔离只读服务语义等价，尚未迁移关键词搜索、归档/纠错服务编排，也未接入 Agent、UI 或生产数据库。

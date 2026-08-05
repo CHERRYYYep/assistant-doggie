@@ -3,5 +3,6 @@ members = [
     "rust/work-memory-core",
     "rust/work-memory-contracts",
     "rust/work-memory-store",
+    "rust/work-memory-service",
 ]
 resolver = "3"

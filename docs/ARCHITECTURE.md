@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-04）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九张业务表的强类型只读 SQLite 仓储、九表离线 migration/备份恢复安全层、仅面向隔离数据库的可写连接与原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、事务性 Entry 移动纠错 API、强类型 ChatMessage 追加 API、受控 Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API 与独立 Bucket 摘要重建 API。这些 API 尚未接入 Python Agent 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已创建首个 `work-memory-service` Bucket 查询编排。Rust API 尚未接入 Python Agent、UI 或生产数据库，生产运行时仍由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -76,7 +76,7 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 ### `bucket_service`
 
-负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。
+负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。Rust R3a `BucketQueryService` 已在只读临时数据库复现活跃 Bucket 列表、精确 Bucket 查询和完整详情聚合；生产 Agent 与 UI 仍调用 Python。
 
 ### `correction_service`
 
@@ -120,6 +120,7 @@ confidence < 0.55               → 用户确认
 - Rust R2m `rebuild_bucket_summary` 在隔离数据库提供产品级独立摘要重建：从按时间倒序选出的最新 Entry summary 窗口中清理空片段，再恢复时间顺序并按清理后的精确文本去重；默认最多八条、1200 字符，只更新 Bucket `summary` 与 `updated_at`，并与纠错移动共用同一实现。
 - Rust R2n `save_extraction` 在隔离数据库提供产品级独立提取保存：先按精确 ID 验证 Bucket 与 Entry 归属，再原子写入按调用前已有记录去重的四类结构化记录、Entry summary、合并标签和 1200 字符滚动摘要；不刷新 Bucket `last_active_at`，并与归档聚合写路径共用子记录和缓存更新实现。
 - Rust R2o `save_classification_record` 在隔离数据库提供产品级独立分类审计保存：只裁剪原始输入首尾空白，按“服务端候选在前、模型候选在后”做大小写敏感的精确保序去重，并保留已解析的焦点、Prompt 与模型元数据；单事务只新增一条 `classification_records`，不校验审计中的 Bucket ID 是否存在，也不修改 Bucket、Entry 或其他业务表。
+- Rust R3a `BucketQueryService` 在 `work-memory-service` 提供首个产品级只读编排：复用受 Schema 校验和 query-only 保护的 `SqliteStore`，保持活跃列表排序/limit、精确主键查询和 Entry/Todo/Evidence/Timeline/Decision 详情关系顺序；缺失 Bucket 返回 `None`，当前尚未接入生产调用链。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

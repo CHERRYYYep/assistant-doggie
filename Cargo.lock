@@ -244,6 +244,14 @@ name = "work-memory-core"
 version = "0.1.0"
 
 [[package]]
+name = "work-memory-service"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "work-memory-store",
+]
+
+[[package]]
 name = "work-memory-store"
 version = "0.1.0"
 dependencies = [
