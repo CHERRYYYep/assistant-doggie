@@ -1,0 +1,10 @@
+[package]
+name = "work-memory-agent"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "LLM adapters and controlled agent harness for Personal Work Memory Agent"
+
+[dependencies]
+serde_json = "1"
+work-memory-contracts = { path = "../work-memory-contracts" }

@@ -4,5 +4,6 @@ members = [
     "rust/work-memory-contracts",
     "rust/work-memory-store",
     "rust/work-memory-service",
+    "rust/work-memory-agent",
 ]
 resolver = "3"

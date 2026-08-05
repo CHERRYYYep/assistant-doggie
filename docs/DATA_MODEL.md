@@ -373,7 +373,7 @@ R3a-R3b 只证明隔离只读服务语义等价；归档、纠错、基础变更
 - `ArchiveWriteOutcome` 现在同时返回事务内权威 Bucket 标题和类型；服务据此投影核心 `ArchiveResult`。ask_user 的建议标题、类型、问题和模型候选来自已验证分类结果，已归档结果与 Python 一样不回显候选列表。
 - `tests/fixtures/apply_archive_service_fixture.py` 和 `export_archive_service_fixture.py` 驱动确认追加、确认新建、ask_user 的 Python/Rust 返回值及最终数据库语义等价；所有数据库均在系统临时目录创建。
 
-R3c 不实现或伪装完整的模型调用闭环。分类与提取结果仍由调用方提供；Rust LLM adapter、候选加载、风险门控接线和生产 `archive_user_input` 替换留到 R4/后续集成。Python 仍是唯一生产数据库写入者，也不得与 Rust 并发写同一生产数据库。
+R3c 不实现或伪装完整的模型调用闭环。分类与提取结果仍由调用方提供；R4a Structured Outputs adapter core 尚未接入此服务，真实 HTTP、候选加载、风险门控接线和生产 `archive_user_input` 替换留到 R4b/后续集成。Python 仍是唯一生产数据库写入者，也不得与 Rust 并发写同一生产数据库。
 
 ## 18. Rust 纠错服务编排边界（R3d）
 
@@ -447,3 +447,15 @@ R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归�
 - `tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 与 `rust/work-memory-service/tests/chat.rs` 比较重复 user、tool、assistant、JSON null、非法输入和插入失败场景的 Python/Rust 返回结果及九表最终语义；随机消息 ID/时间被规范化，数据库只位于系统临时目录且不调用真实模型。
 
 R3i 只接通单条聊天消息的独立持久化，不提供完整 Agent turn 的跨消息事务，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
+
+## 24. Rust Structured Outputs adapter 边界（R4a）
+
+R4a 不新增或修改 SQLite 表，而是在 `work-memory-contracts` 与 `work-memory-agent` 建立模型 JSON 的外部边界：
+
+- `StructuredOutputContract` 为分类、提取和 Bucket 摘要结果提供固定 schema name、strict JSON Schema 以及复用现有 Rust contract 校验的解析入口。三份 Schema 由 `tests/fixtures/export_llm_adapter_fixture.py` 使用当前 Python OpenAI SDK 导出，并在 Rust 测试中逐值比较。
+- `LlmEndpointConfig` 只处理非密钥 endpoint 配置：official 固定到 `https://api.openai.com/v1`；custom site 必须显式提供安全 Base URL；请求路径由 `responses` 或 `chat/completions` 模式决定。配置对象不读取 `.env`、API Key 或模型名。
+- Responses 请求使用 `text.format = {type: json_schema, name, strict, schema}`；Chat Completions 请求使用 `response_format.json_schema`。模型名在请求前 trim，system/user Prompt 只检查非空并保留原始空白。
+- 响应先归一化结构化文本，再执行 JSON 解析与 contract 校验。网络错误、408/409/429、5xx、非 content-filter incomplete、缺失输出、非法 JSON 和 contract error 可在调用方指定上限内重试；其他 4xx、refusal 与 content filter 不重试，最终错误保留尝试次数和最后原因。
+- 普通测试注入记录请求的 fake transport，不调用真实模型、不读取密钥，也不打开 SQLite。R4a 尚未实现真实 HTTP、Authorization、timeout/proxy、分类/提取编排、Agent Harness 或 UI/生产接线。
+
+因此 R4a 不改变数据库写入所有权：Python 仍是唯一生产 SQLite 写入者，Python 与 Rust 仍不得并发写同一生产数据库。

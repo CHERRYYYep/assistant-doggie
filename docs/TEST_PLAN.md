@@ -31,6 +31,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust Bucket 滚动摘要更新请求的摘要裁剪、至少 100 字符上限、默认 1200 字符上限、精确 Bucket ID 和 Python 兼容校验顺序。
 - Rust Bucket 摘要重建请求的默认/自定义 Entry 与字符上限、`max_entries` 提前拒绝、精确 Bucket ID，以及 Python 当前未校验非正 `max_chars` 的切片/省略号语义。
 - Rust 独立提取保存请求保留精确 Bucket/Entry ID 和已验证 `ExtractionResult`，并按 Bucket 优先、Entry 归属随后检查的 Python 校验顺序拒绝无效目标。
+- Rust R4a endpoint 配置 aliases、official/custom URL 安全边界、Responses/Chat Completions strict JSON Schema request shape、响应归一化和有限重试决策。
 
 ### 2.2 集成测试
 
@@ -338,6 +339,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/extraction.rs`：Rust `ExtractionPersistenceService` 的首次、重复和最小提取保存，覆盖稳定结果投影、UUID v4、四类子记录去重、Entry/Bucket 缓存更新、`last_active_at` 隔离、精确/缺失/归属错误目标和失败无修改；`tests/fixtures/apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 驱动 Python/Rust 结果与排除随机子记录 ID/运行时 `updated_at` 后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/classification.rs`：Rust `ClassificationAuditService` 的重复 append、create_new、ask_user 和插入失败，覆盖稳定审计 UUID、输入/元数据边界、候选合并、三类 action、重复调用、单表影响和失败无修改；`tests/fixtures/apply_classification_audit_service_fixture.py`、`export_classification_audit_service_fixture.py` 驱动 Python/Rust 结果与排除随机审计 ID/时间后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/chat.rs`：Rust `ChatMessagePersistenceService` 的重复 user、tool、assistant、JSON null、非法输入和插入失败，覆盖稳定消息 UUID、产品返回投影、精确数据库工具元数据、details 边界、严格递增时间和失败无修改；`tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 驱动 Python/Rust 结果与排除随机消息 ID/时间后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
+- `rust/work-memory-agent/tests/structured_output.rs`：R4a 使用 fake transport 覆盖 Python/Rust endpoint 配置和三份 strict JSON Schema 等价、Responses/Chat Completions 请求 JSON、输出归一化、网络/429/5xx/incomplete/非法 JSON/contract error 有限重试，以及 401/refusal/content filter 不重试；`tests/fixtures/export_llm_adapter_fixture.py` 不读取或输出 API Key，不调用真实模型。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

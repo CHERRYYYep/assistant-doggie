@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-05
-> 当前阶段：R2/R3 并行推进（R2a-R2o、R3a-R3i 已完成）——Rust 已具备九表强类型读写基础，以及 Bucket 查询、关键词搜索、归档、纠错、基础 Bucket/Entry 变更、摘要缓存、独立提取保存、分类审计保存和单条聊天消息持久化服务编排；尚未定义的其余写语义、完整 LLM 归档闭环、Agent/UI 集成和生产路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2/R3/R4 渐进推进（R2a-R2o、R3a-R3i、R4a 已完成）——Rust 已具备九表强类型读写基础、R3 产品服务编排，以及 transport-independent Responses/兼容 Chat Completions Structured Outputs adapter core；真实 HTTP/API Key/timeout/proxy、完整 LLM 归档闭环、Agent/UI 集成和生产路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -269,7 +269,7 @@ R3a-R3i Bucket 查询、搜索、归档、纠错、基础变更、摘要缓存�
 R3 尚未完成的范围：
 
 - 按 Agent/UI 实际调用需要扩展稳定详情、搜索和变更结果投影；尚未定义的编辑/状态变更不提前虚构接口。
-- 在 R4 LLM adapter 可用后，把候选加载、分类、风险门控、提取和 R3c 写服务接成完整 `archive_user_input` 闭环。
+- 在 R4b 及后续集成中补齐真实 HTTP transport，并把候选加载、分类、风险门控、提取和 R3c 写服务接成完整 `archive_user_input` 闭环。
 - 当前 R2a-R2o 已完成的独立写能力均已有 R3c-R3i 服务编排；后续只在 Agent/UI 实际需要时定义新的编辑、状态变更或跨操作事务，不提前虚构接口。
 - 使用同一输入和隔离数据库对比 Python/Rust 最终状态。
 
@@ -277,12 +277,22 @@ R3 尚未完成的范围：
 
 ### R4：LLM adapter 与 Agent Harness
 
-- 实现 Responses API 和兼容 Chat Completions adapter。
-- 实现严格结构化输出、拒绝、截断、Schema 错误和有限重试。
+R4a transport-independent Structured Outputs adapter core 已完成：
+
+- 创建 `rust/work-memory-agent/` 并加入 Cargo workspace；本阶段不依赖 HTTP client，不读取环境变量或 API Key。
+- `LlmEndpointConfig` 解析 official/custom site、规范化 Base URL，并支持 `responses`/`response` 与 `chat`/`chat_completions`/`chat-completions` aliases；官方站点固定使用 `https://api.openai.com/v1`，远程 custom URL 必须使用 HTTPS，本机 loopback 可使用 HTTP。
+- `StructuredOutputContract` 为 `ClassificationContract`、`ExtractionContract` 和 `BucketSummaryContract` 暴露 schema name、strict JSON Schema 与现有 contract 反序列化入口；fixture 使用当前 Python OpenAI SDK 的 `to_strict_json_schema` 逐值比较三份 Schema。
+- `StructuredOutputAdapter` 构造 Responses `text.format` 或 Chat Completions `response_format.json_schema` 请求，归一化 output text、refusal、incomplete/content filter、非法 JSON 和 contract error。
+- 注入式 `StructuredOutputTransport` 让普通测试只使用 fake transport。网络错误、408/409/429、5xx 以及可恢复的输出错误执行有限重试；其他 4xx、refusal 和 content filter 不重试。
+
+R4 后续范围：
+
+- R4b 实现真实 HTTP transport、Authorization/API Key、timeout 和 proxy 边界，并保持密钥不进入日志或 Git。
+- 把分类/提取 Prompt、候选加载、风险门控和 R3c 写服务接成完整归档闭环。
 - 迁移受控工具注册、调用审计、最近消息窗口和 Bucket 上下文注入。
 - 复用分类与提取离线评估集，真实模型验证保持独立命令。
 
-验收：mock 回归完全通过；真实模型报告保留站点、模型、Prompt 版本和完整结构化结果；密钥不会进入日志或 Git。
+R4a 验收：request/schema/retry mock 回归完全通过且不调用真实模型。完整 R4 验收仍要求真实模型报告保留站点、模型、Prompt 版本和完整结构化结果，且密钥不会进入日志或 Git。
 
 ### R5：Rust API 与 UI 切换
 
@@ -307,10 +317,11 @@ R3 尚未完成的范围：
 |---|---|---|---|
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
-| JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 |
+| JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 JSON 解析；R4a 增加与当前 Python OpenAI SDK 等价的三份 strict JSON Schema |
 | SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API、R2k 独立 Entry 追加 API、R2l 独立 Bucket 滚动摘要更新 API、R2m 独立 Bucket 摘要重建 API、R2n 独立提取结果保存 API、R2o 独立分类审计保存 API 已完成；其余写语义与集成待办 |
 | Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` | R3a-R3i Bucket 列表/单项/详情/关键词搜索、已验证分类/提取的归档写编排、指定/最近 Entry 纠错、独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除、滚动摘要更新/重建、独立提取结果保存、分类审计保存和单条 ChatMessage 持久化编排已完成；完整 LLM 闭环、Agent/UI 和生产集成待办 |
-| Agent Harness | `app/services/agent_service.py` | Rust agent crate | R4 待办 |
+| LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a 已完成 endpoint/request/response/retry core；真实 HTTP/API Key/timeout/proxy 待 R4b |
+| Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | R4 后续待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
 
 ## 6. 目录约定
@@ -321,7 +332,7 @@ rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
 rust/work-memory-store/           # R2a-R2o：九表读取/migration、隔离事务及归档/纠错/聊天/删除/Bucket/Entry/提取/分类审计/摘要基础写 API
 rust/work-memory-service/         # R3a-R3i：Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取/分类审计保存和聊天持久化编排；Agent/UI 集成待迁移
-rust/work-memory-agent/           # R4 计划：LLM 与工具 Harness
+rust/work-memory-agent/           # R4a：离线 Structured Outputs adapter core；真实 HTTP 与工具 Harness 待迁移
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
 ```
 

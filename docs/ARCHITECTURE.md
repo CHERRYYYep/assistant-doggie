@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存和聊天消息持久化编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界；R3g `ExtractionPersistenceService` 已把已验证提取结果的独立原子保存提升为稳定服务边界；R3h `ClassificationAuditService` 已把已验证分类结果和服务端元数据的独立审计保存提升为稳定服务边界；R3i `ChatMessagePersistenceService` 已把单条 user/assistant/tool 消息追加提升为稳定服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务，以及 R4a transport-independent Structured Outputs adapter core。`work-memory-agent` 已能解析官方/兼容站点配置，构造 Responses 或 Chat Completions 严格 JSON Schema 请求，归一化结构化响应并执行有限重试；普通测试只使用 fake transport。真实 HTTP transport、API Key、timeout/proxy、完整归档闭环、Agent Harness、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -72,7 +72,11 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 ### `extract_service`
 
-从单条原始输入提取 summary、todos、evidences、timeline events、decisions、hypotheses、entities 和 tags。当前持久化前五类结构和 tags；hypotheses、entities 暂只保留在返回结果中。Rust R3g `ExtractionPersistenceService` 接收已通过核心层验证的 `ExtractionResult` 和精确 Bucket/Entry ID，在服务内部构造强类型 Store request，并把提交结果投影为 `ExtractionSaveResult`；模型调用和 JSON/Schema 校验仍留在服务外。
+从单条原始输入提取 summary、todos、evidences、timeline events、decisions、hypotheses、entities 和 tags。当前持久化前五类结构和 tags；hypotheses、entities 暂只保留在返回结果中。Rust R3g `ExtractionPersistenceService` 接收已通过核心层验证的 `ExtractionResult` 和精确 Bucket/Entry ID，在服务内部构造强类型 Store request，并把提交结果投影为 `ExtractionSaveResult`；模型调用仍留在服务外。
+
+### Rust Structured Outputs adapter（R4a）
+
+`work-memory-agent` 的 R4a 边界不读取密钥，也不直接联网。`LlmEndpointConfig` 解析 official/custom site、Base URL 与 `responses`/`chat_completions` 模式；`StructuredOutputContract` 为分类、提取和 Bucket 摘要暴露与当前 Python OpenAI SDK 一致的 strict JSON Schema。adapter 分别构造 Responses `text.format` 和 Chat Completions `response_format.json_schema` 请求，通过可注入的 `StructuredOutputTransport` 接收 JSON 响应，再统一处理 output text、拒绝、截断、content filter、非法 JSON 与契约错误。网络错误、408/409/429、5xx 及可恢复的输出错误允许有限重试；拒绝、content filter 和其他 4xx 不重试。真实 HTTP、认证、timeout/proxy 和 Agent 调用接线留给后续阶段。
 
 ### `bucket_service`
 
@@ -80,7 +84,7 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 ### `archive_service`
 
-Python 仍负责生产分类、提取、确认和 Session 生命周期。Rust R3c `ArchiveService` 已建立受控可写服务边界：裁剪并拒绝空输入，要求 append/create 携带 `ExtractionResult`，禁止 ask_user 携带提取结果，构造确认追加/确认新建分类审计，并把 `WritableSqliteStore::persist_archive_attempt` 的事务结果投影为核心 `ArchiveResult`。Bucket 标题和类型由同一写事务返回，避免服务层用未验证的调用方元数据伪造结果。当前 Rust 服务只在系统临时目录的隔离数据库运行；分类器、提取器和模型配置仍由未来 R4 adapter 提供，因此尚未替换完整生产 `archive_user_input`。
+Python 仍负责生产分类、提取、确认和 Session 生命周期。Rust R3c `ArchiveService` 已建立受控可写服务边界：裁剪并拒绝空输入，要求 append/create 携带 `ExtractionResult`，禁止 ask_user 携带提取结果，构造确认追加/确认新建分类审计，并把 `WritableSqliteStore::persist_archive_attempt` 的事务结果投影为核心 `ArchiveResult`。Bucket 标题和类型由同一写事务返回，避免服务层用未验证的调用方元数据伪造结果。当前 Rust 服务只在系统临时目录的隔离数据库运行；R4a 虽已提供 Structured Outputs adapter core，但还没有真实 HTTP transport，也未把候选加载、分类、风险门控、提取和写服务接成完整 `archive_user_input`。
 
 ### `correction_service`
 
@@ -126,13 +130,14 @@ confidence < 0.55               → 用户确认
 - Rust R2o `save_classification_record` 在隔离数据库提供产品级独立分类审计保存：只裁剪原始输入首尾空白，按“服务端候选在前、模型候选在后”做大小写敏感的精确保序去重，并保留已解析的焦点、Prompt 与模型元数据；单事务只新增一条 `classification_records`，不校验审计中的 Bucket ID 是否存在，也不修改 Bucket、Entry 或其他业务表。
 - Rust R3a `BucketQueryService` 在 `work-memory-service` 提供首个产品级只读编排：复用受 Schema 校验和 query-only 保护的 `SqliteStore`，保持活跃列表排序/limit、精确主键查询和 Entry/Todo/Evidence/Timeline/Decision 详情关系顺序；缺失 Bucket 返回 `None`。
 - Rust R3b 在同一服务增加 `search_buckets`：保持查询 trim/空值校验、正数 limit、`max(limit * 5, 50)` SQL 候选窗口、LIKE 通配符字面转义、Unicode casefold 评分、最多十条匹配 Entry 加分、稳定降序排序和紧凑结果投影；当前同样尚未接入生产调用链。
-- Rust R3c `ArchiveService` 持有经验证的 `WritableSqliteStore`，不暴露可写连接或任意事务闭包；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、`classification-v2` 和结果字段语义。ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。R4 完成前，分类/提取调用仍不属于该服务，生产路径也未切换。
+- Rust R3c `ArchiveService` 持有经验证的 `WritableSqliteStore`，不暴露可写连接或任意事务闭包；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、`classification-v2` 和结果字段语义。ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。R4a 只完成模型边界核心；分类/提取调用仍未接入该服务，生产路径也未切换。
 - Rust R3d `CorrectionService` 同样不暴露可写连接；显式 Entry 移动和“移动最近 Entry”都投影为稳定的 `CorrectionResult`。最近 Entry 选择、可选标题解析、聚合移动、摘要重建、审计修正和 Correction 快照写入在同一 Store 事务内完成，避免“最近一条”在读写间发生漂移；目前仍未接入 Agent/UI。
 - Rust R3e `MemoryMutationService` 把 R2h-R2k 的独立 Bucket/Entry 基础写能力组合为稳定服务边界；服务直接接收产品参数并在内部构造强类型 Store request，返回权威 `StoredBucket`、`StoredEntry` 或删除影响 ID，不暴露 `WritableSqliteStore`、SQL 或事务闭包。创建/追加保持 Python 文本、标签、可选字段和置信度语义，删除保持外键级联/SET NULL 与 Todo 时间更新语义；缺失或非法请求不留下部分修改，目前仍未接入 Agent/UI。
 - Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改，目前仍未接入 Agent/UI。
 - Rust R3g `ExtractionPersistenceService` 把 R2n 的独立提取保存提升为稳定服务边界；服务接收精确 Bucket/Entry ID 和已验证 `ExtractionResult`，不暴露 Store request、连接或事务闭包，并返回包含四类新建记录 ID 的 `ExtractionSaveResult`。目标验证、子记录去重、Entry/Bucket 缓存更新和失败回滚继续由单一 Store 事务负责，目前仍未接入提取模型、Agent/UI 或生产数据库。
 - Rust R3h `ClassificationAuditService` 把 R2o 的独立分类审计保存提升为稳定服务边界；服务接收已验证 `ClassificationResult` 及服务端候选、焦点、Prompt 和模型元数据，不暴露 Store request/outcome、连接或事务闭包，并返回新审计 UUID 的 `ClassificationAuditSaveResult`。原始输入 trim、空审计文本、精确元数据、候选合并、三类 action 和失败回滚继续由 Store 保持 Python 语义；分类与风险门控、Prompt 选择和模型名解析仍在服务外，目前未接入 Agent/UI 或生产数据库。
 - Rust R3i `ChatMessagePersistenceService` 把 R2g 单条 ChatMessage 追加提升为稳定服务边界；服务直接接收强类型角色、内容、可选工具元数据和 object/array/null details，不暴露 Store request、连接或事务闭包，并返回与 Python `ChatMessageView` 字符串规范化一致的 `ChatMessageSaveResult`。数据库仍精确保留工具元数据，每次调用独立提交一条 UUID v4 消息并维持严格递增时间顺序；非法输入或插入失败不修改九表，目前未接入 Agent/UI 或生产数据库，也不构造完整 turn 事务。
+- Rust R4a `StructuredOutputAdapter` 只依赖可注入 transport，构造官方 Responses 或兼容 Chat Completions 的 strict JSON Schema 请求，并把响应解析为现有 Rust contract。模型名会 trim，Prompt 保留调用方原文；请求前拒绝空模型/Prompt。网络错误、408/409/429、5xx、非 content-filter incomplete、缺失输出、非法 JSON 和契约错误可在上限内重试，其他 4xx、refusal 与 content filter 立即停止。普通测试通过 fake transport 记录完整请求，不读取 API Key、不调用真实模型，也不触碰 SQLite。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

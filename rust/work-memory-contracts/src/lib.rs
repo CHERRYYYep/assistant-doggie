@@ -9,6 +9,7 @@ mod archive;
 mod classification;
 mod error;
 mod extraction;
+mod structured_output;
 mod timestamp;
 mod values;
 
@@ -20,3 +21,4 @@ pub use archive::ArchiveContract;
 pub use classification::{BucketViewContract, ClassificationContract};
 pub use error::ContractError;
 pub use extraction::{BucketSummaryContract, ExtractionContract};
+pub use structured_output::StructuredOutputContract;
