@@ -60,6 +60,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `search_buckets` 在 Python 创建的临时九表数据库上覆盖查询 trim/空值、正数 limit、标题/摘要/JSON 标签/Entry 候选、LIKE `%`/`_`/`/` 字面转义、Unicode casefold 精确与包含评分、匹配 Entry 计数、稳定 score/活跃时间排序和最终截断；固定 helper 调用 Python `search_buckets` 并逐字段比较完整结果。当前只读搜索测试不代表 Agent、UI 或生产查询路径已切换。
 - Rust `MemoryMutationService` 在 Python 创建的隔离九表数据库上覆盖独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除；验证服务参数规范化、UUID/权威返回字段、删除影响 ID、缺失/非法请求无部分修改，以及 `apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 驱动的 Python/Rust 返回投影和最终数据库语义等价。当前服务测试不代表 Agent、UI 或生产写路径已切换。
 - Rust `BucketSummaryService` 在 Python 创建的隔离九表数据库上覆盖滚动摘要更新与基于 Entry 的摘要重建；验证默认/显式限制接线、返回摘要、去重/窗口/顺序语义、只更新 `summary`/`updated_at`、不刷新 `last_active_at`、缺失/非法请求无部分修改，以及 `apply_bucket_summary_service_fixture.py`、`export_bucket_summary_service_fixture.py` 驱动的 Python/Rust 返回值和九表最终语义等价。当前服务测试不代表 Agent、UI 或生产写路径已切换。
+- Rust `ExtractionPersistenceService` 在 Python 创建的隔离九表数据库上覆盖首次、重复和最小提取保存；验证稳定 `ExtractionSaveResult` 计数与 UUID v4、四类结构化记录去重、Entry summary、Bucket tags/滚动摘要、`last_active_at` 隔离、精确/缺失/归属错误目标无部分修改，以及 `apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 驱动的 Python/Rust 结果和九表最终语义等价。测试不调用真实模型，也不代表 Agent、UI 或生产写路径已切换。
 
 ### 2.3 手动测试
 
@@ -332,6 +333,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/correction.rs`：Rust `CorrectionService` 的指定 Entry 移动、最近 Entry 原子选择、显式 Bucket ID、最终“移到/放到”命令目标解析、精确标题优先、唯一模糊候选、空命令、无法识别、无匹配、多匹配、同 Bucket 和失败无部分写入；`tests/fixtures/apply_correction_service_fixture.py`、`export_correction_service_fixture.py` 驱动 Python/Rust `CorrectionResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/mutation.rs`：Rust `MemoryMutationService` 的 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除，覆盖 Python 兼容规范化、权威返回值、删除影响 ID、非法/缺失目标无部分修改；`tests/fixtures/apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 驱动四类操作的 Python/Rust 结果与最终数据库语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/bucket_summary.rs`：Rust `BucketSummaryService` 的默认/显式滚动摘要更新和 Entry 摘要重建，覆盖返回摘要、更新去重与字符边界、重建窗口/过滤/顺序/精确去重、缓存字段隔离、非法/缺失目标无部分修改；`tests/fixtures/apply_bucket_summary_service_fixture.py`、`export_bucket_summary_service_fixture.py` 驱动 Python/Rust 返回值与排除运行时 `updated_at` 后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
+- `rust/work-memory-service/tests/extraction.rs`：Rust `ExtractionPersistenceService` 的首次、重复和最小提取保存，覆盖稳定结果投影、UUID v4、四类子记录去重、Entry/Bucket 缓存更新、`last_active_at` 隔离、精确/缺失/归属错误目标和失败无修改；`tests/fixtures/apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 驱动 Python/Rust 结果与排除随机子记录 ID/运行时 `updated_at` 后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

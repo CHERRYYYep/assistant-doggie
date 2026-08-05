@@ -30,7 +30,7 @@ Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs
 ## 技术栈与目录
 
 - 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层和隔离写 API 位于 `rust/work-memory-store/`，Bucket 查询/搜索、归档、纠错、基础变更和摘要缓存编排位于 `rust/work-memory-service/`。R3c `ArchiveService` 已接入确认追加、确认新建和已验证分类结果的原子归档；R3d `CorrectionService` 已接入指定或最近 Entry 的移动；R3e `MemoryMutationService` 已接入独立 Bucket 创建、Entry 追加以及 Entry/Bucket 删除；R3f `BucketSummaryService` 已接入独立滚动摘要更新和基于 Entry 的摘要重建。所有 Rust 写服务仍只在隔离数据库验证，尚未接入 Rust LLM adapter、Agent、UI 或生产数据库；生产写入继续由 Python 独占。
+- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层和隔离写 API 位于 `rust/work-memory-store/`，Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存和独立提取保存编排位于 `rust/work-memory-service/`。R3c `ArchiveService` 已接入确认追加、确认新建和已验证分类结果的原子归档；R3d `CorrectionService` 已接入指定或最近 Entry 的移动；R3e `MemoryMutationService` 已接入独立 Bucket 创建、Entry 追加以及 Entry/Bucket 删除；R3f `BucketSummaryService` 已接入独立滚动摘要更新和基于 Entry 的摘要重建；R3g `ExtractionPersistenceService` 已接入已验证 `ExtractionResult` 的独立原子保存。所有 Rust 写服务仍只在隔离数据库验证，尚未接入 Rust LLM adapter、Agent、UI 或生产数据库；生产写入继续由 Python 独占。
 - `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。

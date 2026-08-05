@@ -411,3 +411,15 @@ R3e 只接通独立基础变更服务，不把创建、追加或删除切到生�
 - `tests/fixtures/apply_bucket_summary_service_fixture.py` 为 Python 权威路径提供更新、重建和仅准备 Entry 的固定场景；`export_bucket_summary_service_fixture.py` 排除运行时 `updated_at` 并规范化 JSON 字段，`rust/work-memory-service/tests/bucket_summary.rs` 比较返回摘要、九表最终语义、默认值接线、非法/缺失请求和无部分修改。数据库均位于系统临时目录。
 
 R3f 只接通独立摘要缓存维护，不替代 R3c 归档或 R3d 纠错事务内部的摘要更新，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
+
+## 21. Rust 独立提取保存服务边界（R3g）
+
+`work-memory-service::ExtractionPersistenceService` 把 R2n 已验证的独立提取保存事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交精确 Bucket/Entry ID 和已经通过核心层验证的 `ExtractionResult`：
+
+- `save_extraction` 在服务内部构造 `SaveExtractionRequest`，不暴露 Store request、outcome、连接、SQL 或事务闭包；模型调用和 JSON/Schema 验证仍由服务外的未来 adapter 负责。
+- Store 事务继续先校验精确 Bucket，再校验 Entry 存在且属于目标 Bucket；随后按调用前已有记录对 Todo/Evidence/TimelineEvent/Decision 去重，更新 Entry `summary`，按 Unicode casefold 合并 Bucket tags，并更新 1200 字符滚动摘要和 `updated_at`。
+- 事务不刷新 Bucket `last_active_at`，也不修改 Entry 其他字段或 ClassificationRecord、Correction、ChatMessage；缺失 Bucket、缺失 Entry、归属不匹配或晚期数据库错误均不会留下部分修改。
+- 稳定结果投影 `ExtractionSaveResult` 返回权威 Bucket/Entry ID 与本次实际新增的四类子记录 ID。重复保存同一提取结果时，这些 ID 列表为空，但 Entry/Bucket 缓存语义仍与 Python 保持一致。
+- `tests/fixtures/apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 与 `rust/work-memory-service/tests/extraction.rs` 比较首次、重复、最小和无效目标场景的 Python/Rust 结果及九表最终语义；随机子记录 ID 和运行时 `updated_at` 被规范化，数据库只位于系统临时目录且不调用真实模型。
+
+R3g 只接通已验证提取结果的独立持久化，不替代 R3c 归档事务内部的提取保存，也不提供模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。

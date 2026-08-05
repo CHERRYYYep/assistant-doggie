@@ -2,6 +2,7 @@
 
 mod archive;
 mod correction;
+mod extraction;
 mod mutation;
 mod summary;
 
@@ -18,6 +19,7 @@ use work_memory_store::{
 
 pub use archive::{ArchiveService, CLASSIFICATION_PROMPT_VERSION};
 pub use correction::{CorrectionResult, CorrectionService, ENTRY_TARGET_TYPE, MOVE_ENTRY_ACTION};
+pub use extraction::{ExtractionPersistenceService, ExtractionSaveResult};
 pub use mutation::MemoryMutationService;
 pub use summary::BucketSummaryService;
 
