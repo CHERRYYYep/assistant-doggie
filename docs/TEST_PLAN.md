@@ -58,6 +58,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `save_classification_record` 在临时 Python Schema 上覆盖原始输入裁剪与空值保留、服务端元数据精确保留、服务端/模型候选精确保序去重、三种 action、缺失审计目标、UUID 与默认字段、重复审计、单表影响和插入失败全事务 rollback；固定 helper 调用 Python `save_classification_record` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 - Rust `BucketQueryService` 在 Python 创建的临时九表数据库上覆盖 active 列表排序与 limit、精确/缺失 Bucket 查询、Entry/Todo/Evidence/TimelineEvent/Decision 完整详情和关系顺序；固定 helper 调用 Python `list_active_buckets`、`get_bucket`、`get_bucket_detail` 并逐字段比较完整 JSON。当前只读服务测试不代表 Agent、UI 或生产查询路径已切换。
 - Rust `search_buckets` 在 Python 创建的临时九表数据库上覆盖查询 trim/空值、正数 limit、标题/摘要/JSON 标签/Entry 候选、LIKE `%`/`_`/`/` 字面转义、Unicode casefold 精确与包含评分、匹配 Entry 计数、稳定 score/活跃时间排序和最终截断；固定 helper 调用 Python `search_buckets` 并逐字段比较完整结果。当前只读搜索测试不代表 Agent、UI 或生产查询路径已切换。
+- Rust `MemoryMutationService` 在 Python 创建的隔离九表数据库上覆盖独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除；验证服务参数规范化、UUID/权威返回字段、删除影响 ID、缺失/非法请求无部分修改，以及 `apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 驱动的 Python/Rust 返回投影和最终数据库语义等价。当前服务测试不代表 Agent、UI 或生产写路径已切换。
 
 ### 2.3 手动测试
 
@@ -328,6 +329,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/bucket_search.rs`：Rust 服务层关键词搜索验证、候选字段、通配符转义、Unicode casefold 评分、匹配计数、稳定排序和 limit，以及 `tests/fixtures/create_bucket_search_fixture.py`、`export_bucket_search_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/archive.rs`：Rust `ArchiveService` 的输入裁剪、action/extraction 一致性、确认追加、确认新建、ask_user 仅审计、权威 Bucket 结果投影、缺失目标和无部分写入；`tests/fixtures/apply_archive_service_fixture.py`、`export_archive_service_fixture.py` 驱动 Python/Rust `ArchiveResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/correction.rs`：Rust `CorrectionService` 的指定 Entry 移动、最近 Entry 原子选择、显式 Bucket ID、最终“移到/放到”命令目标解析、精确标题优先、唯一模糊候选、空命令、无法识别、无匹配、多匹配、同 Bucket 和失败无部分写入；`tests/fixtures/apply_correction_service_fixture.py`、`export_correction_service_fixture.py` 驱动 Python/Rust `CorrectionResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录。
+- `rust/work-memory-service/tests/mutation.rs`：Rust `MemoryMutationService` 的 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除，覆盖 Python 兼容规范化、权威返回值、删除影响 ID、非法/缺失目标无部分修改；`tests/fixtures/apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 驱动四类操作的 Python/Rust 结果与最终数据库语义等价，数据库只位于系统临时目录且不调用真实模型。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

@@ -2,6 +2,7 @@
 
 mod archive;
 mod correction;
+mod mutation;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -16,6 +17,7 @@ use work_memory_store::{
 
 pub use archive::{ArchiveService, CLASSIFICATION_PROMPT_VERSION};
 pub use correction::{CorrectionResult, CorrectionService, ENTRY_TARGET_TYPE, MOVE_ENTRY_ACTION};
+pub use mutation::MemoryMutationService;
 
 /// A Bucket and all product-visible child records loaded by the Python detail service.
 #[derive(Debug, Clone, PartialEq)]
