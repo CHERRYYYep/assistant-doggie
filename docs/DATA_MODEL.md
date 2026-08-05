@@ -361,7 +361,7 @@ R2o 独立分类审计保存写边界：
 - 最终评分保持 Python 规则：标题 casefold 精确/包含分别加 100/50，任一标签包含加 30，摘要包含加 20，每条匹配 Entry 加 5 且最多计十条；结果按 score、`last_active_at` 降序稳定排序后截断。
 - JSON 标签仍以 SQLite 序列化文本参与候选查询；因此 Python 默认 JSON 转义造成的非 ASCII 标签候选限制属于当前兼容语义，不在 R3b 中单方面修正。`tests/fixtures/export_bucket_search_fixture.py` 覆盖字段来源、通配符字面转义、Unicode casefold、稳定并列顺序、匹配计数和逐字段结果等价。
 
-R3a-R3b 只证明隔离只读服务语义等价，尚未迁移归档/纠错服务编排，也未接入 Agent、UI 或生产数据库。
+R3a-R3b 只证明隔离只读服务语义等价；归档与纠错写服务边界分别见 R3c、R3d。上述服务均尚未接入 Agent、UI 或生产数据库。
 
 ## 17. Rust 归档服务编排边界（R3c）
 
@@ -374,3 +374,15 @@ R3a-R3b 只证明隔离只读服务语义等价，尚未迁移归档/纠错服�
 - `tests/fixtures/apply_archive_service_fixture.py` 和 `export_archive_service_fixture.py` 驱动确认追加、确认新建、ask_user 的 Python/Rust 返回值及最终数据库语义等价；所有数据库均在系统临时目录创建。
 
 R3c 不实现或伪装完整的模型调用闭环。分类与提取结果仍由调用方提供；Rust LLM adapter、候选加载、风险门控接线和生产 `archive_user_input` 替换留到 R4/后续集成。Python 仍是唯一生产数据库写入者，也不得与 Rust 并发写同一生产数据库。
+
+## 18. Rust 纠错服务编排边界（R3d）
+
+`work-memory-service::CorrectionService` 把 R2f 的受控聚合移动事务提升为产品服务边界。它只持有经验证的 `WritableSqliteStore`，不向调用方暴露连接、SQL 或事务闭包：
+
+- `move_entry` 接收显式 Entry ID、目标 Bucket ID 和纠错命令；命令按 Python `strip()` 语义裁剪，空命令在服务入口拒绝。提交结果投影为 `CorrectionResult`，包含生成的 Correction ID、规范化命令、来源/目标 Bucket、被移动的四类派生记录 ID，以及被标记为已纠错的分类审计 ID。
+- `move_latest_entry` 支持显式目标 Bucket ID；未提供 ID 时，复现 Python MVP 支持的中文命令形式，从最后一个“移到”或“放到”片段提取目标标题。无法识别目标时不会进入 Store。
+- Store 在同一 `BEGIN IMMEDIATE` 事务中按 `created_at DESC` 选择最新 Entry、解析标题候选并执行聚合移动。标题候选保持 SQLAlchemy `contains(..., autoescape=True)` 的 `%`/`_` 字面转义，唯一精确标题优先于模糊候选；无候选或多个候选返回结构化错误。
+- Entry、Todo、Evidence、TimelineEvent、Decision、两个 Bucket 的摘要/活跃时间、关联 `classification_records.corrected` 和 Correction 前后快照仍由一个事务共同提交或回滚。“最近一条”选择不在事务外预读，因此不会在选择和写入之间漂移。
+- `tests/fixtures/apply_correction_service_fixture.py`、`export_correction_service_fixture.py` 和 `rust/work-memory-service/tests/correction.rs` 覆盖指定 Entry、显式目标的最近 Entry、命令解析的最近 Entry、最终目标优先、精确/模糊标题规则、空命令、缺失/歧义目标、同 Bucket 拒绝、无部分写入，以及 Python/Rust 返回值和最终数据库语义等价。
+
+R3d 仍只在系统临时目录中的隔离数据库运行。Streamlit 的“移动最近 Entry”和其他生产调用仍使用 Python，切换前不得让 Python 与 Rust 并发写同一生产数据库。

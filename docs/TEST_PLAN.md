@@ -315,7 +315,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/python_migration_compat.rs`：九表 Schema、legacy → version 1、幂等、业务数据不变性、恢复、safety backup 和损坏输入拒绝回归；所有路径只位于系统临时目录。
 - `rust/work-memory-store/src/write.rs` 单元测试：可写连接保护、`BEGIN IMMEDIATE` 成功提交、外键失败全事务回滚、坏 Schema 和 Schema 版本漂移拒绝；fixture 只位于系统临时目录。
 - `rust/work-memory-store/tests/archive_write.rs`：强类型 append/create/ask_user 归档、UUID/关系、Python 去重与摘要语义、缺失目标和触发器中途失败回滚，以及 `tests/fixtures/apply_archive_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
-- `rust/work-memory-store/tests/correction_write.rs`：强类型 Entry 移动、全子记录同步、Correction 快照、分类纠错标记、双 Bucket 摘要/活跃时间、缺失/同 Bucket 错误、晚期触发器回滚，以及 `tests/fixtures/apply_correction_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
+- `rust/work-memory-store/tests/correction_write.rs`：强类型 Entry 移动、全子记录同步、Correction 快照、分类纠错标记、双 Bucket 摘要/活跃时间、事务内最近 Entry 选择、精确标题优先、无 Entry、缺失/同 Bucket 错误、晚期触发器回滚，以及 `tests/fixtures/apply_correction_write_fixture.py` 驱动的 Python/Rust 最终业务状态等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/chat_write.rs`：强类型 ChatMessage 追加、三种角色、字段规范化与保持、UUID、单行影响、连续追加顺序、触发器回滚，以及 `tests/fixtures/apply_chat_write_fixture.py` 驱动的 Python/Rust 最终消息语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/delete_write.rs`：受控 Bucket 聚合删除、影响 ID、跨 Bucket 引用的 SET NULL 与 Todo 更新时间、缺失目标、晚期失败回滚，以及 `tests/fixtures/apply_bucket_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/entry_delete_write.rs`：受控独立 Entry 删除、清空链接的影响 ID、同/跨 Bucket 子记录存活、Todo 更新时间、Bucket/审计保持、精确与缺失 ID、晚期失败回滚，以及 `tests/fixtures/apply_entry_delete_fixture.py` 驱动的 SQLAlchemy/Rust 模型级最终状态等价；数据库只位于系统临时目录。
@@ -327,6 +327,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/bucket_query.rs`：首个 Rust 服务层 Bucket 列表、精确查询和完整详情聚合，以及 `tests/fixtures/export_bucket_query_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/bucket_search.rs`：Rust 服务层关键词搜索验证、候选字段、通配符转义、Unicode casefold 评分、匹配计数、稳定排序和 limit，以及 `tests/fixtures/create_bucket_search_fixture.py`、`export_bucket_search_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/archive.rs`：Rust `ArchiveService` 的输入裁剪、action/extraction 一致性、确认追加、确认新建、ask_user 仅审计、权威 Bucket 结果投影、缺失目标和无部分写入；`tests/fixtures/apply_archive_service_fixture.py`、`export_archive_service_fixture.py` 驱动 Python/Rust `ArchiveResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录且不调用真实模型。
+- `rust/work-memory-service/tests/correction.rs`：Rust `CorrectionService` 的指定 Entry 移动、最近 Entry 原子选择、显式 Bucket ID、最终“移到/放到”命令目标解析、精确标题优先、唯一模糊候选、空命令、无法识别、无匹配、多匹配、同 Bucket 和失败无部分写入；`tests/fixtures/apply_correction_service_fixture.py`、`export_correction_service_fixture.py` 驱动 Python/Rust `CorrectionResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索和首个归档写编排。R3c `ArchiveService` 只接收已验证分类/提取结果，Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档和纠错编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -84,7 +84,7 @@ Python 仍负责生产分类、提取、确认和 Session 生命周期。Rust R3
 
 ### `correction_service`
 
-支持移动指定或最近 Entry，并同步移动其派生记录；写入 Correction 前后快照，重建两个 Bucket 的摘要，并把关联分类审计标记为已纠错。Rust `WritableSqliteStore::move_entry` 已在隔离临时数据库复现该聚合事务及失败回滚，但当前 Agent 和 UI 仍调用 Python 服务。
+支持移动指定或最近 Entry，并同步移动其派生记录；写入 Correction 前后快照，重建两个 Bucket 的摘要，并把关联分类审计标记为已纠错。Rust R3d `CorrectionService` 持有经验证的 `WritableSqliteStore`：`move_entry` 接收显式 Entry/Bucket ID，`move_latest_entry` 在同一 `BEGIN IMMEDIATE` 事务中选择最新 Entry，并从显式 Bucket ID 或 Python MVP 支持的最终“移到/放到”命令片段解析目标。标题查询保持 SQLAlchemy `contains(..., autoescape=True)` 的字面匹配、精确标题优先和唯一模糊候选规则；空命令、无法识别、无匹配、多匹配、同 Bucket 和缺失记录均拒绝且不留下部分写入。当前 Agent 和 UI 仍调用 Python 服务。
 
 ### `agent_service` 的聊天持久化边界
 
@@ -127,6 +127,7 @@ confidence < 0.55               → 用户确认
 - Rust R3a `BucketQueryService` 在 `work-memory-service` 提供首个产品级只读编排：复用受 Schema 校验和 query-only 保护的 `SqliteStore`，保持活跃列表排序/limit、精确主键查询和 Entry/Todo/Evidence/Timeline/Decision 详情关系顺序；缺失 Bucket 返回 `None`。
 - Rust R3b 在同一服务增加 `search_buckets`：保持查询 trim/空值校验、正数 limit、`max(limit * 5, 50)` SQL 候选窗口、LIKE 通配符字面转义、Unicode casefold 评分、最多十条匹配 Entry 加分、稳定降序排序和紧凑结果投影；当前同样尚未接入生产调用链。
 - Rust R3c `ArchiveService` 持有经验证的 `WritableSqliteStore`，不暴露可写连接或任意事务闭包；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、`classification-v2` 和结果字段语义。ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。R4 完成前，分类/提取调用仍不属于该服务，生产路径也未切换。
+- Rust R3d `CorrectionService` 同样不暴露可写连接；显式 Entry 移动和“移动最近 Entry”都投影为稳定的 `CorrectionResult`。最近 Entry 选择、可选标题解析、聚合移动、摘要重建、审计修正和 Correction 快照写入在同一 Store 事务内完成，避免“最近一条”在读写间发生漂移；目前仍未接入 Agent/UI。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

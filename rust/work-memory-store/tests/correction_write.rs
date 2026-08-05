@@ -8,7 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::{Connection, params};
 use serde_json::{Value as JsonValue, json};
-use work_memory_store::{MoveEntryRequest, SqliteStore, StoreError, WritableSqliteStore};
+use work_memory_store::{
+    MoveEntryRequest, MoveLatestEntryRequest, SqliteStore, StoreError, WritableSqliteStore,
+};
 
 const SOURCE_BUCKET_ID: &str = "11111111-1111-1111-1111-111111111111";
 const TARGET_BUCKET_ID: &str = "22222222-2222-2222-2222-222222222222";
@@ -240,6 +242,63 @@ fn same_bucket_move_is_a_typed_validation_error_without_changes() {
             action: "move_entry",
             reason: "entry already belongs to the target bucket"
         })
+    ));
+    drop(store);
+    assert_eq!(business_snapshot(database.path()), before);
+}
+
+#[test]
+fn latest_move_prefers_one_exact_title_over_additional_fuzzy_matches() {
+    let database = create_python_fixture("latest-exact-title");
+    Connection::open(database.path())
+        .unwrap()
+        .execute(
+            "INSERT INTO buckets (
+                id, title, type, status, summary, tags,
+                created_at, updated_at, last_active_at
+             ) VALUES (
+                '55555555-5555-5555-5555-555555555555',
+                'Newer tie-break update archive', 'task', 'active', '', '[]',
+                '2026-08-04 08:30:00.000000',
+                '2026-08-04 08:30:00.000000',
+                '2026-08-04 08:30:00.000000'
+             )",
+            [],
+        )
+        .unwrap();
+    let before = business_snapshot(database.path());
+    let mut store = WritableSqliteStore::open_existing(database.path()).unwrap();
+    let request = MoveLatestEntryRequest::for_bucket_title_contains(
+        "Newer tie-break update",
+        "Move the latest entry",
+    )
+    .unwrap();
+
+    assert!(matches!(
+        store.move_latest_entry(&request),
+        Err(StoreError::InvalidCorrectionWrite {
+            action: "move_entry",
+            reason: "entry already belongs to the target bucket"
+        })
+    ));
+    drop(store);
+    assert_eq!(business_snapshot(database.path()), before);
+}
+
+#[test]
+fn latest_move_rejects_a_database_without_entries_before_writing() {
+    let database = create_python_fixture("latest-empty");
+    Connection::open(database.path())
+        .unwrap()
+        .execute("DELETE FROM entries", [])
+        .unwrap();
+    let before = business_snapshot(database.path());
+    let mut store = WritableSqliteStore::open_existing(database.path()).unwrap();
+    let request = MoveLatestEntryRequest::for_bucket_id(TARGET_BUCKET_ID, "Move latest").unwrap();
+
+    assert!(matches!(
+        store.move_latest_entry(&request),
+        Err(StoreError::NoEntryAvailableToCorrect)
     ));
     drop(store);
     assert_eq!(business_snapshot(database.path()), before);

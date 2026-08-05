@@ -3,6 +3,7 @@ use serde::Serialize;
 
 use crate::archive_write::{current_timestamp, new_uuid_v4, required_text, serialize_json};
 use crate::bucket_summary_write::{DEFAULT_REBUILD_ENTRY_LIMIT, rebuild_bucket_summary};
+use crate::read::escape_like_contains;
 use crate::{StoreError, WritableSqliteStore};
 
 const MOVE_ENTRY_ACTION: &str = "move_entry";
@@ -39,6 +40,67 @@ impl MoveEntryRequest {
 
     pub fn command_text(&self) -> &str {
         &self.command_text
+    }
+}
+
+/// A validated request to atomically select and move the latest Entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveLatestEntryRequest {
+    command_text: String,
+    target: LatestEntryTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LatestEntryTarget {
+    BucketId(String),
+    BucketTitleContains(String),
+}
+
+impl MoveLatestEntryRequest {
+    /// Select the latest Entry and move it to one explicit Bucket ID.
+    pub fn for_bucket_id(
+        target_bucket_id: impl Into<String>,
+        command_text: impl Into<String>,
+    ) -> Result<Self, StoreError> {
+        Ok(Self {
+            command_text: required_text(command_text.into(), "command_text")?,
+            target: LatestEntryTarget::BucketId(target_bucket_id.into()),
+        })
+    }
+
+    /// Select the latest Entry and resolve its target by a title fragment.
+    ///
+    /// Resolution preserves Python's literal `contains(..., autoescape=True)`
+    /// query followed by exact-title preference and unique fuzzy fallback.
+    pub fn for_bucket_title_contains(
+        target_title: impl Into<String>,
+        command_text: impl Into<String>,
+    ) -> Result<Self, StoreError> {
+        Ok(Self {
+            command_text: required_text(command_text.into(), "command_text")?,
+            target: LatestEntryTarget::BucketTitleContains(required_text(
+                target_title.into(),
+                "target_title",
+            )?),
+        })
+    }
+
+    pub fn command_text(&self) -> &str {
+        &self.command_text
+    }
+
+    pub fn target_bucket_id(&self) -> Option<&str> {
+        match &self.target {
+            LatestEntryTarget::BucketId(bucket_id) => Some(bucket_id),
+            LatestEntryTarget::BucketTitleContains(_) => None,
+        }
+    }
+
+    pub fn target_title(&self) -> Option<&str> {
+        match &self.target {
+            LatestEntryTarget::BucketId(_) => None,
+            LatestEntryTarget::BucketTitleContains(title) => Some(title),
+        }
     }
 }
 
@@ -106,6 +168,18 @@ impl WritableSqliteStore {
     ) -> Result<MoveEntryOutcome, StoreError> {
         self.run_transaction(|transaction| move_entry(transaction, request))
     }
+
+    /// Select and move the latest Entry in one immediate transaction.
+    ///
+    /// Keeping selection, optional title resolution, aggregate mutation, and
+    /// correction audit creation in one transaction prevents the meaning of
+    /// "latest" from changing between a read and the committed move.
+    pub fn move_latest_entry(
+        &mut self,
+        request: &MoveLatestEntryRequest,
+    ) -> Result<MoveEntryOutcome, StoreError> {
+        self.run_transaction(|transaction| move_latest_entry(transaction, request))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -116,6 +190,66 @@ struct EntrySnapshot {
     evidence_ids: Vec<String>,
     timeline_event_ids: Vec<String>,
     decision_ids: Vec<String>,
+}
+
+fn move_latest_entry(
+    transaction: &Transaction<'_>,
+    request: &MoveLatestEntryRequest,
+) -> Result<MoveEntryOutcome, StoreError> {
+    let entry_id = transaction
+        .query_row(
+            "SELECT id FROM entries ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or(StoreError::NoEntryAvailableToCorrect)?;
+    let target_bucket_id = match &request.target {
+        LatestEntryTarget::BucketId(bucket_id) => bucket_id.clone(),
+        LatestEntryTarget::BucketTitleContains(title) => {
+            resolve_target_bucket_id(transaction, title)?
+        }
+    };
+    let move_request = MoveEntryRequest {
+        entry_id,
+        target_bucket_id,
+        command_text: request.command_text.clone(),
+    };
+    move_entry(transaction, &move_request)
+}
+
+fn resolve_target_bucket_id(
+    transaction: &Transaction<'_>,
+    target_title: &str,
+) -> Result<String, StoreError> {
+    let escaped_title = escape_like_contains(target_title);
+    let mut statement = transaction.prepare(
+        "SELECT id, title
+         FROM buckets
+         WHERE title LIKE '%' || ?1 || '%' ESCAPE '/'",
+    )?;
+    let matches = statement
+        .query_map([escaped_title], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let exact_matches = matches
+        .iter()
+        .filter(|(_, title)| title == target_title)
+        .collect::<Vec<_>>();
+    if exact_matches.len() == 1 {
+        return Ok(exact_matches[0].0.clone());
+    }
+    match matches.as_slice() {
+        [(bucket_id, _)] => Ok(bucket_id.clone()),
+        [] => Err(StoreError::NoMatchingCorrectionBucket {
+            title: target_title.to_owned(),
+        }),
+        _ => Err(StoreError::AmbiguousCorrectionBucket {
+            title: target_title.to_owned(),
+        }),
+    }
 }
 
 fn move_entry(
@@ -297,7 +431,7 @@ fn update_child_bucket(
 
 #[cfg(test)]
 mod tests {
-    use super::MoveEntryRequest;
+    use super::{MoveEntryRequest, MoveLatestEntryRequest};
     use crate::StoreError;
     use crate::bucket_summary_write::truncate_summary;
 
@@ -312,6 +446,32 @@ mod tests {
             MoveEntryRequest::new("entry", "target", " \t\n "),
             Err(StoreError::InvalidWriteField {
                 field: "command_text",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn latest_request_preserves_explicit_ids_and_normalizes_title_targets() {
+        let explicit =
+            MoveLatestEntryRequest::for_bucket_id(" bucket ", "  move latest  ").unwrap();
+        assert_eq!(explicit.command_text(), "move latest");
+        assert_eq!(explicit.target_bucket_id(), Some(" bucket "));
+        assert_eq!(explicit.target_title(), None);
+
+        let by_title = MoveLatestEntryRequest::for_bucket_title_contains(
+            "  Review Bucket  ",
+            "  move latest  ",
+        )
+        .unwrap();
+        assert_eq!(by_title.command_text(), "move latest");
+        assert_eq!(by_title.target_bucket_id(), None);
+        assert_eq!(by_title.target_title(), Some("Review Bucket"));
+
+        assert!(matches!(
+            MoveLatestEntryRequest::for_bucket_title_contains(" \n\t ", "move latest"),
+            Err(StoreError::InvalidWriteField {
+                field: "target_title",
                 ..
             })
         ));

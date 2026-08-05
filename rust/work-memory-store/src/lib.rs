@@ -24,7 +24,7 @@ pub use bucket_summary_write::{RebuildBucketSummaryRequest, UpdateBucketSummaryR
 pub use bucket_write::CreateBucketRequest;
 pub use chat_write::ChatMessageWriteRequest;
 pub use classification_write::{SaveClassificationRecordOutcome, SaveClassificationRecordRequest};
-pub use correction_write::{MoveEntryOutcome, MoveEntryRequest};
+pub use correction_write::{MoveEntryOutcome, MoveEntryRequest, MoveLatestEntryRequest};
 pub use delete_write::{
     DeleteBucketOutcome, DeleteBucketRequest, DeleteEntryOutcome, DeleteEntryRequest,
 };
@@ -190,6 +190,13 @@ pub enum StoreError {
     InvalidCorrectionWrite {
         action: &'static str,
         reason: &'static str,
+    },
+    NoEntryAvailableToCorrect,
+    NoMatchingCorrectionBucket {
+        title: String,
+    },
+    AmbiguousCorrectionBucket {
+        title: String,
     },
     MissingRecord {
         table: &'static str,
@@ -419,6 +426,21 @@ impl Display for StoreError {
                 write!(
                     formatter,
                     "invalid correction write for action {action}: {reason}"
+                )
+            }
+            Self::NoEntryAvailableToCorrect => {
+                formatter.write_str("no entry is available to correct")
+            }
+            Self::NoMatchingCorrectionBucket { title } => {
+                write!(
+                    formatter,
+                    "no Bucket title contains the correction target: {title}"
+                )
+            }
+            Self::AmbiguousCorrectionBucket { title } => {
+                write!(
+                    formatter,
+                    "multiple Bucket titles contain the correction target: {title}"
                 )
             }
             Self::MissingRecord { table, id } => {

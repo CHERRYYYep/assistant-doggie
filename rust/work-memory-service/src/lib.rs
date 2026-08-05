@@ -1,6 +1,7 @@
 //! Business-level orchestration over the strongly typed SQLite store.
 
 mod archive;
+mod correction;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -14,6 +15,7 @@ use work_memory_store::{
 };
 
 pub use archive::{ArchiveService, CLASSIFICATION_PROMPT_VERSION};
+pub use correction::{CorrectionResult, CorrectionService, ENTRY_TARGET_TYPE, MOVE_ENTRY_ACTION};
 
 /// A Bucket and all product-visible child records loaded by the Python detail service.
 #[derive(Debug, Clone, PartialEq)]
@@ -44,7 +46,9 @@ pub struct BucketSearchResult {
 #[derive(Debug)]
 pub enum ServiceError {
     EmptyArchiveText,
+    EmptyCorrectionCommand,
     EmptySearchQuery,
+    UnrecognizedCorrectionTarget,
     MissingExtraction { action: &'static str },
     UnexpectedExtraction,
     Core(CoreError),
@@ -55,7 +59,9 @@ impl ServiceError {
     pub const fn store_error(&self) -> Option<&StoreError> {
         match self {
             Self::EmptyArchiveText
+            | Self::EmptyCorrectionCommand
             | Self::EmptySearchQuery
+            | Self::UnrecognizedCorrectionTarget
             | Self::MissingExtraction { .. }
             | Self::UnexpectedExtraction
             | Self::Core(_) => None,
@@ -67,7 +73,9 @@ impl ServiceError {
         match self {
             Self::Core(error) => Some(error),
             Self::EmptyArchiveText
+            | Self::EmptyCorrectionCommand
             | Self::EmptySearchQuery
+            | Self::UnrecognizedCorrectionTarget
             | Self::MissingExtraction { .. }
             | Self::UnexpectedExtraction
             | Self::Store(_) => None,
@@ -79,7 +87,13 @@ impl Display for ServiceError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyArchiveText => formatter.write_str("text must not be empty"),
+            Self::EmptyCorrectionCommand => {
+                formatter.write_str("correction command must not be empty")
+            }
             Self::EmptySearchQuery => formatter.write_str("search query must not be empty"),
+            Self::UnrecognizedCorrectionTarget => formatter.write_str(
+                "correction command does not identify a target Bucket; supply an explicit ID",
+            ),
             Self::MissingExtraction { action } => {
                 write!(
                     formatter,
@@ -101,7 +115,9 @@ impl Error for ServiceError {
             Self::Core(error) => Some(error),
             Self::Store(error) => Some(error),
             Self::EmptyArchiveText
+            | Self::EmptyCorrectionCommand
             | Self::EmptySearchQuery
+            | Self::UnrecognizedCorrectionTarget
             | Self::MissingExtraction { .. }
             | Self::UnexpectedExtraction => None,
         }
