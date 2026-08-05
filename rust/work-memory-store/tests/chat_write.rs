@@ -1,6 +1,6 @@
 mod support;
 
-use support::TemporaryPath as TemporaryDatabase;
+use support::{TemporaryPath as TemporaryDatabase, assert_uuid_v4};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -301,22 +301,6 @@ fn run_python_script(relative_script: &str, database_path: &Path) {
         "Python fixture helper failed for {relative_script}\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn assert_uuid_v4(value: &str) {
-    assert_eq!(value.len(), 36);
-    assert_eq!(value.as_bytes()[8], b'-');
-    assert_eq!(value.as_bytes()[13], b'-');
-    assert_eq!(value.as_bytes()[18], b'-');
-    assert_eq!(value.as_bytes()[23], b'-');
-    assert_eq!(value.as_bytes()[14], b'4');
-    assert!(matches!(value.as_bytes()[19], b'8' | b'9' | b'a' | b'b'));
-    assert!(
-        value
-            .bytes()
-            .enumerate()
-            .all(|(index, byte)| matches!(index, 8 | 13 | 18 | 23) || byte.is_ascii_hexdigit())
     );
 }
 

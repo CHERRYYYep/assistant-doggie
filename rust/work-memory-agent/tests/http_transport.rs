@@ -1,10 +1,9 @@
-use std::collections::BTreeMap;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
+use httpmock::{HttpMockRequest, HttpMockResponse, MockServer as HttpMockServer};
 use serde_json::{Value, json};
 use work_memory_agent::{
     LlmEndpointConfig, LlmError, LlmHttpTransportConfig, LlmTransportError,
@@ -44,7 +43,7 @@ impl MockResponse {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CapturedRequest {
     method: String,
     target: String,
@@ -53,117 +52,72 @@ struct CapturedRequest {
 }
 
 struct MockServer {
+    server: HttpMockServer,
     base_url: String,
     captured: Arc<Mutex<Vec<CapturedRequest>>>,
-    handle: JoinHandle<()>,
 }
 
 impl MockServer {
     fn start(responses: Vec<MockResponse>) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind mock server");
-        let address = listener.local_addr().expect("mock server address");
+        let server = HttpMockServer::start();
+        let responses = Arc::new(Mutex::new(VecDeque::from(responses)));
         let captured = Arc::new(Mutex::new(Vec::new()));
-        let captured_for_thread = Arc::clone(&captured);
+        let responses_for_handler = Arc::clone(&responses);
+        let captured_for_handler = Arc::clone(&captured);
 
-        let handle = thread::spawn(move || {
-            for response in responses {
-                let (mut stream, _) = listener.accept().expect("accept mock request");
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .expect("set mock read timeout");
-                let request = read_request(&mut stream);
-                captured_for_thread
+        server.mock(|when, then| {
+            when.method("POST").path("/v1/responses");
+            then.respond_with(move |request: &HttpMockRequest| {
+                let uri = request.uri();
+                let target = uri
+                    .path_and_query()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| uri.to_string());
+                captured_for_handler
                     .lock()
                     .expect("capture lock")
-                    .push(request);
+                    .push(CapturedRequest {
+                        method: request.method_str().to_owned(),
+                        target,
+                        headers: request
+                            .headers_vec()
+                            .iter()
+                            .map(|(name, value)| (name.to_ascii_lowercase(), value.clone()))
+                            .collect(),
+                        body: request.body_vec(),
+                    });
 
+                let response = responses_for_handler
+                    .lock()
+                    .expect("response queue lock")
+                    .pop_front()
+                    .expect("mock response queue should not be exhausted");
                 if !response.delay.is_zero() {
                     thread::sleep(response.delay);
                 }
-                let body = response.body.as_bytes();
-                let status_text = match response.status {
-                    200 => "OK",
-                    401 => "Unauthorized",
-                    408 => "Request Timeout",
-                    409 => "Conflict",
-                    429 => "Too Many Requests",
-                    500 => "Internal Server Error",
-                    _ => "Test Status",
-                };
-                let response_head = format!(
-                    "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                    response.status,
-                    status_text,
-                    body.len()
-                );
-                let _ = stream.write_all(response_head.as_bytes());
-                let _ = stream.write_all(body);
-                let _ = stream.flush();
-            }
+
+                HttpMockResponse::builder()
+                    .status(response.status)
+                    .header("Content-Type", "application/json")
+                    .body(response.body)
+                    .build()
+            });
         });
 
         Self {
-            base_url: format!("http://{address}/v1"),
+            base_url: server.url("/v1"),
+            server,
             captured,
-            handle,
         }
     }
 
     fn finish(self) -> Vec<CapturedRequest> {
-        self.handle.join().expect("mock server thread");
-        Arc::try_unwrap(self.captured)
-            .expect("mock server capture references released")
-            .into_inner()
-            .expect("capture lock")
+        let Self {
+            server, captured, ..
+        } = self;
+        drop(server);
+        captured.lock().expect("capture lock").clone()
     }
-}
-
-fn read_request(stream: &mut TcpStream) -> CapturedRequest {
-    let mut bytes = Vec::new();
-    let header_end = loop {
-        let mut chunk = [0_u8; 1024];
-        let read = stream.read(&mut chunk).expect("read mock request");
-        assert!(read > 0, "mock client closed before sending headers");
-        bytes.extend_from_slice(&chunk[..read]);
-        if let Some(index) = find_header_end(&bytes) {
-            break index;
-        }
-    };
-
-    let header_text = String::from_utf8_lossy(&bytes[..header_end]);
-    let mut lines = header_text.split("\r\n");
-    let request_line = lines.next().expect("request line");
-    let mut request_line_parts = request_line.split_whitespace();
-    let method = request_line_parts.next().unwrap_or_default().to_owned();
-    let target = request_line_parts.next().unwrap_or_default().to_owned();
-    let headers = lines
-        .filter_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            Some((name.to_ascii_lowercase(), value.trim().to_owned()))
-        })
-        .collect::<BTreeMap<_, _>>();
-    let content_length = headers
-        .get("content-length")
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    let body_start = header_end + 4;
-    while bytes.len() < body_start + content_length {
-        let mut chunk = [0_u8; 1024];
-        let read = stream.read(&mut chunk).expect("read mock request body");
-        assert!(read > 0, "mock client closed before sending request body");
-        bytes.extend_from_slice(&chunk[..read]);
-    }
-
-    CapturedRequest {
-        method,
-        target,
-        headers,
-        body: bytes[body_start..body_start + content_length].to_vec(),
-    }
-}
-
-fn find_header_end(bytes: &[u8]) -> Option<usize> {
-    bytes.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
 fn local_endpoint(server: &MockServer) -> LlmEndpointConfig {

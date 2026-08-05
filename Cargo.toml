@@ -12,3 +12,5 @@ resolver = "3"
 thiserror = "2"
 clap = { version = "4", features = ["derive"] }
 tempfile = "3"
+httpmock = { version = "=0.8.2", default-features = false }
+uuid = { version = "1", features = ["v4"] }

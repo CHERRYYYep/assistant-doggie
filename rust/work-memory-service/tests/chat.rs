@@ -1,6 +1,6 @@
 mod support;
 
-use support::TemporaryPath as TemporaryDatabase;
+use support::{TemporaryPath as TemporaryDatabase, is_uuid_v4};
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -218,20 +218,6 @@ fn result_payload(message: &ChatMessageSaveResult) -> Value {
         "tool_call_id": message.tool_call_id(),
         "details": message.details(),
     })
-}
-
-fn is_uuid_v4(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    value.len() == 36
-        && [8, 13, 18, 23]
-            .into_iter()
-            .all(|index| bytes[index] == b'-')
-        && bytes[14] == b'4'
-        && matches!(bytes[19].to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| [8, 13, 18, 23].contains(&index) || byte.is_ascii_hexdigit())
 }
 
 fn assert_only_chat_messages_changed(before: &Value, after: &Value) {

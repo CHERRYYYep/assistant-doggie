@@ -13,3 +13,4 @@ work-memory-store = { path = "../work-memory-store" }
 
 [dev-dependencies]
 tempfile.workspace = true
+uuid.workspace = true

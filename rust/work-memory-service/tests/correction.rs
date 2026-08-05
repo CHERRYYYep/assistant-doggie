@@ -1,6 +1,6 @@
 mod support;
 
-use support::TemporaryPath as TemporaryDatabase;
+use support::{TemporaryPath as TemporaryDatabase, is_uuid_v4};
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -185,20 +185,6 @@ fn correction_result_payload(result: &CorrectionResult) -> Value {
         "decision_ids": result.decision_ids(),
         "corrected_classification_record_ids": result.corrected_classification_record_ids(),
     })
-}
-
-fn is_uuid_v4(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    value.len() == 36
-        && [8, 13, 18, 23]
-            .into_iter()
-            .all(|index| bytes[index] == b'-')
-        && bytes[14] == b'4'
-        && matches!(bytes[19].to_ascii_lowercase(), b'8' | b'9' | b'a' | b'b')
-        && bytes
-            .iter()
-            .enumerate()
-            .all(|(index, byte)| [8, 13, 18, 23].contains(&index) || byte.is_ascii_hexdigit())
 }
 
 fn assert_database_parity(
