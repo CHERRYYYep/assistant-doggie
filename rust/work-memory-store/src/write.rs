@@ -111,48 +111,36 @@ fn schema_version(connection: &Connection) -> Result<i64, StoreError> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tempfile::{Builder, TempDir};
 
     use rusqlite::{Connection, ErrorCode, params};
 
     use super::WritableSqliteStore;
     use crate::StoreError;
 
-    static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
-
     struct TemporaryDatabase {
+        _directory: TempDir,
         path: PathBuf,
     }
 
     impl TemporaryDatabase {
         fn new(label: &str) -> Self {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time must be after the Unix epoch")
-                .as_nanos();
-            let sequence = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
-            let path = std::env::temp_dir().join(format!(
-                "work-memory-writable-{label}-{}-{timestamp}-{sequence}.db",
-                std::process::id()
-            ));
-            Self { path }
+            let directory = Builder::new()
+                .prefix(&format!("work-memory-writable-{label}-"))
+                .tempdir()
+                .expect("temporary directory must be created");
+            let path = directory.path().join("database.sqlite");
+            Self {
+                _directory: directory,
+                path,
+            }
         }
 
         fn path(&self) -> &Path {
             &self.path
-        }
-    }
-
-    impl Drop for TemporaryDatabase {
-        fn drop(&mut self) {
-            for suffix in ["", "-shm", "-wal"] {
-                let candidate = PathBuf::from(format!("{}{suffix}", self.path.display()));
-                let _ = fs::remove_file(candidate);
-            }
         }
     }
 

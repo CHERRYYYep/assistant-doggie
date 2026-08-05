@@ -11,8 +11,7 @@ mod summary;
 use std::path::Path;
 
 use thiserror::Error;
-use unicode_casefold::UnicodeCaseFold;
-use work_memory_core::{BucketStatus, BucketType, CoreError};
+use work_memory_core::{BucketStatus, BucketType, CoreError, unicode_case_fold};
 use work_memory_store::{
     SqliteStore, StoreError, StoredBucket, StoredDecision, StoredEntry, StoredEvidence,
     StoredTimelineEvent, StoredTimestamp, StoredTodo,
@@ -150,7 +149,7 @@ impl BucketQueryService {
             .checked_mul(5)
             .ok_or(StoreError::InvalidLimit(limit))?
             .max(50);
-        let folded_query = case_fold(cleaned);
+        let folded_query = unicode_case_fold(cleaned);
         let candidates = self
             .store
             .search_bucket_candidates(cleaned, candidate_limit)?;
@@ -165,7 +164,7 @@ impl BucketQueryService {
                 .count();
 
             let mut score = 0;
-            let folded_title = case_fold(&bucket.title);
+            let folded_title = unicode_case_fold(&bucket.title);
             if folded_title == folded_query {
                 score += 100;
             } else if folded_title.contains(&folded_query) {
@@ -228,10 +227,6 @@ impl BucketQueryService {
     }
 }
 
-fn case_fold(value: &str) -> String {
-    value.case_fold().collect()
-}
-
 fn contains_folded(value: &str, folded_query: &str) -> bool {
-    case_fold(value).contains(folded_query)
+    unicode_case_fold(value).contains(folded_query)
 }

@@ -1,8 +1,9 @@
-use std::fs;
+mod support;
+
+use support::TemporaryPath as TemporaryDatabase;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use work_memory_service::{BucketDetail, BucketQueryService, ServiceError};
@@ -15,40 +16,6 @@ const ACTIVE_LATEST_ID: &str = "11111111-1111-1111-1111-111111111111";
 const ACTIVE_TIE_NEWER_ID: &str = "22222222-2222-2222-2222-222222222222";
 const PAUSED_ID: &str = "44444444-4444-4444-4444-444444444444";
 const MISSING_ID: &str = "missing-bucket";
-static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
-
-struct TemporaryDatabase {
-    path: PathBuf,
-}
-
-impl TemporaryDatabase {
-    fn new(label: &str) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must be after the Unix epoch")
-            .as_nanos();
-        let sequence = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "work-memory-bucket-query-{label}-{}-{timestamp}-{sequence}.db",
-            std::process::id()
-        ));
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TemporaryDatabase {
-    fn drop(&mut self) {
-        for suffix in ["", "-shm", "-wal", "-journal"] {
-            let candidate = PathBuf::from(format!("{}{suffix}", self.path.display()));
-            let _ = fs::remove_file(candidate);
-        }
-    }
-}
-
 #[test]
 fn bucket_query_service_preserves_python_lookup_ordering_and_limits() {
     let database = create_python_fixture("lookups");

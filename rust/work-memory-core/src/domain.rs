@@ -383,14 +383,14 @@ pub(crate) fn required_text(value: String, field: &'static str) -> Result<String
     }
 }
 
-pub(crate) fn normalize_optional_text(value: Option<String>) -> Option<String> {
+pub fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|item| {
         let cleaned = item.trim();
         (!cleaned.is_empty()).then(|| cleaned.to_owned())
     })
 }
 
-pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+pub fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut normalized = Vec::new();
 

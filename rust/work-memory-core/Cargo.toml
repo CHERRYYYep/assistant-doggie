@@ -7,3 +7,4 @@ description = "Deterministic domain contracts and routing safeguards for Persona
 
 [dependencies]
 thiserror.workspace = true
+unicode-casefold = "0.2"

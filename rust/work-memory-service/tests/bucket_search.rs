@@ -1,8 +1,9 @@
-use std::fs;
+mod support;
+
+use support::TemporaryPath as TemporaryDatabase;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use work_memory_service::{BucketQueryService, BucketSearchResult, ServiceError};
@@ -15,40 +16,6 @@ const LITERAL_WILDCARD_ID: &str = "04040404-0404-0404-0404-040404040404";
 const TAG_ID: &str = "06060606-0606-0606-0606-060606060606";
 const TIE_FIRST_ID: &str = "08080808-0808-0808-0808-080808080808";
 const TIE_SECOND_ID: &str = "09090909-0909-0909-0909-090909090909";
-static NEXT_DATABASE_ID: AtomicU64 = AtomicU64::new(0);
-
-struct TemporaryDatabase {
-    path: PathBuf,
-}
-
-impl TemporaryDatabase {
-    fn new(label: &str) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must be after the Unix epoch")
-            .as_nanos();
-        let sequence = NEXT_DATABASE_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "work-memory-bucket-search-{label}-{}-{timestamp}-{sequence}.db",
-            std::process::id()
-        ));
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TemporaryDatabase {
-    fn drop(&mut self) {
-        for suffix in ["", "-shm", "-wal", "-journal"] {
-            let candidate = PathBuf::from(format!("{}{suffix}", self.path.display()));
-            let _ = fs::remove_file(candidate);
-        }
-    }
-}
-
 #[test]
 fn bucket_search_validates_inputs_and_treats_like_wildcards_as_literals() {
     let database = create_python_fixture("validation");

@@ -1,9 +1,9 @@
 use rusqlite::{Transaction, params};
 use std::collections::HashSet;
-use unicode_casefold::UnicodeCaseFold;
 use uuid::Uuid;
 use work_memory_core::{
     ArchiveStatus, BucketType, ClassificationAction, ClassificationResult, ExtractionResult,
+    normalize_optional_text, normalize_string_list, unicode_case_fold,
 };
 
 use crate::records::decode_bucket;
@@ -614,7 +614,7 @@ fn merge_tags(existing: &[String], incoming: &[String]) -> Vec<String> {
         .chain(incoming)
         .filter_map(|tag| {
             let cleaned = tag.trim();
-            let key = case_fold(cleaned);
+            let key = unicode_case_fold(cleaned);
             (!cleaned.is_empty() && seen.insert(key)).then(|| cleaned.to_owned())
         })
         .collect()
@@ -652,31 +652,9 @@ pub(crate) fn merge_bucket_summary(existing: &str, fragment: &str, max_chars: us
 fn normalized_key(value: &str) -> String {
     value
         .split_whitespace()
-        .map(case_fold)
+        .map(unicode_case_fold)
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-fn case_fold(value: &str) -> String {
-    value.case_fold().collect()
-}
-
-fn normalize_string_list(values: Vec<String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    values
-        .into_iter()
-        .filter_map(|value| {
-            let cleaned = value.trim();
-            (!cleaned.is_empty() && seen.insert(cleaned.to_owned())).then(|| cleaned.to_owned())
-        })
-        .collect()
-}
-
-fn normalize_optional_text(value: Option<String>) -> Option<String> {
-    value.and_then(|item| {
-        let cleaned = item.trim();
-        (!cleaned.is_empty()).then(|| cleaned.to_owned())
-    })
 }
 
 pub(crate) fn required_text(value: String, field: &'static str) -> Result<String, StoreError> {
@@ -713,11 +691,11 @@ pub(crate) fn new_uuid_v4() -> String {
 #[cfg(test)]
 mod tests {
     use uuid::{Uuid, Variant};
-    use work_memory_core::{BucketType, ClassificationResult, ExtractionResult};
+    use work_memory_core::{BucketType, ClassificationResult, ExtractionResult, unicode_case_fold};
 
     use super::{
-        ArchiveWriteRequest, ClassificationAuditContext, case_fold, merge_bucket_summary,
-        merge_tags, new_uuid_v4, normalized_key,
+        ArchiveWriteRequest, ClassificationAuditContext, merge_bucket_summary, merge_tags,
+        new_uuid_v4, normalized_key,
     };
     use crate::StoreError;
 
@@ -739,7 +717,7 @@ mod tests {
             ),
             ["Payments", "Rust"]
         );
-        assert_eq!(case_fold("ẞ"), "ss");
+        assert_eq!(unicode_case_fold("ẞ"), "ss");
     }
 
     #[test]

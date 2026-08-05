@@ -1,9 +1,11 @@
+mod support;
+
+use support::TemporaryPath;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::types::Value;
 use rusqlite::{Connection, params};
@@ -23,44 +25,10 @@ const BUSINESS_TABLES: &[&str] = &[
     "corrections",
     "chat_messages",
 ];
-static NEXT_PATH_ID: AtomicU64 = AtomicU64::new(0);
-
 #[derive(Debug, PartialEq)]
 struct BusinessSnapshot {
     schema: Vec<(String, String, String, Option<String>)>,
     rows: BTreeMap<String, Vec<Vec<Value>>>,
-}
-
-struct TemporaryPath {
-    path: PathBuf,
-}
-
-impl TemporaryPath {
-    fn new(label: &str) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time must be after the Unix epoch")
-            .as_nanos();
-        let sequence = NEXT_PATH_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "work-memory-{label}-{}-{timestamp}-{sequence}.db",
-            std::process::id()
-        ));
-        Self { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TemporaryPath {
-    fn drop(&mut self) {
-        for suffix in ["", "-shm", "-wal", "-journal"] {
-            let candidate = PathBuf::from(format!("{}{suffix}", self.path.display()));
-            let _ = fs::remove_file(candidate);
-        }
-    }
 }
 
 #[test]
