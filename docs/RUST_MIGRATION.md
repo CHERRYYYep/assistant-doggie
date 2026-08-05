@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-05
-> 当前阶段：R2/R3 已完成隔离实现，已提交成果推进到 R4b；当前工作区正在进行 R4c Agent Harness——Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环草稿；完整 LLM 归档闭环、生产 Agent、API/UI 和生产数据库所有权仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2/R3 已完成隔离实现，R4a/R4b 已完成，R4c Agent Harness boundary 已提交并通过 fake transport 回归；Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环。完整 LLM 归档闭环、生产 Agent、API/UI 和生产数据库所有权仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -298,7 +298,7 @@ R4 验收：
 - `rust/work-memory-agent/tests/structured_output.rs` 继续验证 request/schema/retry mock 回归；`tests/http_transport.rs` 使用 loopback mock server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout；R4c `tests/agent_harness.rs` 验证 Responses/Chat 工具循环、参数拒绝、错误回传和轮数上限。
 - 普通测试不调用真实模型、不读取真实 API Key；真实模型验证仍保持独立命令，完整报告必须保留站点、模型、Prompt 版本和结构化结果，且密钥不能进入日志或 Git。
 
-R4c Agent Harness 工作区草稿（未接入生产）：
+R4c Agent Harness 已提交边界（未接入生产）：
 
 - `rust/work-memory-agent/src/agent_harness.rs` 提供 Responses 与 Chat Completions 两种工具循环，固定六个 memory tool，工具参数先通过 `work-memory-contracts` 严格校验；未知工具、非法 JSON、未知字段和非法 Bucket type 不会进入执行器。
 - 工具错误以 JSON 数据回传模型，工具轮数有上限；历史中的 `ChatRole::Tool` 暂不作为新的 provider turn 重放，memory context 以 `user` role 注入，避免低信任记忆获得 system 指令优先级。
@@ -310,7 +310,7 @@ R4c 进入生产前的审查项：
 - 明确并测试 redirect 的 host/scheme 安全策略，避免 endpoint 跳转泄露 prompt 或记忆上下文。
 - 增加单轮 tool call 数、参数/输出/累计上下文大小、重复 call ID 和写操作幂等边界；当前只有 `max_tool_rounds`。
 - 收紧 Responses/Chat wire 状态、choice、role 和 function-call 完成态校验，并重新划分确定性错误与可重试错误。
-- 将工具 metadata 与参数契约集中维护，消除 schema 与 `AgentToolArguments` 的双事实来源。
+- 继续补齐生产接入前的工具调用安全和资源边界；工具 metadata、provider schema 与参数契约已集中到 `work-memory-contracts::AGENT_TOOL_DEFINITIONS`，并有 Responses/Chat parity 测试。
 
 R4 后续范围：
 

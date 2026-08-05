@@ -6,3 +6,4 @@ rust-version = "1.85"
 description = "Deterministic domain contracts and routing safeguards for Personal Work Memory Agent"
 
 [dependencies]
+thiserror.workspace = true

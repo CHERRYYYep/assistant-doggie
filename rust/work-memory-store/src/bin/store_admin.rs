@@ -1,63 +1,83 @@
 //! Offline administration commands for the Rust-managed SQLite schema.
 
-use std::env;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use clap::{Parser, Subcommand};
+use thiserror::Error;
 use work_memory_store::{
-    MigrationOutcome, SchemaInfo, SchemaState, inspect_database, migrate_database, restore_database,
+    MigrationOutcome, SchemaInfo, SchemaState, StoreError, inspect_database, migrate_database,
+    restore_database,
 };
 
-const USAGE: &str = "Usage:\n  work-memory-store-admin inspect DATABASE\n  work-memory-store-admin migrate DATABASE BACKUP\n  work-memory-store-admin restore DATABASE BACKUP SAFETY_BACKUP";
+#[derive(Debug, Parser)]
+#[command(name = "work-memory-store-admin")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+enum Command {
+    Inspect {
+        database: PathBuf,
+    },
+    Migrate {
+        database: PathBuf,
+        backup: PathBuf,
+    },
+    Restore {
+        database: PathBuf,
+        backup: PathBuf,
+        safety_backup: PathBuf,
+    },
+}
 
 fn main() -> ExitCode {
-    match run(env::args_os().skip(1).collect()) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(AdminError::Usage(message)) => {
-            eprintln!("{message}\n\n{USAGE}");
-            ExitCode::from(2)
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            eprint!("{error}");
+            return ExitCode::from(error.exit_code() as u8);
         }
-        Err(AdminError::Store(error)) => {
+    };
+
+    match run(cli.command) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
             eprintln!("work-memory-store-admin: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(arguments: Vec<OsString>) -> Result<(), AdminError> {
-    let Some(command) = arguments.first().and_then(|value| value.to_str()) else {
-        return Err(AdminError::Usage("a command is required"));
-    };
-
-    match (command, &arguments[1..]) {
-        ("inspect", [database]) => {
-            let info = inspect_database(PathBuf::from(database))?;
+fn run(command: Command) -> Result<(), AdminError> {
+    match command {
+        Command::Inspect { database } => {
+            let info = inspect_database(database)?;
             print_schema_info(&info);
         }
-        ("migrate", [database, backup]) => {
-            match migrate_database(PathBuf::from(database), PathBuf::from(backup))? {
-                MigrationOutcome::Migrated {
-                    from,
-                    to,
-                    backup_path,
-                } => println!(
-                    "migrated {} -> {}; backup={}",
-                    state_label(from),
-                    state_label(to),
-                    backup_path.display()
-                ),
-                MigrationOutcome::AlreadyCurrent { version } => {
-                    println!("already current; version={version}")
-                }
+        Command::Migrate { database, backup } => match migrate_database(database, backup)? {
+            MigrationOutcome::Migrated {
+                from,
+                to,
+                backup_path,
+            } => println!(
+                "migrated {} -> {}; backup={}",
+                state_label(from),
+                state_label(to),
+                backup_path.display()
+            ),
+            MigrationOutcome::AlreadyCurrent { version } => {
+                println!("already current; version={version}")
             }
-        }
-        ("restore", [database, backup, safety_backup]) => {
-            let outcome = restore_database(
-                PathBuf::from(database),
-                PathBuf::from(backup),
-                PathBuf::from(safety_backup),
-            )?;
+        },
+        Command::Restore {
+            database,
+            backup,
+            safety_backup,
+        } => {
+            let outcome = restore_database(database, backup, safety_backup)?;
             println!(
                 "restored {} -> {}; safety_backup={}",
                 state_label(outcome.previous_state),
@@ -65,12 +85,6 @@ fn run(arguments: Vec<OsString>) -> Result<(), AdminError> {
                 outcome.safety_backup_path.display()
             );
         }
-        ("inspect" | "migrate" | "restore", _) => {
-            return Err(AdminError::Usage(
-                "the command received the wrong number of paths",
-            ));
-        }
-        _ => return Err(AdminError::Usage("unknown command")),
     }
     Ok(())
 }
@@ -92,13 +106,8 @@ fn state_label(state: SchemaState) -> String {
     }
 }
 
+#[derive(Debug, Error)]
 enum AdminError {
-    Usage(&'static str),
-    Store(work_memory_store::StoreError),
-}
-
-impl From<work_memory_store::StoreError> for AdminError {
-    fn from(error: work_memory_store::StoreError) -> Self {
-        Self::Store(error)
-    }
+    #[error(transparent)]
+    Store(#[from] StoreError),
 }

@@ -6,6 +6,164 @@ use crate::ContractError;
 use crate::timestamp::parse_timestamp;
 use crate::values::{bucket_status, bucket_type, trim, trim_list, trim_optional};
 
+/// Stable names of the allow-listed memory tools.
+pub const LIST_ACTIVE_BUCKETS_TOOL: &str = "list_active_buckets";
+pub const SEARCH_MEMORY_TOOL: &str = "search_memory";
+pub const GET_BUCKET_DETAIL_TOOL: &str = "get_bucket_detail";
+pub const ARCHIVE_MEMORY_TOOL: &str = "archive_memory";
+pub const SAVE_TO_EXISTING_BUCKET_TOOL: &str = "save_to_existing_bucket";
+pub const CREATE_BUCKET_AND_SAVE_TOOL: &str = "create_bucket_and_save";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentToolParameterKind {
+    String,
+    BucketType,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentToolParameter {
+    pub name: &'static str,
+    pub description: Option<&'static str>,
+    pub kind: AgentToolParameterKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentToolDefinition {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub properties: &'static [AgentToolParameter],
+    pub required: &'static [&'static str],
+}
+
+impl AgentToolDefinition {
+    pub fn parameters_schema(self) -> Value {
+        let properties: Map<String, Value> = self
+            .properties
+            .iter()
+            .map(|property| {
+                let mut schema = Map::new();
+                schema.insert("type".to_owned(), Value::String("string".to_owned()));
+                if let Some(description) = property.description {
+                    schema.insert(
+                        "description".to_owned(),
+                        Value::String(description.to_owned()),
+                    );
+                }
+                if property.kind == AgentToolParameterKind::BucketType {
+                    schema.insert(
+                        "enum".to_owned(),
+                        Value::Array(
+                            BucketType::ALL
+                                .iter()
+                                .map(|bucket_type| Value::String(bucket_type.as_str().to_owned()))
+                                .collect(),
+                        ),
+                    );
+                }
+                (property.name.to_owned(), Value::Object(schema))
+            })
+            .collect();
+
+        serde_json::json!({
+            "type": "object",
+            "properties": properties,
+            "required": self.required,
+            "additionalProperties": false,
+        })
+    }
+}
+
+const SEARCH_MEMORY_PROPERTIES: &[AgentToolParameter] = &[AgentToolParameter {
+    name: "query",
+    description: Some("简短、明确的搜索关键词"),
+    kind: AgentToolParameterKind::String,
+}];
+const GET_BUCKET_DETAIL_PROPERTIES: &[AgentToolParameter] = &[AgentToolParameter {
+    name: "bucket_id",
+    description: Some("真实 Bucket ID"),
+    kind: AgentToolParameterKind::String,
+}];
+const ARCHIVE_MEMORY_PROPERTIES: &[AgentToolParameter] = &[AgentToolParameter {
+    name: "text",
+    description: Some("要保存的完整事实或工作记录"),
+    kind: AgentToolParameterKind::String,
+}];
+const SAVE_TO_EXISTING_BUCKET_PROPERTIES: &[AgentToolParameter] = &[
+    AgentToolParameter {
+        name: "bucket_id",
+        description: None,
+        kind: AgentToolParameterKind::String,
+    },
+    AgentToolParameter {
+        name: "text",
+        description: None,
+        kind: AgentToolParameterKind::String,
+    },
+];
+const CREATE_BUCKET_AND_SAVE_PROPERTIES: &[AgentToolParameter] = &[
+    AgentToolParameter {
+        name: "title",
+        description: None,
+        kind: AgentToolParameterKind::String,
+    },
+    AgentToolParameter {
+        name: "bucket_type",
+        description: None,
+        kind: AgentToolParameterKind::BucketType,
+    },
+    AgentToolParameter {
+        name: "text",
+        description: None,
+        kind: AgentToolParameterKind::String,
+    },
+];
+
+/// The single source of truth for tool names, descriptions, and strict argument schemas.
+pub const AGENT_TOOL_DEFINITIONS: &[AgentToolDefinition] = &[
+    AgentToolDefinition {
+        name: LIST_ACTIVE_BUCKETS_TOOL,
+        description: "列出最近活跃的 Bucket。用户提到历史工作但未给出关键词时使用。",
+        properties: &[],
+        required: &[],
+    },
+    AgentToolDefinition {
+        name: SEARCH_MEMORY_TOOL,
+        description: "按关键词搜索 Bucket 标题、摘要、标签和原始记录，用于查找长期记忆。",
+        properties: SEARCH_MEMORY_PROPERTIES,
+        required: &["query"],
+    },
+    AgentToolDefinition {
+        name: GET_BUCKET_DETAIL_TOOL,
+        description: "读取一个 Bucket 的摘要、Todo、证据、决策、时间线和原始记录。",
+        properties: GET_BUCKET_DETAIL_PROPERTIES,
+        required: &["bucket_id"],
+    },
+    AgentToolDefinition {
+        name: ARCHIVE_MEMORY_TOOL,
+        description: "让现有分类与风险门控流程保存值得长期跟踪的工作事实、目标、进展、证据、结论或 Todo；无需等待用户明确说记住。",
+        properties: ARCHIVE_MEMORY_PROPERTIES,
+        required: &["text"],
+    },
+    AgentToolDefinition {
+        name: SAVE_TO_EXISTING_BUCKET_TOOL,
+        description: "用户已经明确确认目标 Bucket 后，把内容直接保存到该 Bucket。",
+        properties: SAVE_TO_EXISTING_BUCKET_PROPERTIES,
+        required: &["bucket_id", "text"],
+    },
+    AgentToolDefinition {
+        name: CREATE_BUCKET_AND_SAVE_TOOL,
+        description: "用户已经明确同意新建时，创建 Bucket 并保存内容。",
+        properties: CREATE_BUCKET_AND_SAVE_PROPERTIES,
+        required: &["title", "bucket_type", "text"],
+    },
+];
+
+pub fn agent_tool_definition(name: &str) -> Option<&'static AgentToolDefinition> {
+    AGENT_TOOL_DEFINITIONS
+        .iter()
+        .find(|definition| definition.name == name)
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyArguments {}
@@ -74,36 +232,36 @@ impl AgentToolArguments {
 
     pub fn from_value(name: &str, value: Value) -> Result<Self, ContractError> {
         match name {
-            "list_active_buckets" => {
+            LIST_ACTIVE_BUCKETS_TOOL => {
                 let _: EmptyArguments = serde_json::from_value(value)?;
                 Ok(Self::ListActiveBuckets)
             }
-            "search_memory" => {
+            SEARCH_MEMORY_TOOL => {
                 let input: QueryArguments = serde_json::from_value(value)?;
                 Ok(Self::SearchMemory {
                     query: trim(input.query),
                 })
             }
-            "get_bucket_detail" => {
+            GET_BUCKET_DETAIL_TOOL => {
                 let input: BucketIdArguments = serde_json::from_value(value)?;
                 Ok(Self::GetBucketDetail {
                     bucket_id: trim(input.bucket_id),
                 })
             }
-            "archive_memory" => {
+            ARCHIVE_MEMORY_TOOL => {
                 let input: TextArguments = serde_json::from_value(value)?;
                 Ok(Self::ArchiveMemory {
                     text: trim(input.text),
                 })
             }
-            "save_to_existing_bucket" => {
+            SAVE_TO_EXISTING_BUCKET_TOOL => {
                 let input: ExistingBucketArguments = serde_json::from_value(value)?;
                 Ok(Self::SaveToExistingBucket {
                     bucket_id: trim(input.bucket_id),
                     text: trim(input.text),
                 })
             }
-            "create_bucket_and_save" => {
+            CREATE_BUCKET_AND_SAVE_TOOL => {
                 let input: NewBucketArguments = serde_json::from_value(value)?;
                 Ok(Self::CreateBucketAndSave {
                     title: trim(input.title),
@@ -117,12 +275,12 @@ impl AgentToolArguments {
 
     pub const fn tool_name(&self) -> &'static str {
         match self {
-            Self::ListActiveBuckets => "list_active_buckets",
-            Self::SearchMemory { .. } => "search_memory",
-            Self::GetBucketDetail { .. } => "get_bucket_detail",
-            Self::ArchiveMemory { .. } => "archive_memory",
-            Self::SaveToExistingBucket { .. } => "save_to_existing_bucket",
-            Self::CreateBucketAndSave { .. } => "create_bucket_and_save",
+            Self::ListActiveBuckets => LIST_ACTIVE_BUCKETS_TOOL,
+            Self::SearchMemory { .. } => SEARCH_MEMORY_TOOL,
+            Self::GetBucketDetail { .. } => GET_BUCKET_DETAIL_TOOL,
+            Self::ArchiveMemory { .. } => ARCHIVE_MEMORY_TOOL,
+            Self::SaveToExistingBucket { .. } => SAVE_TO_EXISTING_BUCKET_TOOL,
+            Self::CreateBucketAndSave { .. } => CREATE_BUCKET_AND_SAVE_TOOL,
         }
     }
 

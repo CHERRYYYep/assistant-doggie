@@ -1,8 +1,7 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use thiserror::Error;
 
 use serde_json::{Value, json};
-use work_memory_contracts::{AgentToolArguments, ChatRole};
+use work_memory_contracts::{AGENT_TOOL_DEFINITIONS, AgentToolArguments, ChatRole};
 
 use crate::wire_response::{
     WireResponse, WireResponseError, parse_response as parse_wire_response,
@@ -201,89 +200,38 @@ impl AgentHarnessResult {
 }
 
 /// Errors raised by the transport-independent Agent loop.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AgentHarnessError {
+    #[error("agent model must not be empty")]
     EmptyModel,
+    #[error("agent system prompt must not be empty")]
     EmptySystemPrompt,
+    #[error("agent memory context must not be empty")]
     EmptyMemoryContext,
+    #[error("agent history content must not be empty")]
     EmptyHistoryMessage,
-    Transport(LlmTransportError),
+    #[error("{0}")]
+    Transport(#[source] LlmTransportError),
+    #[error("agent response had unexpected status: {status}")]
     UnexpectedStatus { status: String },
-    InvalidJson(serde_json::Error),
-    InvalidResponse(serde_json::Error),
+    #[error("agent response was not valid JSON: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+    #[error("agent response had an invalid wire shape: {0}")]
+    InvalidResponse(#[source] serde_json::Error),
+    #[error("agent response incomplete: {reason}")]
     Incomplete { reason: String },
+    #[error("agent request refused: {message}")]
     Refusal { message: String },
+    #[error("agent response was blocked by content filter")]
     ContentFilter,
+    #[error("agent response did not contain a usable message")]
     MissingResponse,
+    #[error("agent response did not contain assistant text")]
     MissingAssistantText,
+    #[error("invalid agent tool call: {message}")]
     InvalidToolCall { message: String },
+    #[error("agent exceeded the maximum of {max_tool_rounds} tool round(s)")]
     MaxToolRoundsExceeded { max_tool_rounds: usize },
-}
-
-impl Display for AgentHarnessError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyModel => formatter.write_str("agent model must not be empty"),
-            Self::EmptySystemPrompt => formatter.write_str("agent system prompt must not be empty"),
-            Self::EmptyMemoryContext => {
-                formatter.write_str("agent memory context must not be empty")
-            }
-            Self::EmptyHistoryMessage => {
-                formatter.write_str("agent history content must not be empty")
-            }
-            Self::Transport(error) => Display::fmt(error, formatter),
-            Self::UnexpectedStatus { status } => {
-                write!(formatter, "agent response had unexpected status: {status}")
-            }
-            Self::InvalidJson(error) => {
-                write!(formatter, "agent response was not valid JSON: {error}")
-            }
-            Self::InvalidResponse(error) => {
-                write!(
-                    formatter,
-                    "agent response had an invalid wire shape: {error}"
-                )
-            }
-            Self::Incomplete { reason } => write!(formatter, "agent response incomplete: {reason}"),
-            Self::Refusal { message } => write!(formatter, "agent request refused: {message}"),
-            Self::ContentFilter => {
-                formatter.write_str("agent response was blocked by content filter")
-            }
-            Self::MissingResponse => {
-                formatter.write_str("agent response did not contain a usable message")
-            }
-            Self::MissingAssistantText => {
-                formatter.write_str("agent response did not contain assistant text")
-            }
-            Self::InvalidToolCall { message } => {
-                write!(formatter, "invalid agent tool call: {message}")
-            }
-            Self::MaxToolRoundsExceeded { max_tool_rounds } => {
-                write!(
-                    formatter,
-                    "agent exceeded the maximum of {max_tool_rounds} tool round(s)"
-                )
-            }
-        }
-    }
-}
-
-impl Error for AgentHarnessError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Transport(error) => Some(error),
-            Self::InvalidJson(error) => Some(error),
-            Self::InvalidResponse(error) => Some(error),
-            Self::UnexpectedStatus { .. } => None,
-            _ => None,
-        }
-    }
-}
-
-impl From<serde_json::Error> for AgentHarnessError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::InvalidJson(error)
-    }
 }
 
 /// Transport-independent Agent Harness with a bounded, allow-listed tool loop.
@@ -363,82 +311,18 @@ impl<T: StructuredOutputTransport> AgentHarness<T> {
 
 /// OpenAI Responses function definitions for the registered memory tools.
 pub fn response_tool_definitions() -> Vec<Value> {
-    vec![
-        json!({
-            "type": "function",
-            "name": "list_active_buckets",
-            "description": "列出最近活跃的 Bucket。用户提到历史工作但未给出关键词时使用。",
-            "parameters": {"type": "object", "properties": {}, "required": [], "additionalProperties": false},
-            "strict": true,
-        }),
-        json!({
-            "type": "function",
-            "name": "search_memory",
-            "description": "按关键词搜索 Bucket 标题、摘要、标签和原始记录，用于查找长期记忆。",
-            "parameters": {
-                "type": "object",
-                "properties": {"query": {"type": "string", "description": "简短、明确的搜索关键词"}},
-                "required": ["query"],
-                "additionalProperties": false,
-            },
-            "strict": true,
-        }),
-        json!({
-            "type": "function",
-            "name": "get_bucket_detail",
-            "description": "读取一个 Bucket 的摘要、Todo、证据、决策、时间线和原始记录。",
-            "parameters": {
-                "type": "object",
-                "properties": {"bucket_id": {"type": "string", "description": "真实 Bucket ID"}},
-                "required": ["bucket_id"],
-                "additionalProperties": false,
-            },
-            "strict": true,
-        }),
-        json!({
-            "type": "function",
-            "name": "archive_memory",
-            "description": "让现有分类与风险门控流程保存值得长期跟踪的工作事实、目标、进展、证据、结论或 Todo；无需等待用户明确说记住。",
-            "parameters": {
-                "type": "object",
-                "properties": {"text": {"type": "string", "description": "要保存的完整事实或工作记录"}},
-                "required": ["text"],
-                "additionalProperties": false,
-            },
-            "strict": true,
-        }),
-        json!({
-            "type": "function",
-            "name": "save_to_existing_bucket",
-            "description": "用户已经明确确认目标 Bucket 后，把内容直接保存到该 Bucket。",
-            "parameters": {
-                "type": "object",
-                "properties": {"bucket_id": {"type": "string"}, "text": {"type": "string"}},
-                "required": ["bucket_id", "text"],
-                "additionalProperties": false,
-            },
-            "strict": true,
-        }),
-        json!({
-            "type": "function",
-            "name": "create_bucket_and_save",
-            "description": "用户已经明确同意新建时，创建 Bucket 并保存内容。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "bucket_type": {
-                        "type": "string",
-                        "enum": ["idea", "task", "incident", "experiment", "decision", "meeting", "knowledge", "draft"],
-                    },
-                    "text": {"type": "string"},
-                },
-                "required": ["title", "bucket_type", "text"],
-                "additionalProperties": false,
-            },
-            "strict": true,
-        }),
-    ]
+    AGENT_TOOL_DEFINITIONS
+        .iter()
+        .map(|tool| {
+            json!({
+                "type": "function",
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters_schema(),
+                "strict": true,
+            })
+        })
+        .collect()
 }
 
 /// OpenAI Chat Completions function definitions derived from the same allow-list.

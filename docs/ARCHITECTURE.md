@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；已提交 Rust 成果推进到 R4b，当前工作区另有 R4c Agent Harness 草稿。Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务、R4a Structured Outputs adapter、R4b 基于社区 `ureq` 的真实 HTTP transport，以及 R4c 基础工具循环/协议归一化。R4c 尚未接入 `work-memory-service`、SQLite 聊天持久化、API、UI 或生产数据库，生产运行时继续由 Python 独占写入。渐进切换边界、风险和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；R4a/R4b 已完成，R4c Agent Harness boundary 已提交。Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务、R4a Structured Outputs adapter、R4b 基于社区 `ureq` 的真实 HTTP transport，以及 R4c 基础工具循环/协议归一化。R4c 尚未接入 `work-memory-service`、SQLite 聊天持久化、API、UI 或生产数据库，生产运行时继续由 Python 独占写入。渐进切换边界、风险和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 

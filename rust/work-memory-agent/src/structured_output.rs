@@ -1,7 +1,5 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
-
 use serde_json::{Value, json};
+use thiserror::Error;
 use work_memory_contracts::{ContractError, StructuredOutputContract};
 
 use crate::wire_response::{
@@ -90,9 +88,11 @@ impl LlmHttpResponse {
 }
 
 /// Failure produced before an API response can be consumed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LlmTransportError {
+    #[error("{message}")]
     Request { message: String },
+    #[error("HTTP {status}: {message}")]
     HttpStatus { status: u16, message: String },
 }
 
@@ -125,50 +125,44 @@ impl LlmTransportError {
     }
 }
 
-impl Display for LlmTransportError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Request { message } => formatter.write_str(message),
-            Self::HttpStatus { status, message } => {
-                write!(formatter, "HTTP {status}: {message}")
-            }
-        }
-    }
-}
-
-impl Error for LlmTransportError {}
-
 /// Injectable transport boundary; ordinary tests provide a deterministic fake.
 pub trait StructuredOutputTransport {
     fn send(&mut self, request: &LlmHttpRequest) -> Result<LlmHttpResponse, LlmTransportError>;
 }
 
 /// Structured-output failures after request validation or response handling.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum LlmError {
+    #[error("model must not be empty")]
     EmptyModel,
+    #[error("system_prompt must not be empty")]
     EmptySystemPrompt,
+    #[error("user_prompt must not be empty")]
     EmptyUserPrompt,
-    Transport(LlmTransportError),
-    UnexpectedStatus {
-        status: String,
-    },
-    Incomplete {
-        reason: String,
-    },
-    Refusal {
-        message: String,
-    },
+    #[error("transport error: {0}")]
+    Transport(#[source] LlmTransportError),
+    #[error("model response had unexpected status: {status}")]
+    UnexpectedStatus { status: String },
+    #[error("model response incomplete: {reason}")]
+    Incomplete { reason: String },
+    #[error("model refused request: {message}")]
+    Refusal { message: String },
+    #[error("model response blocked by content filter")]
     ContentFilter,
+    #[error("model response did not contain structured output")]
     MissingOutput,
-    InvalidToolCall {
-        message: String,
-    },
-    InvalidJson(serde_json::Error),
-    InvalidResponse(serde_json::Error),
-    Contract(ContractError),
+    #[error("model response contained an invalid tool call: {message}")]
+    InvalidToolCall { message: String },
+    #[error("structured output was not valid JSON: {0}")]
+    InvalidJson(#[source] serde_json::Error),
+    #[error("model response had an invalid wire shape: {0}")]
+    InvalidResponse(#[source] serde_json::Error),
+    #[error("structured output violated the contract: {0}")]
+    Contract(#[source] ContractError),
+    #[error("structured model call failed after {attempts} attempt(s): {last_error}")]
     AttemptsExhausted {
         attempts: usize,
+        #[source]
         last_error: Box<LlmError>,
     },
 }
@@ -204,73 +198,6 @@ impl LlmError {
             | Self::EmptySystemPrompt
             | Self::EmptyUserPrompt
             | Self::AttemptsExhausted { .. } => false,
-        }
-    }
-}
-
-impl Display for LlmError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyModel => formatter.write_str("model must not be empty"),
-            Self::EmptySystemPrompt => formatter.write_str("system_prompt must not be empty"),
-            Self::EmptyUserPrompt => formatter.write_str("user_prompt must not be empty"),
-            Self::Transport(error) => write!(formatter, "transport error: {error}"),
-            Self::UnexpectedStatus { status } => {
-                write!(formatter, "model response had unexpected status: {status}")
-            }
-            Self::Incomplete { reason } => write!(formatter, "model response incomplete: {reason}"),
-            Self::Refusal { message } => write!(formatter, "model refused request: {message}"),
-            Self::ContentFilter => formatter.write_str("model response blocked by content filter"),
-            Self::MissingOutput => {
-                formatter.write_str("model response did not contain structured output")
-            }
-            Self::InvalidToolCall { message } => {
-                write!(
-                    formatter,
-                    "model response contained an invalid tool call: {message}"
-                )
-            }
-            Self::InvalidJson(error) => {
-                write!(formatter, "structured output was not valid JSON: {error}")
-            }
-            Self::InvalidResponse(error) => {
-                write!(
-                    formatter,
-                    "model response had an invalid wire shape: {error}"
-                )
-            }
-            Self::Contract(error) => write!(
-                formatter,
-                "structured output violated the contract: {error}"
-            ),
-            Self::AttemptsExhausted {
-                attempts,
-                last_error,
-            } => write!(
-                formatter,
-                "structured model call failed after {attempts} attempt(s): {last_error}"
-            ),
-        }
-    }
-}
-
-impl Error for LlmError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Transport(error) => Some(error),
-            Self::InvalidJson(error) => Some(error),
-            Self::InvalidResponse(error) => Some(error),
-            Self::Contract(error) => Some(error),
-            Self::AttemptsExhausted { last_error, .. } => Some(last_error),
-            Self::EmptyModel
-            | Self::EmptySystemPrompt
-            | Self::EmptyUserPrompt
-            | Self::UnexpectedStatus { .. }
-            | Self::Incomplete { .. }
-            | Self::Refusal { .. }
-            | Self::ContentFilter
-            | Self::MissingOutput
-            | Self::InvalidToolCall { .. } => None,
         }
     }
 }

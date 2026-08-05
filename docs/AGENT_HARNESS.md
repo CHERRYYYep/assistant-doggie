@@ -62,7 +62,7 @@ Rust 版本已经建立与 Python Harness 对齐的协议边界，但暂不替�
 - 复用 `async-openai` 的 Responses/Chat Completions wire 类型、`ureq` 的同步 HTTP transport，以及 `work-memory-contracts` 的严格六工具参数校验。
 - 工具循环有固定 allow-list、JSON 参数拒绝、工具错误数据化和最大 tool round；memory context 以低信任 `user` 内容注入。
 - `AgentToolExecutor` 由调用方注入，尚未绑定 `work-memory-service` / `work-memory-store`，也没有完整 turn 原子事务、工具审计或聊天消息持久化接线。
-- 生产前还要处理 redirect 安全、tool call/上下文资源预算、写操作幂等、provider 状态校验、重试分类，以及工具 metadata 与参数合同的单一来源。
+- 生产前还要处理 redirect 安全、tool call/上下文资源预算、写操作幂等、provider 状态校验和重试分类；工具 metadata、provider schema 与参数契约已集中到 `work-memory-contracts::AGENT_TOOL_DEFINITIONS`，并由 Responses/Chat parity 测试覆盖。
 
 ## 6. UI
 

@@ -17,6 +17,18 @@ pub enum BucketType {
 }
 
 impl BucketType {
+    /// All Bucket types accepted by the persisted contract, in stable display order.
+    pub const ALL: [Self; 8] = [
+        Self::Idea,
+        Self::Task,
+        Self::Incident,
+        Self::Experiment,
+        Self::Decision,
+        Self::Meeting,
+        Self::Knowledge,
+        Self::Draft,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Idea => "idea",

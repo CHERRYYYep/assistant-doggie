@@ -408,3 +408,34 @@ fn refusal_incomplete_content_filter_and_nonterminal_statuses_are_not_silently_a
         }
     }
 }
+
+#[test]
+fn provider_tool_definitions_match_contract_metadata() {
+    use work_memory_agent::{chat_tool_definitions, response_tool_definitions};
+    use work_memory_contracts::AGENT_TOOL_DEFINITIONS;
+
+    let responses = response_tool_definitions();
+    let chats = chat_tool_definitions();
+    assert_eq!(responses.len(), AGENT_TOOL_DEFINITIONS.len());
+    assert_eq!(chats.len(), AGENT_TOOL_DEFINITIONS.len());
+
+    for ((definition, response), chat) in AGENT_TOOL_DEFINITIONS.iter().zip(responses).zip(chats) {
+        assert_eq!(response["type"], json!("function"));
+        assert_eq!(response["name"], json!(definition.name));
+        assert_eq!(response["description"], json!(definition.description));
+        assert_eq!(response["parameters"], definition.parameters_schema());
+        assert_eq!(response["strict"], json!(true));
+
+        assert_eq!(chat["type"], json!("function"));
+        assert_eq!(chat["function"]["name"], json!(definition.name));
+        assert_eq!(
+            chat["function"]["description"],
+            json!(definition.description)
+        );
+        assert_eq!(
+            chat["function"]["parameters"],
+            definition.parameters_schema()
+        );
+        assert_eq!(chat["function"]["strict"], json!(true));
+    }
+}

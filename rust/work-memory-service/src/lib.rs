@@ -8,10 +8,9 @@ mod extraction;
 mod mutation;
 mod summary;
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::path::Path;
 
+use thiserror::Error;
 use unicode_casefold::UnicodeCaseFold;
 use work_memory_core::{BucketStatus, BucketType, CoreError};
 use work_memory_store::{
@@ -53,16 +52,24 @@ pub struct BucketSearchResult {
 }
 
 /// Failures at the Rust service orchestration boundary.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ServiceError {
+    #[error("text must not be empty")]
     EmptyArchiveText,
+    #[error("correction command must not be empty")]
     EmptyCorrectionCommand,
+    #[error("search query must not be empty")]
     EmptySearchQuery,
+    #[error("correction command does not identify a target Bucket; supply an explicit ID")]
     UnrecognizedCorrectionTarget,
+    #[error("classification action {action} requires an extraction")]
     MissingExtraction { action: &'static str },
+    #[error("ask_user classification must not include an extraction")]
     UnexpectedExtraction,
-    Core(CoreError),
-    Store(StoreError),
+    #[error("domain error: {0}")]
+    Core(#[from] CoreError),
+    #[error("store error: {0}")]
+    Store(#[from] StoreError),
 }
 
 impl ServiceError {
@@ -90,59 +97,6 @@ impl ServiceError {
             | Self::UnexpectedExtraction
             | Self::Store(_) => None,
         }
-    }
-}
-
-impl Display for ServiceError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyArchiveText => formatter.write_str("text must not be empty"),
-            Self::EmptyCorrectionCommand => {
-                formatter.write_str("correction command must not be empty")
-            }
-            Self::EmptySearchQuery => formatter.write_str("search query must not be empty"),
-            Self::UnrecognizedCorrectionTarget => formatter.write_str(
-                "correction command does not identify a target Bucket; supply an explicit ID",
-            ),
-            Self::MissingExtraction { action } => {
-                write!(
-                    formatter,
-                    "classification action {action} requires an extraction"
-                )
-            }
-            Self::UnexpectedExtraction => {
-                formatter.write_str("ask_user classification must not include an extraction")
-            }
-            Self::Core(error) => write!(formatter, "domain error: {error}"),
-            Self::Store(error) => write!(formatter, "store error: {error}"),
-        }
-    }
-}
-
-impl Error for ServiceError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Core(error) => Some(error),
-            Self::Store(error) => Some(error),
-            Self::EmptyArchiveText
-            | Self::EmptyCorrectionCommand
-            | Self::EmptySearchQuery
-            | Self::UnrecognizedCorrectionTarget
-            | Self::MissingExtraction { .. }
-            | Self::UnexpectedExtraction => None,
-        }
-    }
-}
-
-impl From<CoreError> for ServiceError {
-    fn from(error: CoreError) -> Self {
-        Self::Core(error)
-    }
-}
-
-impl From<StoreError> for ServiceError {
-    fn from(error: StoreError) -> Self {
-        Self::Store(error)
     }
 }
 

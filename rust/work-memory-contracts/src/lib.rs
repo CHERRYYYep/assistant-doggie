@@ -14,8 +14,11 @@ mod timestamp;
 mod values;
 
 pub use agent::{
-    AgentToolArguments, AgentTurnContract, BucketSearchResultContract, ChatMessageContract,
-    ChatRole,
+    AGENT_TOOL_DEFINITIONS, ARCHIVE_MEMORY_TOOL, AgentToolArguments, AgentToolDefinition,
+    AgentToolParameter, AgentToolParameterKind, AgentTurnContract, BucketSearchResultContract,
+    CREATE_BUCKET_AND_SAVE_TOOL, ChatMessageContract, ChatRole, GET_BUCKET_DETAIL_TOOL,
+    LIST_ACTIVE_BUCKETS_TOOL, SAVE_TO_EXISTING_BUCKET_TOOL, SEARCH_MEMORY_TOOL,
+    agent_tool_definition,
 };
 pub use archive::ArchiveContract;
 pub use classification::{BucketViewContract, ClassificationContract};

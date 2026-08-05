@@ -1,6 +1,5 @@
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::net::{Ipv4Addr, Ipv6Addr};
+use thiserror::Error;
 
 use url::{Host, Url};
 
@@ -103,45 +102,23 @@ impl LlmEndpointConfig {
 }
 
 /// Invalid non-secret LLM endpoint configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum LlmConfigurationError {
+    #[error("OPENAI_API_MODE must be one of: chat_completions, responses")]
     InvalidApiMode { value: String },
+    #[error("OPENAI_SITE must be a short single-line name")]
     InvalidSite,
+    #[error("OPENAI_BASE_URL is required when OPENAI_SITE is not official")]
     MissingBaseUrl,
+    #[error("OPENAI_BASE_URL must be an absolute http(s) URL, usually ending in /v1")]
     InvalidBaseUrl,
+    #[error("OPENAI_BASE_URL must not contain credentials")]
     CredentialsInBaseUrl,
+    #[error("OPENAI_BASE_URL must not contain query or fragment")]
     QueryOrFragmentInBaseUrl,
+    #[error("custom API sites must use HTTPS; HTTP is allowed only for localhost")]
     InsecureRemoteBaseUrl,
 }
-
-impl Display for LlmConfigurationError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidApiMode { .. } => {
-                formatter.write_str("OPENAI_API_MODE must be one of: chat_completions, responses")
-            }
-            Self::InvalidSite => {
-                formatter.write_str("OPENAI_SITE must be a short single-line name")
-            }
-            Self::MissingBaseUrl => {
-                formatter.write_str("OPENAI_BASE_URL is required when OPENAI_SITE is not official")
-            }
-            Self::InvalidBaseUrl => formatter.write_str(
-                "OPENAI_BASE_URL must be an absolute http(s) URL, usually ending in /v1",
-            ),
-            Self::CredentialsInBaseUrl => {
-                formatter.write_str("OPENAI_BASE_URL must not contain credentials")
-            }
-            Self::QueryOrFragmentInBaseUrl => {
-                formatter.write_str("OPENAI_BASE_URL must not contain query or fragment")
-            }
-            Self::InsecureRemoteBaseUrl => formatter
-                .write_str("custom API sites must use HTTPS; HTTP is allowed only for localhost"),
-        }
-    }
-}
-
-impl Error for LlmConfigurationError {}
 
 fn normalize_base_url(value: &str) -> Result<String, LlmConfigurationError> {
     let cleaned = value.trim().trim_end_matches('/');

@@ -1,6 +1,8 @@
 use std::env;
 use std::fmt::{self, Debug, Formatter};
+
 use std::time::Duration;
+use thiserror::Error;
 
 use serde_json::Value;
 
@@ -60,24 +62,13 @@ impl Default for LlmHttpTransportConfig {
 }
 
 /// Configuration failures that occur before a real HTTP request is attempted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum LlmTransportConfigurationError {
+    #[error("OPENAI_API_KEY is not configured")]
     MissingApiKey,
+    #[error("LLM HTTP timeout must be greater than zero")]
     InvalidTimeout,
 }
-
-impl fmt::Display for LlmTransportConfigurationError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MissingApiKey => formatter.write_str("OPENAI_API_KEY is not configured"),
-            Self::InvalidTimeout => {
-                formatter.write_str("LLM HTTP timeout must be greater than zero")
-            }
-        }
-    }
-}
-
-impl std::error::Error for LlmTransportConfigurationError {}
 
 /// Synchronous HTTP transport backed by the mature `ureq` client.
 ///

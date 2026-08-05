@@ -10,6 +10,8 @@ name = "work-memory-store-admin"
 path = "src/bin/store_admin.rs"
 
 [dependencies]
+thiserror.workspace = true
+clap.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 rusqlite = { version = "0.34", features = ["backup", "bundled"] }
 serde = "1"

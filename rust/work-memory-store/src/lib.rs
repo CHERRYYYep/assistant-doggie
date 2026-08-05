@@ -1,8 +1,7 @@
 //! SQLite compatibility, inspection, and offline migration safety for the Python-owned schema.
 
-use std::error::Error;
-use std::fmt::{self, Display, Formatter};
 use std::path::PathBuf;
+use thiserror::Error;
 
 mod archive_write;
 mod bucket_summary_write;
@@ -43,34 +42,47 @@ pub use records::{
 pub use work_memory_contracts::ChatRole;
 pub use write::WritableSqliteStore;
 /// Failures at the SQLite compatibility boundary.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum StoreError {
-    Sqlite(rusqlite::Error),
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("failed to {operation} at {path}: {source}")]
     Io {
         operation: &'static str,
         path: PathBuf,
+        #[source]
         source: std::io::Error,
     },
+    #[error("required SQLite table is missing: {0}")]
     MissingTable(&'static str),
+    #[error("required SQLite column is missing: {table}.{column}")]
     MissingColumn {
         table: &'static str,
         column: &'static str,
     },
+    #[error("invalid primary key for {table}: expected {expected:?}, found {found:?}")]
     InvalidPrimaryKey {
         table: &'static str,
         expected: &'static [&'static str],
         found: Vec<String>,
     },
+    #[error("required SQLite index is missing: {table}.{index}")]
     MissingIndex {
         table: &'static str,
         index: &'static str,
     },
+    #[error(
+        "invalid columns for SQLite index {table}.{index}: expected {expected:?}, found {found:?}"
+    )]
     InvalidIndexColumns {
         table: &'static str,
         index: &'static str,
         expected: &'static [&'static str],
         found: Vec<String>,
     },
+    #[error(
+        "required foreign key is missing: {table}.{column} -> {referenced_table}.{referenced_column} ON DELETE {on_delete}"
+    )]
     MissingForeignKey {
         table: &'static str,
         column: &'static str,
@@ -78,78 +90,85 @@ pub enum StoreError {
         referenced_column: &'static str,
         on_delete: &'static str,
     },
+    #[error("SQLite quick_check failed: {0}")]
     IntegrityCheckFailed(String),
+    #[error(
+        "SQLite foreign_key_check failed for {table} row {row_id:?}, parent {parent}, constraint {foreign_key_id}"
+    )]
     ForeignKeyCheckFailed {
         table: String,
         row_id: Option<i64>,
         parent: String,
         foreign_key_id: i64,
     },
+    #[error("invalid SQLite migration version: {0}")]
     InvalidMigrationVersion(i64),
-    UnsupportedSchemaVersion {
-        found: u32,
-        supported: u32,
-    },
-    InconsistentMigrationHistory {
-        expected: u32,
-        found: u32,
-    },
+    #[error("SQLite schema version {found} is newer than supported version {supported}")]
+    UnsupportedSchemaVersion { found: u32, supported: u32 },
+    #[error("inconsistent SQLite migration history: expected version {expected}, found {found}")]
+    InconsistentMigrationHistory { expected: u32, found: u32 },
+    #[error("unexpected name for SQLite migration {version}: expected {expected}, found {found}")]
     UnexpectedMigrationName {
         version: u32,
         expected: &'static str,
         found: String,
     },
+    #[error("schema_migrations exists but contains no migration records")]
     EmptyMigrationHistory,
+    #[error("schema_migrations already exists before baseline migration")]
     MigrationTableAlreadyExists,
+    #[error("backup path already exists: {0}")]
     BackupAlreadyExists(PathBuf),
-    BackupValidationFailed {
-        expected: String,
-        found: String,
-    },
-    MigrationValidationFailed {
-        expected: u32,
-        found: String,
-    },
-    RestoreValidationFailed {
-        expected: String,
-        found: String,
-    },
+    #[error("SQLite backup validation failed: expected {expected}, found {found}")]
+    BackupValidationFailed { expected: String, found: String },
+    #[error("SQLite migration validation failed: expected version {expected}, found {found}")]
+    MigrationValidationFailed { expected: u32, found: String },
+    #[error("SQLite restore validation failed: expected {expected}, found {found}")]
+    RestoreValidationFailed { expected: String, found: String },
+    #[error(
+        "SQLite restore failed ({restore_error}) and safety rollback also failed ({rollback_error})"
+    )]
     RestoreRollbackFailed {
         restore_error: String,
         rollback_error: String,
     },
+    #[error("{left_label} and {right_label} paths must differ: {path}")]
     SameDatabasePath {
         left_label: &'static str,
         right_label: &'static str,
         path: PathBuf,
     },
+    #[error("invalid SQLite path: {0}")]
     InvalidPath(PathBuf),
-    InvalidBucketType {
-        bucket_id: String,
-        value: String,
-    },
-    InvalidBucketStatus {
-        bucket_id: String,
-        value: String,
-    },
-    InvalidTodoStatus {
-        todo_id: String,
-        value: String,
-    },
+    #[error("bucket {bucket_id} contains unsupported type value: {value}")]
+    InvalidBucketType { bucket_id: String, value: String },
+    #[error("bucket {bucket_id} contains unsupported status value: {value}")]
+    InvalidBucketStatus { bucket_id: String, value: String },
+    #[error("todo {todo_id} contains unsupported status value: {value}")]
+    InvalidTodoStatus { todo_id: String, value: String },
+    #[error(
+        "classification record {classification_record_id} contains unsupported action value: {value}"
+    )]
     InvalidClassificationAction {
         classification_record_id: String,
         value: String,
     },
+    #[error("chat message {chat_message_id} contains unsupported role value: {value}")]
     InvalidChatRole {
         chat_message_id: String,
         value: String,
     },
+    #[error("invalid JSON in {table}.{column} for record {record_id}: {source}")]
     InvalidJson {
         table: &'static str,
         column: &'static str,
         record_id: String,
+        #[source]
         source: serde_json::Error,
     },
+    #[error(
+        "invalid JSON type in {table}.{column} for record {record_id}: expected {expected}, found {found}"
+    )]
     InvalidJsonType {
         table: &'static str,
         column: &'static str,
@@ -157,318 +176,63 @@ pub enum StoreError {
         expected: &'static str,
         found: &'static str,
     },
+    #[error(
+        "invalid boolean in {table}.{column} for record {record_id}: expected 0 or 1, found {value}"
+    )]
     InvalidBoolean {
         table: &'static str,
         column: &'static str,
         record_id: String,
         value: i64,
     },
+    #[error("invalid timestamp in {table}.{column} for record {record_id}: {value}")]
     InvalidTimestamp {
         table: &'static str,
         column: &'static str,
         record_id: String,
         value: String,
     },
+    #[error("query limit must be at least 1, got {0}")]
     InvalidLimit(usize),
+    #[error(
+        "SQLite write connection is not ready: opened_read_only={opened_read_only}, query_only={query_only}, foreign_keys={foreign_keys}"
+    )]
     WriteConnectionNotReady {
         opened_read_only: bool,
         query_only: bool,
         foreign_keys: bool,
     },
-    SchemaChangedAfterValidation {
-        expected: i64,
-        found: i64,
-    },
+    #[error(
+        "SQLite schema changed after write-store validation: expected schema_version {expected}, found {found}"
+    )]
+    SchemaChangedAfterValidation { expected: i64, found: i64 },
+    #[error("invalid write field {field}: {reason}")]
     InvalidWriteField {
         field: &'static str,
         reason: &'static str,
     },
+    #[error("invalid archive write for action {action}: {reason}")]
     InvalidArchiveWrite {
         action: &'static str,
         reason: &'static str,
     },
+    #[error("invalid correction write for action {action}: {reason}")]
     InvalidCorrectionWrite {
         action: &'static str,
         reason: &'static str,
     },
+    #[error("no entry is available to correct")]
     NoEntryAvailableToCorrect,
-    NoMatchingCorrectionBucket {
-        title: String,
-    },
-    AmbiguousCorrectionBucket {
-        title: String,
-    },
-    MissingRecord {
-        table: &'static str,
-        id: String,
-    },
+    #[error("no Bucket title contains the correction target: {title}")]
+    NoMatchingCorrectionBucket { title: String },
+    #[error("multiple Bucket titles contain the correction target: {title}")]
+    AmbiguousCorrectionBucket { title: String },
+    #[error("required {table} record was not found: {id}")]
+    MissingRecord { table: &'static str, id: String },
+    #[error("failed to serialize JSON for {context}: {source}")]
     JsonSerialization {
         context: &'static str,
+        #[source]
         source: serde_json::Error,
     },
-}
-
-impl Display for StoreError {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Sqlite(error) => write!(formatter, "SQLite error: {error}"),
-            Self::Io {
-                operation,
-                path,
-                source,
-            } => write!(
-                formatter,
-                "failed to {operation} at {}: {source}",
-                path.display()
-            ),
-            Self::MissingTable(table) => {
-                write!(formatter, "required SQLite table is missing: {table}")
-            }
-            Self::MissingColumn { table, column } => {
-                write!(
-                    formatter,
-                    "required SQLite column is missing: {table}.{column}"
-                )
-            }
-            Self::InvalidPrimaryKey {
-                table,
-                expected,
-                found,
-            } => write!(
-                formatter,
-                "invalid primary key for {table}: expected {expected:?}, found {found:?}"
-            ),
-            Self::MissingIndex { table, index } => {
-                write!(
-                    formatter,
-                    "required SQLite index is missing: {table}.{index}"
-                )
-            }
-            Self::InvalidIndexColumns {
-                table,
-                index,
-                expected,
-                found,
-            } => write!(
-                formatter,
-                "invalid columns for SQLite index {table}.{index}: expected {expected:?}, found {found:?}"
-            ),
-            Self::MissingForeignKey {
-                table,
-                column,
-                referenced_table,
-                referenced_column,
-                on_delete,
-            } => write!(
-                formatter,
-                "required foreign key is missing: {table}.{column} -> {referenced_table}.{referenced_column} ON DELETE {on_delete}"
-            ),
-            Self::IntegrityCheckFailed(result) => {
-                write!(formatter, "SQLite quick_check failed: {result}")
-            }
-            Self::ForeignKeyCheckFailed {
-                table,
-                row_id,
-                parent,
-                foreign_key_id,
-            } => write!(
-                formatter,
-                "SQLite foreign_key_check failed for {table} row {row_id:?}, parent {parent}, constraint {foreign_key_id}"
-            ),
-            Self::InvalidMigrationVersion(version) => {
-                write!(formatter, "invalid SQLite migration version: {version}")
-            }
-            Self::UnsupportedSchemaVersion { found, supported } => write!(
-                formatter,
-                "SQLite schema version {found} is newer than supported version {supported}"
-            ),
-            Self::InconsistentMigrationHistory { expected, found } => write!(
-                formatter,
-                "inconsistent SQLite migration history: expected version {expected}, found {found}"
-            ),
-            Self::UnexpectedMigrationName {
-                version,
-                expected,
-                found,
-            } => write!(
-                formatter,
-                "unexpected name for SQLite migration {version}: expected {expected}, found {found}"
-            ),
-            Self::EmptyMigrationHistory => {
-                formatter.write_str("schema_migrations exists but contains no migration records")
-            }
-            Self::MigrationTableAlreadyExists => {
-                formatter.write_str("schema_migrations already exists before baseline migration")
-            }
-            Self::BackupAlreadyExists(path) => {
-                write!(formatter, "backup path already exists: {}", path.display())
-            }
-            Self::BackupValidationFailed { expected, found } => write!(
-                formatter,
-                "SQLite backup validation failed: expected {expected}, found {found}"
-            ),
-            Self::MigrationValidationFailed { expected, found } => write!(
-                formatter,
-                "SQLite migration validation failed: expected version {expected}, found {found}"
-            ),
-            Self::RestoreValidationFailed { expected, found } => write!(
-                formatter,
-                "SQLite restore validation failed: expected {expected}, found {found}"
-            ),
-            Self::RestoreRollbackFailed {
-                restore_error,
-                rollback_error,
-            } => write!(
-                formatter,
-                "SQLite restore failed ({restore_error}) and safety rollback also failed ({rollback_error})"
-            ),
-            Self::SameDatabasePath {
-                left_label,
-                right_label,
-                path,
-            } => write!(
-                formatter,
-                "{left_label} and {right_label} paths must differ: {}",
-                path.display()
-            ),
-            Self::InvalidPath(path) => {
-                write!(formatter, "invalid SQLite path: {}", path.display())
-            }
-            Self::InvalidBucketType { bucket_id, value } => write!(
-                formatter,
-                "bucket {bucket_id} contains unsupported type value: {value}"
-            ),
-            Self::InvalidBucketStatus { bucket_id, value } => write!(
-                formatter,
-                "bucket {bucket_id} contains unsupported status value: {value}"
-            ),
-            Self::InvalidTodoStatus { todo_id, value } => write!(
-                formatter,
-                "todo {todo_id} contains unsupported status value: {value}"
-            ),
-            Self::InvalidClassificationAction {
-                classification_record_id,
-                value,
-            } => write!(
-                formatter,
-                "classification record {classification_record_id} contains unsupported action value: {value}"
-            ),
-            Self::InvalidChatRole {
-                chat_message_id,
-                value,
-            } => write!(
-                formatter,
-                "chat message {chat_message_id} contains unsupported role value: {value}"
-            ),
-            Self::InvalidJson {
-                table,
-                column,
-                record_id,
-                source,
-            } => write!(
-                formatter,
-                "invalid JSON in {table}.{column} for record {record_id}: {source}"
-            ),
-            Self::InvalidJsonType {
-                table,
-                column,
-                record_id,
-                expected,
-                found,
-            } => write!(
-                formatter,
-                "invalid JSON type in {table}.{column} for record {record_id}: expected {expected}, found {found}"
-            ),
-            Self::InvalidBoolean {
-                table,
-                column,
-                record_id,
-                value,
-            } => write!(
-                formatter,
-                "invalid boolean in {table}.{column} for record {record_id}: expected 0 or 1, found {value}"
-            ),
-            Self::InvalidTimestamp {
-                table,
-                column,
-                record_id,
-                value,
-            } => write!(
-                formatter,
-                "invalid timestamp in {table}.{column} for record {record_id}: {value}"
-            ),
-            Self::InvalidLimit(limit) => {
-                write!(formatter, "query limit must be at least 1, got {limit}")
-            }
-            Self::WriteConnectionNotReady {
-                opened_read_only,
-                query_only,
-                foreign_keys,
-            } => write!(
-                formatter,
-                "SQLite write connection is not ready: opened_read_only={opened_read_only}, query_only={query_only}, foreign_keys={foreign_keys}"
-            ),
-            Self::SchemaChangedAfterValidation { expected, found } => write!(
-                formatter,
-                "SQLite schema changed after write-store validation: expected schema_version {expected}, found {found}"
-            ),
-            Self::InvalidWriteField { field, reason } => {
-                write!(formatter, "invalid write field {field}: {reason}")
-            }
-            Self::InvalidArchiveWrite { action, reason } => {
-                write!(
-                    formatter,
-                    "invalid archive write for action {action}: {reason}"
-                )
-            }
-            Self::InvalidCorrectionWrite { action, reason } => {
-                write!(
-                    formatter,
-                    "invalid correction write for action {action}: {reason}"
-                )
-            }
-            Self::NoEntryAvailableToCorrect => {
-                formatter.write_str("no entry is available to correct")
-            }
-            Self::NoMatchingCorrectionBucket { title } => {
-                write!(
-                    formatter,
-                    "no Bucket title contains the correction target: {title}"
-                )
-            }
-            Self::AmbiguousCorrectionBucket { title } => {
-                write!(
-                    formatter,
-                    "multiple Bucket titles contain the correction target: {title}"
-                )
-            }
-            Self::MissingRecord { table, id } => {
-                write!(formatter, "required {table} record was not found: {id}")
-            }
-            Self::JsonSerialization { context, source } => {
-                write!(
-                    formatter,
-                    "failed to serialize JSON for {context}: {source}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for StoreError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Sqlite(error) => Some(error),
-            Self::Io { source, .. } => Some(source),
-            Self::InvalidJson { source, .. } => Some(source),
-            Self::JsonSerialization { source, .. } => Some(source),
-            _ => None,
-        }
-    }
-}
-
-impl From<rusqlite::Error> for StoreError {
-    fn from(error: rusqlite::Error) -> Self {
-        Self::Sqlite(error)
-    }
 }
