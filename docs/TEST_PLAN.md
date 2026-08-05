@@ -62,6 +62,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `BucketSummaryService` 在 Python 创建的隔离九表数据库上覆盖滚动摘要更新与基于 Entry 的摘要重建；验证默认/显式限制接线、返回摘要、去重/窗口/顺序语义、只更新 `summary`/`updated_at`、不刷新 `last_active_at`、缺失/非法请求无部分修改，以及 `apply_bucket_summary_service_fixture.py`、`export_bucket_summary_service_fixture.py` 驱动的 Python/Rust 返回值和九表最终语义等价。当前服务测试不代表 Agent、UI 或生产写路径已切换。
 - Rust `ExtractionPersistenceService` 在 Python 创建的隔离九表数据库上覆盖首次、重复和最小提取保存；验证稳定 `ExtractionSaveResult` 计数与 UUID v4、四类结构化记录去重、Entry summary、Bucket tags/滚动摘要、`last_active_at` 隔离、精确/缺失/归属错误目标无部分修改，以及 `apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 驱动的 Python/Rust 结果和九表最终语义等价。测试不调用真实模型，也不代表 Agent、UI 或生产写路径已切换。
 - Rust `ClassificationAuditService` 在 Python 创建的隔离九表数据库上覆盖重复 append、空文本 create_new、带建议 Bucket 的 ask_user 和插入失败；验证稳定 `ClassificationAuditSaveResult` UUID v4、输入 trim、精确服务端元数据、候选精确保序合并、全部 action、重复审计、单表影响和无部分修改，以及 `apply_classification_audit_service_fixture.py`、`export_classification_audit_service_fixture.py` 驱动的 Python/Rust 结果和九表最终语义等价。测试不调用真实模型，也不代表 Agent、UI 或生产写路径已切换。
+- Rust `ChatMessagePersistenceService` 在 Python 创建的隔离九表数据库上覆盖重复 user、tool、assistant、JSON null、非法输入和插入失败；验证稳定 `ChatMessageSaveResult` UUID v4、内容裁剪、返回工具字符串裁剪与数据库精确保留、object/array/null details、严格递增时间顺序、单表影响和无部分修改，以及 `apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 驱动的 Python/Rust 结果和九表最终语义等价。测试不调用真实模型，也不代表 Agent、UI 或生产写路径已切换。
 
 ### 2.3 手动测试
 
@@ -336,6 +337,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/bucket_summary.rs`：Rust `BucketSummaryService` 的默认/显式滚动摘要更新和 Entry 摘要重建，覆盖返回摘要、更新去重与字符边界、重建窗口/过滤/顺序/精确去重、缓存字段隔离、非法/缺失目标无部分修改；`tests/fixtures/apply_bucket_summary_service_fixture.py`、`export_bucket_summary_service_fixture.py` 驱动 Python/Rust 返回值与排除运行时 `updated_at` 后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/extraction.rs`：Rust `ExtractionPersistenceService` 的首次、重复和最小提取保存，覆盖稳定结果投影、UUID v4、四类子记录去重、Entry/Bucket 缓存更新、`last_active_at` 隔离、精确/缺失/归属错误目标和失败无修改；`tests/fixtures/apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 驱动 Python/Rust 结果与排除随机子记录 ID/运行时 `updated_at` 后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-service/tests/classification.rs`：Rust `ClassificationAuditService` 的重复 append、create_new、ask_user 和插入失败，覆盖稳定审计 UUID、输入/元数据边界、候选合并、三类 action、重复调用、单表影响和失败无修改；`tests/fixtures/apply_classification_audit_service_fixture.py`、`export_classification_audit_service_fixture.py` 驱动 Python/Rust 结果与排除随机审计 ID/时间后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
+- `rust/work-memory-service/tests/chat.rs`：Rust `ChatMessagePersistenceService` 的重复 user、tool、assistant、JSON null、非法输入和插入失败，覆盖稳定消息 UUID、产品返回投影、精确数据库工具元数据、details 边界、严格递增时间和失败无修改；`tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 驱动 Python/Rust 结果与排除随机消息 ID/时间后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

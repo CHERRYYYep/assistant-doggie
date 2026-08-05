@@ -435,3 +435,15 @@ R3g 只接通已验证提取结果的独立持久化，不替代 R3c 归档事�
 - `tests/fixtures/apply_classification_audit_service_fixture.py`、`export_classification_audit_service_fixture.py` 与 `rust/work-memory-service/tests/classification.rs` 比较重复 append、空文本 create_new、带建议目标的 ask_user 和插入失败场景的 Python/Rust 结果及九表最终语义；随机审计 ID/时间被规范化，数据库只位于系统临时目录且不调用真实模型。
 
 R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归档事务内部的分类审计，也不提供分类模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
+
+## 23. Rust 单条聊天消息持久化服务边界（R3i）
+
+`work-memory-service::ChatMessagePersistenceService` 把 R2g 已验证的单条 ChatMessage 追加事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交 `ChatRole`、消息内容、可选工具元数据与 details：
+
+- `append_chat_message` 在服务内部构造 `ChatMessageWriteRequest`，不暴露 Store request、连接、SQL 或事务闭包。角色从类型层限定为 user/assistant/tool；内容按 Python 规则 trim 并拒绝空值。
+- details 只接受 object、array 或 null；JSON null 规范化为 SQL NULL。`tool_name` 与 `tool_call_id` 在数据库中精确保留，包括首尾空白。
+- 稳定结果投影 `ChatMessageSaveResult` 返回提交后的 UUID、角色、内容、工具元数据、details 和时间。为匹配 Python `ChatMessageView` 的 Pydantic 行为，结果中的可选工具字符串会 trim；该投影不反向修改数据库中的精确值。
+- 每次调用在独立事务中只新增一条 ChatMessage，生成 UUID v4，并保证 `created_at` 严格晚于当前最新消息，从而保持最近窗口截断再反转后的追加顺序。重复内容不会去重；非法请求在写入前拒绝，插入失败不修改九表。
+- `tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 与 `rust/work-memory-service/tests/chat.rs` 比较重复 user、tool、assistant、JSON null、非法输入和插入失败场景的 Python/Rust 返回结果及九表最终语义；随机消息 ID/时间被规范化，数据库只位于系统临时目录且不调用真实模型。
+
+R3i 只接通单条聊天消息的独立持久化，不提供完整 Agent turn 的跨消息事务，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。

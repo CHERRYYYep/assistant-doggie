@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更、摘要缓存、独立提取保存和分类审计保存编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界；R3g `ExtractionPersistenceService` 已把已验证提取结果的独立原子保存提升为稳定服务边界；R3h `ClassificationAuditService` 已把已验证分类结果和服务端元数据的独立审计保存提升为稳定服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存和聊天消息持久化编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界；R3g `ExtractionPersistenceService` 已把已验证提取结果的独立原子保存提升为稳定服务边界；R3h `ClassificationAuditService` 已把已验证分类结果和服务端元数据的独立审计保存提升为稳定服务边界；R3i `ChatMessagePersistenceService` 已把单条 user/assistant/tool 消息追加提升为稳定服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -88,7 +88,7 @@ Python 仍负责生产分类、提取、确认和 Session 生命周期。Rust R3
 
 ### `agent_service` 的聊天持久化边界
 
-Python 当前仍通过 `add_chat_message` 分别提交 user、tool 和 assistant 消息。Rust `ChatMessageWriteRequest` 与 `WritableSqliteStore::append_chat_message` 已在隔离临时数据库复现单条消息的角色、内容、工具元数据、details、UUID、时间顺序和失败回滚语义，但尚未接入 Agent Harness，也不提供完整 turn 的跨消息事务。
+Python 当前仍通过 `add_chat_message` 分别提交 user、tool 和 assistant 消息。Rust R3i `ChatMessagePersistenceService` 持有经验证的 `WritableSqliteStore`，直接接收 `ChatRole`、内容、可选工具元数据和 details，在内部构造 `ChatMessageWriteRequest` 并独立提交单条消息。Store 精确保留工具元数据，稳定 `ChatMessageSaveResult` 则与 Python `ChatMessageView` 一样裁剪返回字符串；内容校验、JSON null 规范化、UUID 和严格递增时间顺序仍由 Store 负责。该服务尚未接入 Agent Harness，也不提供完整 turn 的跨消息事务。
 
 ### `search_service` 与 `view_service`
 
@@ -132,6 +132,7 @@ confidence < 0.55               → 用户确认
 - Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改，目前仍未接入 Agent/UI。
 - Rust R3g `ExtractionPersistenceService` 把 R2n 的独立提取保存提升为稳定服务边界；服务接收精确 Bucket/Entry ID 和已验证 `ExtractionResult`，不暴露 Store request、连接或事务闭包，并返回包含四类新建记录 ID 的 `ExtractionSaveResult`。目标验证、子记录去重、Entry/Bucket 缓存更新和失败回滚继续由单一 Store 事务负责，目前仍未接入提取模型、Agent/UI 或生产数据库。
 - Rust R3h `ClassificationAuditService` 把 R2o 的独立分类审计保存提升为稳定服务边界；服务接收已验证 `ClassificationResult` 及服务端候选、焦点、Prompt 和模型元数据，不暴露 Store request/outcome、连接或事务闭包，并返回新审计 UUID 的 `ClassificationAuditSaveResult`。原始输入 trim、空审计文本、精确元数据、候选合并、三类 action 和失败回滚继续由 Store 保持 Python 语义；分类与风险门控、Prompt 选择和模型名解析仍在服务外，目前未接入 Agent/UI 或生产数据库。
+- Rust R3i `ChatMessagePersistenceService` 把 R2g 单条 ChatMessage 追加提升为稳定服务边界；服务直接接收强类型角色、内容、可选工具元数据和 object/array/null details，不暴露 Store request、连接或事务闭包，并返回与 Python `ChatMessageView` 字符串规范化一致的 `ChatMessageSaveResult`。数据库仍精确保留工具元数据，每次调用独立提交一条 UUID v4 消息并维持严格递增时间顺序；非法输入或插入失败不修改九表，目前未接入 Agent/UI 或生产数据库，也不构造完整 turn 事务。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 
