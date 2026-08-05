@@ -148,3 +148,28 @@
 - Rust 写路径继续通过 UUID v4 格式测试和 Python/Rust 最终语义 fixture 对比。
 - endpoint fixture 继续逐值验证 official/custom、IPv6、credentials、query、fragment 和不安全远程 HTTP 行为。
 - `cargo fmt --all -- --check`、`cargo clippy --workspace --all-targets -- -D warnings`、Rust workspace tests 和 Python 回归测试通过。
+
+
+## ADR-009：R4c 继续使用受控应用内 Agent Harness
+
+状态：接受（2026-08-05）
+
+决定：
+
+- Rust R4c 不引入通用 Agent framework；继续使用应用内的 allow-list、严格参数契约、有限工具轮数和显式执行器边界。
+- Responses/Chat Completions 的 wire 类型复用 `async-openai`，HTTP/TLS/proxy 复用 `ureq`，JSON/契约复用 `serde`/`serde_json`；Harness 只保留产品特有的工具 continuation、记忆上下文分层、风险错误和事务接线策略。
+- `schemars` 不直接替换当前手工维护的 strict schema，因为 Rust 生成的 `$ref`、nullable、required/default 和描述字段未被证明与 Python/Pydantic/OpenAI canonical schema 逐值一致。
+- `thiserror`、`clap`、`wiremock`/`httpmock` 作为后续样板和测试整理候选，当前不阻塞 R4c，也不以增加依赖为目标进行重写。
+
+原因：
+
+- 工具 allow-list、工具错误作为数据、记忆上下文不具备 system 权限、确认/风险门控和未来完整 turn 事务都是本产品安全策略，不是通用 crate 可以安全替代的底层能力。
+- 当前 Rust workspace 已使用社区 crate 覆盖 HTTP、TLS、代理、URL、UUID、SQLite、JSON、时间、Unicode casefold 和 OpenAI wire；没有发现第二套生产 HTTP/SQLite/URL/UUID 基础设施。
+- 手工 schema、migration safety 和 Agent loop 代码分别承担跨语言兼容、Python legacy schema adoption/备份恢复、以及产品安全边界，不属于无理由重复实现。
+
+生产前审查项：
+
+- redirect 必须限制 host/scheme，不能让 prompt 或 memory context 被跳转到未授权目标。
+- Harness 需要补齐 tool call/上下文/输出资源上限、重复 call ID 和写操作幂等保护。
+- Responses/Chat 的 status、choice、role、function-call 完成态和 retry 分类需要更严格的协议测试。
+- 工具 schema 与 `AgentToolArguments` 应收敛为单一 metadata 来源，避免内部 drift。

@@ -30,7 +30,7 @@ Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs
 ## 技术栈与目录
 
 - 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层和隔离写 API 位于 `rust/work-memory-store/`，Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存和聊天消息持久化编排位于 `rust/work-memory-service/`。R3c-R3i 已建立归档、纠错、基础变更、摘要、提取、分类审计和单条聊天消息的稳定服务边界。R4a-R4b 已创建 `rust/work-memory-agent/`，实现 Responses/兼容 Chat Completions Structured Outputs 请求、响应归一化、有限重试，以及基于社区 `ureq` 的同步 HTTP transport、Bearer 认证、timeout 和环境 proxy；通过 fake transport 与 loopback mock server 离线测试。所有 Rust 写服务仍只在隔离数据库验证；真实 HTTP transport 尚未接入 Agent Harness、UI 或生产接线，生产写入继续由 Python 独占。
+- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层和隔离写 API 位于 `rust/work-memory-store/`，Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存和聊天消息持久化编排位于 `rust/work-memory-service/`。R3c-R3i 已建立归档、纠错、基础变更、摘要、提取、分类审计和单条聊天消息的稳定服务边界。已提交 Rust 成果推进到 R4b；当前工作区有 R4c `work-memory-agent` Harness 草稿，复用 `async-openai` wire 类型、`ureq` HTTP transport 和严格工具契约，但尚未接入 service/store、UI 或生产数据库，生产写入继续由 Python 独占。
 - `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。

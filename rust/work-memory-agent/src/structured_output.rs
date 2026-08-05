@@ -4,6 +4,9 @@ use std::fmt::{self, Display, Formatter};
 use serde_json::{Value, json};
 use work_memory_contracts::{ContractError, StructuredOutputContract};
 
+use crate::wire_response::{
+    WireResponse, WireResponseError, parse_response as parse_wire_response,
+};
 use crate::{LlmApiMode, LlmEndpointConfig};
 
 /// JSON request ready for a concrete HTTP transport.
@@ -14,6 +17,13 @@ pub struct LlmHttpRequest {
 }
 
 impl LlmHttpRequest {
+    pub(crate) fn from_parts(url: impl Into<String>, body: Value) -> Self {
+        Self {
+            url: url.into(),
+            body,
+        }
+    }
+
     fn for_contract<C: StructuredOutputContract>(
         endpoint: &LlmEndpointConfig,
         model: &str,
@@ -51,10 +61,7 @@ impl LlmHttpRequest {
                 }
             }),
         };
-        Self {
-            url: endpoint.request_url(),
-            body,
-        }
+        Self::from_parts(endpoint.request_url(), body)
     }
 
     pub fn url(&self) -> &str {
@@ -143,6 +150,9 @@ pub enum LlmError {
     EmptySystemPrompt,
     EmptyUserPrompt,
     Transport(LlmTransportError),
+    UnexpectedStatus {
+        status: String,
+    },
     Incomplete {
         reason: String,
     },
@@ -151,7 +161,11 @@ pub enum LlmError {
     },
     ContentFilter,
     MissingOutput,
+    InvalidToolCall {
+        message: String,
+    },
     InvalidJson(serde_json::Error),
+    InvalidResponse(serde_json::Error),
     Contract(ContractError),
     AttemptsExhausted {
         attempts: usize,
@@ -177,9 +191,15 @@ impl LlmError {
     fn is_retryable(&self) -> bool {
         match self {
             Self::Transport(error) => error.is_retryable(),
-            Self::Refusal { .. } | Self::ContentFilter => false,
+            Self::UnexpectedStatus { .. }
+            | Self::Refusal { .. }
+            | Self::ContentFilter
+            | Self::InvalidToolCall { .. } => false,
             Self::Incomplete { reason } => !reason.eq_ignore_ascii_case("content_filter"),
-            Self::MissingOutput | Self::InvalidJson(_) | Self::Contract(_) => true,
+            Self::MissingOutput
+            | Self::InvalidJson(_)
+            | Self::InvalidResponse(_)
+            | Self::Contract(_) => true,
             Self::EmptyModel
             | Self::EmptySystemPrompt
             | Self::EmptyUserPrompt
@@ -195,14 +215,29 @@ impl Display for LlmError {
             Self::EmptySystemPrompt => formatter.write_str("system_prompt must not be empty"),
             Self::EmptyUserPrompt => formatter.write_str("user_prompt must not be empty"),
             Self::Transport(error) => write!(formatter, "transport error: {error}"),
+            Self::UnexpectedStatus { status } => {
+                write!(formatter, "model response had unexpected status: {status}")
+            }
             Self::Incomplete { reason } => write!(formatter, "model response incomplete: {reason}"),
             Self::Refusal { message } => write!(formatter, "model refused request: {message}"),
             Self::ContentFilter => formatter.write_str("model response blocked by content filter"),
             Self::MissingOutput => {
                 formatter.write_str("model response did not contain structured output")
             }
+            Self::InvalidToolCall { message } => {
+                write!(
+                    formatter,
+                    "model response contained an invalid tool call: {message}"
+                )
+            }
             Self::InvalidJson(error) => {
                 write!(formatter, "structured output was not valid JSON: {error}")
+            }
+            Self::InvalidResponse(error) => {
+                write!(
+                    formatter,
+                    "model response had an invalid wire shape: {error}"
+                )
             }
             Self::Contract(error) => write!(
                 formatter,
@@ -224,15 +259,18 @@ impl Error for LlmError {
         match self {
             Self::Transport(error) => Some(error),
             Self::InvalidJson(error) => Some(error),
+            Self::InvalidResponse(error) => Some(error),
             Self::Contract(error) => Some(error),
             Self::AttemptsExhausted { last_error, .. } => Some(last_error),
             Self::EmptyModel
             | Self::EmptySystemPrompt
             | Self::EmptyUserPrompt
+            | Self::UnexpectedStatus { .. }
             | Self::Incomplete { .. }
             | Self::Refusal { .. }
             | Self::ContentFilter
-            | Self::MissingOutput => None,
+            | Self::MissingOutput
+            | Self::InvalidToolCall { .. } => None,
         }
     }
 }
@@ -314,110 +352,28 @@ fn parse_response<C: StructuredOutputContract>(
     mode: LlmApiMode,
     body: &Value,
 ) -> Result<C, LlmError> {
-    let text = match mode {
-        LlmApiMode::Responses => responses_output_text(body)?,
-        LlmApiMode::ChatCompletions => chat_output_text(body)?,
+    let text = match parse_wire_response(mode, body).map_err(map_wire_error)? {
+        WireResponse::FinalText(text) => text,
+        WireResponse::ToolCalls { .. } => {
+            return Err(LlmError::InvalidToolCall {
+                message: "tool calls are not valid structured output".to_owned(),
+            });
+        }
     };
     let value = serde_json::from_str(&text).map_err(LlmError::InvalidJson)?;
     C::from_structured_value(value).map_err(LlmError::Contract)
 }
 
-fn responses_output_text(body: &Value) -> Result<String, LlmError> {
-    if body
-        .get("status")
-        .and_then(Value::as_str)
-        .is_some_and(|status| status == "incomplete")
-    {
-        let reason = body
-            .pointer("/incomplete_details/reason")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        if reason.eq_ignore_ascii_case("content_filter") {
-            return Err(LlmError::ContentFilter);
+fn map_wire_error(error: WireResponseError) -> LlmError {
+    match error {
+        WireResponseError::InvalidResponse(error) => LlmError::InvalidResponse(error),
+        WireResponseError::UnexpectedStatus { status } => LlmError::UnexpectedStatus { status },
+        WireResponseError::Incomplete { reason } => LlmError::Incomplete { reason },
+        WireResponseError::Refusal { message } => LlmError::Refusal { message },
+        WireResponseError::ContentFilter => LlmError::ContentFilter,
+        WireResponseError::MissingResponse | WireResponseError::MissingOutput => {
+            LlmError::MissingOutput
         }
-        return Err(LlmError::Incomplete {
-            reason: reason.to_owned(),
-        });
-    }
-
-    let mut output_text = String::new();
-    for item in body
-        .get("output")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        for content in item
-            .get("content")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            match content.get("type").and_then(Value::as_str) {
-                Some("refusal") => {
-                    let message = content
-                        .get("refusal")
-                        .and_then(Value::as_str)
-                        .unwrap_or("request refused")
-                        .to_owned();
-                    return Err(LlmError::Refusal { message });
-                }
-                Some("output_text") => {
-                    if let Some(text) = content.get("text").and_then(Value::as_str) {
-                        output_text.push_str(text);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    if output_text.trim().is_empty() {
-        Err(LlmError::MissingOutput)
-    } else {
-        Ok(output_text)
-    }
-}
-
-fn chat_output_text(body: &Value) -> Result<String, LlmError> {
-    let choice = body
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .ok_or(LlmError::MissingOutput)?;
-
-    match choice.get("finish_reason").and_then(Value::as_str) {
-        Some("length") => {
-            return Err(LlmError::Incomplete {
-                reason: "length".to_owned(),
-            });
-        }
-        Some("content_filter") => return Err(LlmError::ContentFilter),
-        _ => {}
-    }
-
-    let message = choice.get("message").ok_or(LlmError::MissingOutput)?;
-    if let Some(refusal) = message.get("refusal").and_then(Value::as_str) {
-        if !refusal.is_empty() {
-            return Err(LlmError::Refusal {
-                message: refusal.to_owned(),
-            });
-        }
-    }
-
-    match message.get("content") {
-        Some(Value::String(text)) if !text.trim().is_empty() => Ok(text.to_owned()),
-        Some(Value::Array(parts)) => {
-            let text = parts
-                .iter()
-                .filter_map(|part| part.get("text").and_then(Value::as_str))
-                .collect::<String>();
-            if text.trim().is_empty() {
-                Err(LlmError::MissingOutput)
-            } else {
-                Ok(text)
-            }
-        }
-        _ => Err(LlmError::MissingOutput),
+        WireResponseError::InvalidToolCall { message } => LlmError::InvalidToolCall { message },
     }
 }

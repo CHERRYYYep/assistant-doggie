@@ -183,8 +183,13 @@ fn completed_summary(summary: &str) -> Value {
         "status": "completed",
         "output": [{
             "type": "message",
+            "id": "msg_fixture",
+            "role": "assistant",
+            "status": "completed",
             "content": [{
                 "type": "output_text",
+                "annotations": [],
+                "logprobs": null,
                 "text": json!({"summary": summary}).to_string()
             }]
         }]

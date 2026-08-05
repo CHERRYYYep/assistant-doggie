@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务，以及 R4a-R4b Structured Outputs adapter 和基于社区 `ureq` 的真实 HTTP transport。`work-memory-agent` 已能解析官方/兼容站点配置，构造 Responses 或 Chat Completions 严格 JSON Schema 请求，归一化结构化响应、执行有限重试并在隔离 mock server 上验证认证/状态码/timeout；完整归档闭环、Agent Harness、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；已提交 Rust 成果推进到 R4b，当前工作区另有 R4c Agent Harness 草稿。Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务、R4a Structured Outputs adapter、R4b 基于社区 `ureq` 的真实 HTTP transport，以及 R4c 基础工具循环/协议归一化。R4c 尚未接入 `work-memory-service`、SQLite 聊天持久化、API、UI 或生产数据库，生产运行时继续由 Python 独占写入。渐进切换边界、风险和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -141,6 +141,7 @@ confidence < 0.55               → 用户确认
 - Rust R3i `ChatMessagePersistenceService` 把 R2g 单条 ChatMessage 追加提升为稳定服务边界；服务直接接收强类型角色、内容、可选工具元数据和 object/array/null details，不暴露 Store request、连接或事务闭包，并返回与 Python `ChatMessageView` 字符串规范化一致的 `ChatMessageSaveResult`。数据库仍精确保留工具元数据，每次调用独立提交一条 UUID v4 消息并维持严格递增时间顺序；非法输入或插入失败不修改九表，目前未接入 Agent/UI 或生产数据库，也不构造完整 turn 事务。
 - Rust R4a `StructuredOutputAdapter` 只依赖可注入 transport，构造官方 Responses 或兼容 Chat Completions 的 strict JSON Schema 请求，并把响应解析为现有 Rust contract。模型名会 trim，Prompt 保留调用方原文；请求前拒绝空模型/Prompt。网络错误、408/409/429、5xx、非 content-filter incomplete、缺失输出、非法 JSON 和契约错误可在上限内重试，其他 4xx、refusal 与 content filter 立即停止。
 - Rust R4b `UreqStructuredOutputTransport` 复用 `ureq` `3.3.0` 的同步 Agent、rustls、JSON、timeout 和环境 proxy；`LlmHttpTransportConfig` 管理非密钥 timeout/proxy mode，API Key 只保存在私有字段并在 `Debug`/错误中脱敏。loopback mock server 覆盖 POST body、Bearer header、200、401、429、500、非法 JSON 和 timeout；该 transport 仍未接入生产 Agent、UI 或 SQLite。
+- Rust R4c `AgentHarness` 是 transport-independent 的工作区草稿：复用 `async-openai` wire 类型和现有严格工具契约，提供 Responses/Chat 两种六工具 allow-list 循环、工具错误回传、memory context 分层和最大工具轮数。它仍使用注入式 `AgentToolExecutor`，不负责 service/store 接线、完整 turn 事务或审计；生产前还需补齐 redirect、资源上限、幂等、wire 状态和 tool metadata 单一来源。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

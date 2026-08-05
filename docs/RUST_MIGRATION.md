@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-05
-> 当前阶段：R2/R3/R4 渐进推进（R2a-R2o、R3a-R3i、R4a-R4b 已完成）——Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter core 和基于社区 `ureq` 的真实 HTTP transport；完整 LLM 归档闭环、Agent/UI 集成和生产路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2/R3 已完成隔离实现，已提交成果推进到 R4b；当前工作区正在进行 R4c Agent Harness——Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环草稿；完整 LLM 归档闭环、生产 Agent、API/UI 和生产数据库所有权仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -295,14 +295,28 @@ R4b 基于社区 crate 的真实 HTTP transport 已完成：
 
 R4 验收：
 
-- `rust/work-memory-agent/tests/structured_output.rs` 继续验证 request/schema/retry mock 回归；`tests/http_transport.rs` 使用 loopback mock server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout。
+- `rust/work-memory-agent/tests/structured_output.rs` 继续验证 request/schema/retry mock 回归；`tests/http_transport.rs` 使用 loopback mock server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout；R4c `tests/agent_harness.rs` 验证 Responses/Chat 工具循环、参数拒绝、错误回传和轮数上限。
 - 普通测试不调用真实模型、不读取真实 API Key；真实模型验证仍保持独立命令，完整报告必须保留站点、模型、Prompt 版本和结构化结果，且密钥不能进入日志或 Git。
+
+R4c Agent Harness 工作区草稿（未接入生产）：
+
+- `rust/work-memory-agent/src/agent_harness.rs` 提供 Responses 与 Chat Completions 两种工具循环，固定六个 memory tool，工具参数先通过 `work-memory-contracts` 严格校验；未知工具、非法 JSON、未知字段和非法 Bucket type 不会进入执行器。
+- 工具错误以 JSON 数据回传模型，工具轮数有上限；历史中的 `ChatRole::Tool` 暂不作为新的 provider turn 重放，memory context 以 `user` role 注入，避免低信任记忆获得 system 指令优先级。
+- `wire_response.rs` 复用 `async-openai` 的 Responses/Chat wire 类型；Harness 只做应用级 continuation、allow-list 和错误策略，不重新定义完整 provider response model。
+- 当前 `AgentToolExecutor` 仍由调用方注入，没有依赖 `work-memory-service` 或 `work-memory-store`；尚无完整 Agent turn 原子事务、工具调用审计、真实聊天持久化、API/UI 入口或生产数据库接管。
+
+R4c 进入生产前的审查项：
+
+- 明确并测试 redirect 的 host/scheme 安全策略，避免 endpoint 跳转泄露 prompt 或记忆上下文。
+- 增加单轮 tool call 数、参数/输出/累计上下文大小、重复 call ID 和写操作幂等边界；当前只有 `max_tool_rounds`。
+- 收紧 Responses/Chat wire 状态、choice、role 和 function-call 完成态校验，并重新划分确定性错误与可重试错误。
+- 将工具 metadata 与参数契约集中维护，消除 schema 与 `AgentToolArguments` 的双事实来源。
 
 R4 后续范围：
 
 - 把分类/提取 Prompt、候选加载、风险门控和 R3c 写服务接成完整归档闭环。
-- 迁移受控工具注册、调用审计、最近消息窗口和 Bucket 上下文注入。
-- 复用分类与提取离线评估集，真实模型验证保持独立命令。
+- 将 `AgentToolExecutor` 接到 R3 查询/归档/变更服务，并定义完整 turn 的聊天消息与工具审计事务。
+- 复用分类与提取离线评估集，真实模型验证保持独立命令；完成上述安全边界后再考虑生产切换。
 
 ### R5：Rust API 与 UI 切换
 
@@ -331,7 +345,7 @@ R4 后续范围：
 | SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API、R2k 独立 Entry 追加 API、R2l 独立 Bucket 滚动摘要更新 API、R2m 独立 Bucket 摘要重建 API、R2n 独立提取结果保存 API、R2o 独立分类审计保存 API 已完成；其余写语义与集成待办 |
 | Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` | R3a-R3i Bucket 列表/单项/详情/关键词搜索、已验证分类/提取的归档写编排、指定/最近 Entry 纠错、独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除、滚动摘要更新/重建、独立提取结果保存、分类审计保存和单条 ChatMessage 持久化编排已完成；完整 LLM 闭环、Agent/UI 和生产集成待办 |
 | LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a core 与 R4b `ureq` HTTP/API Key/timeout/proxy 已完成；完整 Agent/归档接线待后续 |
-| Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | R4 后续待办 |
+| Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | Python 仍是生产实现；R4c Rust Harness 工作区草稿，尚未接 service/store |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
 
 ## 6. 目录约定
@@ -342,7 +356,7 @@ rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
 rust/work-memory-store/           # R2a-R2o：九表读取/migration、隔离事务及归档/纠错/聊天/删除/Bucket/Entry/提取/分类审计/摘要基础写 API
 rust/work-memory-service/         # R3a-R3i：Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取/分类审计保存和聊天持久化编排；Agent/UI 集成待迁移
-rust/work-memory-agent/           # R4a：离线 Structured Outputs adapter core；真实 HTTP 与工具 Harness 待迁移
+rust/work-memory-agent/           # R4a-R4b adapter/HTTP；R4c Agent Harness 工作区草稿，尚未接生产
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
 ```
 

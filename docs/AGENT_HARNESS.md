@@ -1,5 +1,7 @@
 # 单会话 Agent Harness
 
+> 运行状态（2026-08-05）：下文描述的 Python Harness 仍是当前生产实现。Rust `work-memory-agent` 的 R4c Harness 只是未接入 service/store、SQLite、API 或 UI 的工作区草稿，不能视为生产切换。
+
 ## 1. 目标
 
 当前应用不再只把输入分类并归档。`app/services/agent_service.py` 提供一个最小但真实可运行的 Agent Harness，使模型能够：
@@ -53,7 +55,16 @@ Bucket 是对话的默认记忆层。用户提供可长期复用的工作事实�
 
 如果未来增加 Shell、MCP、浏览器或第三方服务，需要单独设计权限、审批、超时、审计和可撤销机制，不能直接把字符串命令交给模型执行。
 
-## 5. UI
+## 5. Rust R4c 草稿边界
+
+Rust 版本已经建立与 Python Harness 对齐的协议边界，但暂不替代下文的生产实现：
+
+- 复用 `async-openai` 的 Responses/Chat Completions wire 类型、`ureq` 的同步 HTTP transport，以及 `work-memory-contracts` 的严格六工具参数校验。
+- 工具循环有固定 allow-list、JSON 参数拒绝、工具错误数据化和最大 tool round；memory context 以低信任 `user` 内容注入。
+- `AgentToolExecutor` 由调用方注入，尚未绑定 `work-memory-service` / `work-memory-store`，也没有完整 turn 原子事务、工具审计或聊天消息持久化接线。
+- 生产前还要处理 redirect 安全、tool call/上下文资源预算、写操作幂等、provider 状态校验、重试分类，以及工具 metadata 与参数合同的单一来源。
+
+## 6. UI
 
 Streamlit 只保留一个统一工作界面：
 
