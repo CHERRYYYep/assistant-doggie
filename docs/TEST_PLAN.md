@@ -326,6 +326,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/classification_write.rs`：强类型独立分类审计保存、输入裁剪与空值、服务端元数据、精确候选合并、三种 action、缺失目标、UUID/default、重复调用、单表影响、插入失败回滚，以及 `tests/fixtures/apply_save_classification_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/bucket_query.rs`：首个 Rust 服务层 Bucket 列表、精确查询和完整详情聚合，以及 `tests/fixtures/export_bucket_query_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/bucket_search.rs`：Rust 服务层关键词搜索验证、候选字段、通配符转义、Unicode casefold 评分、匹配计数、稳定排序和 limit，以及 `tests/fixtures/create_bucket_search_fixture.py`、`export_bucket_search_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
+- `rust/work-memory-service/tests/archive.rs`：Rust `ArchiveService` 的输入裁剪、action/extraction 一致性、确认追加、确认新建、ask_user 仅审计、权威 Bucket 结果投影、缺失目标和无部分写入；`tests/fixtures/apply_archive_service_fixture.py`、`export_archive_service_fixture.py` 驱动 Python/Rust `ArchiveResult` 与最终数据库语义逐字段等价，数据库只位于系统临时目录且不调用真实模型。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

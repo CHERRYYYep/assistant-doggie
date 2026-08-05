@@ -79,6 +79,8 @@ fn append_existing_persists_the_complete_archive_graph() {
     assert_eq!(outcome.status(), ArchiveStatus::Archived);
     assert_eq!(outcome.action(), ClassificationAction::AppendExisting);
     assert_eq!(outcome.bucket_id(), Some(ACTIVE_LATEST_ID));
+    assert_eq!(outcome.bucket_title(), Some("Payment callback incident"));
+    assert_eq!(outcome.bucket_type(), Some(BucketType::Incident));
     assert!(!outcome.created_bucket());
     assert_eq!(outcome.todo_ids().len(), 2);
     assert_eq!(outcome.evidence_ids().len(), 1);
@@ -242,6 +244,8 @@ fn create_new_persists_a_new_bucket_and_merged_audit_candidates() {
     assert!(outcome.created_bucket());
     assert_eq!(outcome.action(), ClassificationAction::CreateNew);
     assert_eq!(outcome.status(), ArchiveStatus::Archived);
+    assert_eq!(outcome.bucket_title(), Some("Rust archive rollout"));
+    assert_eq!(outcome.bucket_type(), Some(BucketType::Task));
     let bucket_id = outcome.bucket_id().unwrap().to_owned();
     let entry_id = outcome.entry_id().unwrap().to_owned();
     assert_uuid_v4(&bucket_id);
@@ -319,6 +323,8 @@ fn ask_user_writes_only_classification_audit_data() {
     assert_eq!(outcome.status(), ArchiveStatus::NeedsConfirmation);
     assert_eq!(outcome.action(), ClassificationAction::AskUser);
     assert_eq!(outcome.bucket_id(), None);
+    assert_eq!(outcome.bucket_title(), None);
+    assert_eq!(outcome.bucket_type(), None);
     assert_eq!(outcome.entry_id(), None);
     assert!(!outcome.created_bucket());
     assert!(outcome.todo_ids().is_empty());

@@ -1,15 +1,19 @@
-//! Business-level read orchestration over the strongly typed SQLite store.
+//! Business-level orchestration over the strongly typed SQLite store.
+
+mod archive;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::path::Path;
 
 use unicode_casefold::UnicodeCaseFold;
-use work_memory_core::{BucketStatus, BucketType};
+use work_memory_core::{BucketStatus, BucketType, CoreError};
 use work_memory_store::{
     SqliteStore, StoreError, StoredBucket, StoredDecision, StoredEntry, StoredEvidence,
     StoredTimelineEvent, StoredTimestamp, StoredTodo,
 };
+
+pub use archive::{ArchiveService, CLASSIFICATION_PROMPT_VERSION};
 
 /// A Bucket and all product-visible child records loaded by the Python detail service.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,15 +43,34 @@ pub struct BucketSearchResult {
 /// Failures at the Rust service orchestration boundary.
 #[derive(Debug)]
 pub enum ServiceError {
+    EmptyArchiveText,
     EmptySearchQuery,
+    MissingExtraction { action: &'static str },
+    UnexpectedExtraction,
+    Core(CoreError),
     Store(StoreError),
 }
 
 impl ServiceError {
     pub const fn store_error(&self) -> Option<&StoreError> {
         match self {
-            Self::EmptySearchQuery => None,
+            Self::EmptyArchiveText
+            | Self::EmptySearchQuery
+            | Self::MissingExtraction { .. }
+            | Self::UnexpectedExtraction
+            | Self::Core(_) => None,
             Self::Store(error) => Some(error),
+        }
+    }
+
+    pub const fn core_error(&self) -> Option<&CoreError> {
+        match self {
+            Self::Core(error) => Some(error),
+            Self::EmptyArchiveText
+            | Self::EmptySearchQuery
+            | Self::MissingExtraction { .. }
+            | Self::UnexpectedExtraction
+            | Self::Store(_) => None,
         }
     }
 }
@@ -55,7 +78,18 @@ impl ServiceError {
 impl Display for ServiceError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EmptyArchiveText => formatter.write_str("text must not be empty"),
             Self::EmptySearchQuery => formatter.write_str("search query must not be empty"),
+            Self::MissingExtraction { action } => {
+                write!(
+                    formatter,
+                    "classification action {action} requires an extraction"
+                )
+            }
+            Self::UnexpectedExtraction => {
+                formatter.write_str("ask_user classification must not include an extraction")
+            }
+            Self::Core(error) => write!(formatter, "domain error: {error}"),
             Self::Store(error) => write!(formatter, "store error: {error}"),
         }
     }
@@ -64,9 +98,19 @@ impl Display for ServiceError {
 impl Error for ServiceError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::EmptySearchQuery => None,
+            Self::Core(error) => Some(error),
             Self::Store(error) => Some(error),
+            Self::EmptyArchiveText
+            | Self::EmptySearchQuery
+            | Self::MissingExtraction { .. }
+            | Self::UnexpectedExtraction => None,
         }
+    }
+}
+
+impl From<CoreError> for ServiceError {
+    fn from(error: CoreError) -> Self {
+        Self::Core(error)
     }
 }
 

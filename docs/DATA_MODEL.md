@@ -362,3 +362,15 @@ R2o 独立分类审计保存写边界：
 - JSON 标签仍以 SQLite 序列化文本参与候选查询；因此 Python 默认 JSON 转义造成的非 ASCII 标签候选限制属于当前兼容语义，不在 R3b 中单方面修正。`tests/fixtures/export_bucket_search_fixture.py` 覆盖字段来源、通配符字面转义、Unicode casefold、稳定并列顺序、匹配计数和逐字段结果等价。
 
 R3a-R3b 只证明隔离只读服务语义等价，尚未迁移归档/纠错服务编排，也未接入 Agent、UI 或生产数据库。
+
+## 17. Rust 归档服务编排边界（R3c）
+
+`work-memory-service::ArchiveService` 是首个 Rust 业务写服务。它持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但不暴露 SQLite 连接、任意 SQL 或事务闭包：
+
+- `archive_classified_input` 接收已验证的核心 `ClassificationResult`、可选 `ExtractionResult` 和 `ClassificationAuditContext`。服务先按 Python `strip()` 语义清理并拒绝空输入；append/create 必须携带提取结果，ask_user 必须不携带提取结果，从服务层阻止不确定内容进入正式记忆。
+- `archive_confirmed_input` 构造 append_existing 分类，按 Python 语义把确认目标同时记录为唯一服务端候选和当前焦点；`archive_confirmed_new_input` 构造 create_new 分类并保持空候选、空焦点。两个入口都使用当前 `classification-v2`，模型名必须由调用方预先解析。
+- Store 继续拥有单一 SQLite 事务：ask_user 只写 `classification_records`；append/create 原子写 Bucket/Entry、四类结构化记录、标签、滚动摘要、活跃时间和审计链接。缺失确认目标或晚期 SQLite 失败不会留下部分业务状态。
+- `ArchiveWriteOutcome` 现在同时返回事务内权威 Bucket 标题和类型；服务据此投影核心 `ArchiveResult`。ask_user 的建议标题、类型、问题和模型候选来自已验证分类结果，已归档结果与 Python 一样不回显候选列表。
+- `tests/fixtures/apply_archive_service_fixture.py` 和 `export_archive_service_fixture.py` 驱动确认追加、确认新建、ask_user 的 Python/Rust 返回值及最终数据库语义等价；所有数据库均在系统临时目录创建。
+
+R3c 不实现或伪装完整的模型调用闭环。分类与提取结果仍由调用方提供；Rust LLM adapter、候选加载、风险门控接线和生产 `archive_user_input` 替换留到 R4/后续集成。Python 仍是唯一生产数据库写入者，也不得与 Rust 并发写同一生产数据库。

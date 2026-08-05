@@ -130,6 +130,8 @@ pub struct ArchiveWriteOutcome {
     action: ClassificationAction,
     classification_record_id: String,
     bucket_id: Option<String>,
+    bucket_title: Option<String>,
+    bucket_type: Option<BucketType>,
     entry_id: Option<String>,
     created_bucket: bool,
     todo_ids: Vec<String>,
@@ -153,6 +155,14 @@ impl ArchiveWriteOutcome {
 
     pub fn bucket_id(&self) -> Option<&str> {
         self.bucket_id.as_deref()
+    }
+
+    pub fn bucket_title(&self) -> Option<&str> {
+        self.bucket_title.as_deref()
+    }
+
+    pub const fn bucket_type(&self) -> Option<BucketType> {
+        self.bucket_type
     }
 
     pub fn entry_id(&self) -> Option<&str> {
@@ -225,6 +235,8 @@ fn persist_archive_attempt(
             action,
             classification_record_id,
             bucket_id: None,
+            bucket_title: None,
+            bucket_type: None,
             entry_id: None,
             created_bucket: false,
             todo_ids: Vec::new(),
@@ -294,6 +306,8 @@ fn persist_archive_attempt(
         action,
         classification_record_id,
         bucket_id: Some(bucket.id),
+        bucket_title: Some(bucket.title),
+        bucket_type: Some(bucket.bucket_type),
         entry_id: Some(entry_id),
         created_bucket,
         todo_ids: children.todo_ids,
