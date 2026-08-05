@@ -6,6 +6,8 @@ rust-version = "1.85"
 description = "Business orchestration services for Personal Work Memory Agent"
 
 [dependencies]
+unicode-casefold = "0.2"
+work-memory-core = { path = "../work-memory-core" }
 work-memory-store = { path = "../work-memory-store" }
 
 [dev-dependencies]

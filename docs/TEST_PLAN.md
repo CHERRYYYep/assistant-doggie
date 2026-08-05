@@ -57,6 +57,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust `save_extraction` 在临时 Python Schema 上覆盖 Bucket/Entry 归属校验顺序、事务前既有记录去重、批内规范化重复保留、四类结构化默认值与 UUID、Entry summary、Bucket 标签/滚动摘要、`last_active_at` 与审计隔离、重复调用和晚期失败全事务 rollback；固定 helper 调用 Python `save_extraction` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 - Rust `save_classification_record` 在临时 Python Schema 上覆盖原始输入裁剪与空值保留、服务端元数据精确保留、服务端/模型候选精确保序去重、三种 action、缺失审计目标、UUID 与默认字段、重复审计、单表影响和插入失败全事务 rollback；固定 helper 调用 Python `save_classification_record` 并比较忽略随机 ID/运行时时间后的服务级最终语义。当前写测试不代表业务写路径已切换。
 - Rust `BucketQueryService` 在 Python 创建的临时九表数据库上覆盖 active 列表排序与 limit、精确/缺失 Bucket 查询、Entry/Todo/Evidence/TimelineEvent/Decision 完整详情和关系顺序；固定 helper 调用 Python `list_active_buckets`、`get_bucket`、`get_bucket_detail` 并逐字段比较完整 JSON。当前只读服务测试不代表 Agent、UI 或生产查询路径已切换。
+- Rust `search_buckets` 在 Python 创建的临时九表数据库上覆盖查询 trim/空值、正数 limit、标题/摘要/JSON 标签/Entry 候选、LIKE `%`/`_`/`/` 字面转义、Unicode casefold 精确与包含评分、匹配 Entry 计数、稳定 score/活跃时间排序和最终截断；固定 helper 调用 Python `search_buckets` 并逐字段比较完整结果。当前只读搜索测试不代表 Agent、UI 或生产查询路径已切换。
 
 ### 2.3 手动测试
 
@@ -324,6 +325,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-store/tests/extraction_write.rs`：强类型独立提取结果保存、精确 Bucket/Entry ID、验证顺序与归属、既有记录去重、批内规范化重复保留、四类结构化默认值、Entry/Bucket 缓存更新、重复调用、审计隔离、晚期失败回滚，以及 `tests/fixtures/apply_save_extraction_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-store/tests/classification_write.rs`：强类型独立分类审计保存、输入裁剪与空值、服务端元数据、精确候选合并、三种 action、缺失目标、UUID/default、重复调用、单表影响、插入失败回滚，以及 `tests/fixtures/apply_save_classification_fixture.py` 驱动的 Python/Rust 服务级最终语义等价；数据库只位于系统临时目录。
 - `rust/work-memory-service/tests/bucket_query.rs`：首个 Rust 服务层 Bucket 列表、精确查询和完整详情聚合，以及 `tests/fixtures/export_bucket_query_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
+- `rust/work-memory-service/tests/bucket_search.rs`：Rust 服务层关键词搜索验证、候选字段、通配符转义、Unicode casefold 评分、匹配计数、稳定排序和 limit，以及 `tests/fixtures/create_bucket_search_fixture.py`、`export_bucket_search_fixture.py` 驱动的 Python/Rust 逐字段 JSON 等价；数据库只位于系统临时目录。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 

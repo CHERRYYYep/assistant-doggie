@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::{Connection, DatabaseName, OpenFlags, Row, Rows};
+use rusqlite::{Connection, DatabaseName, OpenFlags, Row, Rows, params};
 
 use crate::records::{
     decode_bucket, decode_chat_message, decode_classification_record, decode_correction,
@@ -55,6 +55,35 @@ impl SqliteStore {
              LIMIT ?1",
         )?;
         let mut rows = statement.query([sql_limit])?;
+        collect_rows(&mut rows, decode_bucket)
+    }
+
+    /// Return the bounded Bucket candidate set used by Python keyword search.
+    ///
+    /// The caller owns query trimming and final relevance ranking. This method
+    /// preserves SQLAlchemy's literal `contains(..., autoescape=True)` behavior
+    /// across Bucket title, summary, serialized JSON tags, and Entry raw text.
+    pub fn search_bucket_candidates(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<StoredBucket>, StoreError> {
+        let sql_limit = checked_limit(limit)?;
+        let escaped_query = escape_like_contains(query);
+        let mut statement = self.connection.prepare(
+            "SELECT DISTINCT
+                    buckets.id, buckets.title, buckets.type, buckets.status,
+                    buckets.summary, buckets.tags, buckets.created_at,
+                    buckets.updated_at, buckets.last_active_at
+             FROM buckets
+             LEFT OUTER JOIN entries ON entries.bucket_id = buckets.id
+             WHERE buckets.title LIKE '%' || ?1 || '%' ESCAPE '/'
+                OR buckets.summary LIKE '%' || ?1 || '%' ESCAPE '/'
+                OR CAST(buckets.tags AS TEXT) LIKE '%' || ?1 || '%' ESCAPE '/'
+                OR entries.raw_text LIKE '%' || ?1 || '%' ESCAPE '/'
+             LIMIT ?2 OFFSET 0",
+        )?;
+        let mut rows = statement.query(params![escaped_query, sql_limit])?;
         collect_rows(&mut rows, decode_bucket)
     }
 
@@ -285,6 +314,17 @@ impl SqliteStore {
         let mut rows = statement.query([sql_limit])?;
         collect_rows(&mut rows, decode_chat_message)
     }
+}
+
+fn escape_like_contains(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for character in value.chars() {
+        if matches!(character, '/' | '%' | '_') {
+            escaped.push('/');
+        }
+        escaped.push(character);
+    }
+    escaped
 }
 
 fn checked_limit(limit: usize) -> Result<i64, StoreError> {

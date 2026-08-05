@@ -248,6 +248,8 @@ name = "work-memory-service"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "unicode-casefold",
+ "work-memory-core",
  "work-memory-store",
 ]
 

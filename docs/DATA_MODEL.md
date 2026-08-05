@@ -349,7 +349,7 @@ R2o 独立分类审计保存写边界：
 
 完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成生产写路径切换。
 
-## 16. Rust Bucket 查询服务边界（R3a）
+## 16. Rust Bucket 查询与搜索服务边界（R3a-R3b）
 
 `work-memory-service::BucketQueryService` 是首个 Rust 业务编排层，当前只持有经完整 Schema 校验、migration 历史校验和 `query_only` 保护的 `SqliteStore`：
 
@@ -357,5 +357,8 @@ R2o 独立分类审计保存写边界：
 - `get_bucket` 使用调用方提供的精确主键，不裁剪、不创建兜底记录；缺失时返回 `None`。
 - `get_bucket_detail` 仅在 Bucket 存在时组合 Bucket、Entry、Todo、Evidence、TimelineEvent 和 Decision，并保持各关系按 `created_at ASC` 的 Python 顺序；分类、纠错和聊天审计不属于当前产品详情视图。
 - `tests/fixtures/export_bucket_query_fixture.py` 在同一 Python 创建的临时数据库上调用权威 Python 服务并导出完整 JSON；Rust 集成测试逐字段比较活跃列表、单 Bucket、缺失结果和详情聚合。
+- `search_buckets` 对查询执行 Unicode trim 并拒绝空值，limit 必须为正数；SQLite 候选查询保持标题、摘要、`CAST(tags AS TEXT)` 和 Entry 原文四个 `contains(..., autoescape=True)` 条件，以及 `max(limit * 5, 50)` 候选窗口。
+- 最终评分保持 Python 规则：标题 casefold 精确/包含分别加 100/50，任一标签包含加 30，摘要包含加 20，每条匹配 Entry 加 5 且最多计十条；结果按 score、`last_active_at` 降序稳定排序后截断。
+- JSON 标签仍以 SQLite 序列化文本参与候选查询；因此 Python 默认 JSON 转义造成的非 ASCII 标签候选限制属于当前兼容语义，不在 R3b 中单方面修正。`tests/fixtures/export_bucket_search_fixture.py` 覆盖字段来源、通配符字面转义、Unicode casefold、稳定并列顺序、匹配计数和逐字段结果等价。
 
-R3a 只证明隔离只读服务语义等价，尚未迁移关键词搜索、归档/纠错服务编排，也未接入 Agent、UI 或生产数据库。
+R3a-R3b 只证明隔离只读服务语义等价，尚未迁移归档/纠错服务编排，也未接入 Agent、UI 或生产数据库。
