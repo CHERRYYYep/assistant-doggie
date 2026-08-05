@@ -423,3 +423,15 @@ R3f 只接通独立摘要缓存维护，不替代 R3c 归档或 R3d 纠错事务
 - `tests/fixtures/apply_extraction_persistence_service_fixture.py`、`export_extraction_persistence_service_fixture.py` 与 `rust/work-memory-service/tests/extraction.rs` 比较首次、重复、最小和无效目标场景的 Python/Rust 结果及九表最终语义；随机子记录 ID 和运行时 `updated_at` 被规范化，数据库只位于系统临时目录且不调用真实模型。
 
 R3g 只接通已验证提取结果的独立持久化，不替代 R3c 归档事务内部的提取保存，也不提供模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
+
+## 22. Rust 独立分类审计保存服务边界（R3h）
+
+`work-memory-service::ClassificationAuditService` 把 R2o 已验证的独立分类审计事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交原始输入、已验证 `ClassificationResult` 和服务端拥有的审计元数据：
+
+- `save_classification_record` 在服务内部构造 `SaveClassificationRecordRequest`，不暴露 Store request/outcome、连接、SQL 或事务闭包。分类、候选加载、风险门控、Prompt 选择和模型名解析仍由服务外的未来 adapter 负责。
+- Store 保持 Python 的字段边界：只 trim 原始输入且允许空审计文本；服务端候选、焦点、Prompt 版本和模型名精确保留；候选列表按服务端在前、分类结果在后做大小写敏感的精确保序去重。
+- append_existing、create_new 和 ask_user 均写入分类结果中的 action、可选 Bucket ID、置信度和原因；`entry_id` 固定为 NULL、`corrected=false`。审计 Bucket ID 不做外键存在性校验，重复调用每次新增一条记录。
+- 稳定结果投影 `ClassificationAuditSaveResult` 返回事务生成的 ClassificationRecord UUID。事务只修改 `classification_records`，插入失败不会修改其他八张业务表或留下部分状态。
+- `tests/fixtures/apply_classification_audit_service_fixture.py`、`export_classification_audit_service_fixture.py` 与 `rust/work-memory-service/tests/classification.rs` 比较重复 append、空文本 create_new、带建议目标的 ask_user 和插入失败场景的 Python/Rust 结果及九表最终语义；随机审计 ID/时间被规范化，数据库只位于系统临时目录且不调用真实模型。
+
+R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归档事务内部的分类审计，也不提供分类模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。

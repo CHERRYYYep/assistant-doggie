@@ -1,6 +1,7 @@
 //! Business-level orchestration over the strongly typed SQLite store.
 
 mod archive;
+mod classification;
 mod correction;
 mod extraction;
 mod mutation;
@@ -18,6 +19,7 @@ use work_memory_store::{
 };
 
 pub use archive::{ArchiveService, CLASSIFICATION_PROMPT_VERSION};
+pub use classification::{ClassificationAuditSaveResult, ClassificationAuditService};
 pub use correction::{CorrectionResult, CorrectionService, ENTRY_TARGET_TYPE, MOVE_ENTRY_ACTION};
 pub use extraction::{ExtractionPersistenceService, ExtractionSaveResult};
 pub use mutation::MemoryMutationService;

@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更、摘要缓存和独立提取保存编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界；R3g `ExtractionPersistenceService` 已把已验证提取结果的独立原子保存提升为稳定服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更、摘要缓存、独立提取保存和分类审计保存编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界；R3g `ExtractionPersistenceService` 已把已验证提取结果的独立原子保存提升为稳定服务边界；R3h `ClassificationAuditService` 已把已验证分类结果和服务端元数据的独立审计保存提升为稳定服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -68,7 +68,7 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 ### `classify_service`
 
-构造有限候选，输出 `append_existing`、`create_new` 或 `ask_user`，校验模型返回的引用并执行风险门控。每次结果写入 `classification_records`，用于校准和纠错分析。
+构造有限候选，输出 `append_existing`、`create_new` 或 `ask_user`，校验模型返回的引用并执行风险门控。每次结果写入 `classification_records`，用于校准和纠错分析。Rust R3h `ClassificationAuditService` 接收已验证 `ClassificationResult`、服务端候选、焦点、Prompt 版本和已解析模型名，在服务内部构造强类型 Store request，并只返回提交后的 `ClassificationAuditSaveResult`；分类、风险门控和模型配置仍留在服务外。
 
 ### `extract_service`
 
@@ -131,6 +131,7 @@ confidence < 0.55               → 用户确认
 - Rust R3e `MemoryMutationService` 把 R2h-R2k 的独立 Bucket/Entry 基础写能力组合为稳定服务边界；服务直接接收产品参数并在内部构造强类型 Store request，返回权威 `StoredBucket`、`StoredEntry` 或删除影响 ID，不暴露 `WritableSqliteStore`、SQL 或事务闭包。创建/追加保持 Python 文本、标签、可选字段和置信度语义，删除保持外键级联/SET NULL 与 Todo 时间更新语义；缺失或非法请求不留下部分修改，目前仍未接入 Agent/UI。
 - Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改，目前仍未接入 Agent/UI。
 - Rust R3g `ExtractionPersistenceService` 把 R2n 的独立提取保存提升为稳定服务边界；服务接收精确 Bucket/Entry ID 和已验证 `ExtractionResult`，不暴露 Store request、连接或事务闭包，并返回包含四类新建记录 ID 的 `ExtractionSaveResult`。目标验证、子记录去重、Entry/Bucket 缓存更新和失败回滚继续由单一 Store 事务负责，目前仍未接入提取模型、Agent/UI 或生产数据库。
+- Rust R3h `ClassificationAuditService` 把 R2o 的独立分类审计保存提升为稳定服务边界；服务接收已验证 `ClassificationResult` 及服务端候选、焦点、Prompt 和模型元数据，不暴露 Store request/outcome、连接或事务闭包，并返回新审计 UUID 的 `ClassificationAuditSaveResult`。原始输入 trim、空审计文本、精确元数据、候选合并、三类 action 和失败回滚继续由 Store 保持 Python 语义；分类与风险门控、Prompt 选择和模型名解析仍在服务外，目前未接入 Agent/UI 或生产数据库。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 
