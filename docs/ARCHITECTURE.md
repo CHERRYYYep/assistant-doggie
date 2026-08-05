@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错和基础变更编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务及归档/纠错/聊天/删除/Bucket/Entry/摘要/提取/分类审计 API，并已在 `work-memory-service` 创建 Bucket 查询、关键词搜索、归档、纠错、基础变更和摘要缓存编排。R3c `ArchiveService` 只接收已验证分类/提取结果；R3d `CorrectionService` 已复现指定或最近 Entry 移动以及显式/命令文本目标选择；R3e `MemoryMutationService` 已把独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除提升为不暴露 Store 的服务边界；R3f `BucketSummaryService` 已把独立滚动摘要更新和基于 Entry 的摘要重建提升为同类服务边界。Rust LLM adapter、Agent、UI 和生产数据库仍未接入，生产运行时继续由 Python 独占写入。渐进切换边界和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -76,7 +76,7 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 ### `bucket_service`
 
-负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。Rust R3a-R3b `BucketQueryService` 已在只读临时数据库复现活跃 Bucket 列表、精确 Bucket 查询、完整详情聚合和关键词搜索；R3e `MemoryMutationService` 在隔离可写数据库接入独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除，并继续由 Store 保持单事务与 Python 兼容规范化。生产 Agent 与 UI 仍调用 Python。
+负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。Rust R3a-R3b `BucketQueryService` 已在只读临时数据库复现活跃 Bucket 列表、精确 Bucket 查询、完整详情聚合和关键词搜索；R3e `MemoryMutationService` 在隔离可写数据库接入独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除；R3f `BucketSummaryService` 接入独立滚动摘要更新与基于 Entry 的摘要重建，并继续由 Store 保持单事务与 Python 兼容规范化。生产 Agent 与 UI 仍调用 Python。
 
 ### `archive_service`
 
@@ -129,6 +129,7 @@ confidence < 0.55               → 用户确认
 - Rust R3c `ArchiveService` 持有经验证的 `WritableSqliteStore`，不暴露可写连接或任意事务闭包；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、`classification-v2` 和结果字段语义。ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。R4 完成前，分类/提取调用仍不属于该服务，生产路径也未切换。
 - Rust R3d `CorrectionService` 同样不暴露可写连接；显式 Entry 移动和“移动最近 Entry”都投影为稳定的 `CorrectionResult`。最近 Entry 选择、可选标题解析、聚合移动、摘要重建、审计修正和 Correction 快照写入在同一 Store 事务内完成，避免“最近一条”在读写间发生漂移；目前仍未接入 Agent/UI。
 - Rust R3e `MemoryMutationService` 把 R2h-R2k 的独立 Bucket/Entry 基础写能力组合为稳定服务边界；服务直接接收产品参数并在内部构造强类型 Store request，返回权威 `StoredBucket`、`StoredEntry` 或删除影响 ID，不暴露 `WritableSqliteStore`、SQL 或事务闭包。创建/追加保持 Python 文本、标签、可选字段和置信度语义，删除保持外键级联/SET NULL 与 Todo 时间更新语义；缺失或非法请求不留下部分修改，目前仍未接入 Agent/UI。
+- Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改，目前仍未接入 Agent/UI。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

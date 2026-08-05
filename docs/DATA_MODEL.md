@@ -361,7 +361,7 @@ R2o 独立分类审计保存写边界：
 - 最终评分保持 Python 规则：标题 casefold 精确/包含分别加 100/50，任一标签包含加 30，摘要包含加 20，每条匹配 Entry 加 5 且最多计十条；结果按 score、`last_active_at` 降序稳定排序后截断。
 - JSON 标签仍以 SQLite 序列化文本参与候选查询；因此 Python 默认 JSON 转义造成的非 ASCII 标签候选限制属于当前兼容语义，不在 R3b 中单方面修正。`tests/fixtures/export_bucket_search_fixture.py` 覆盖字段来源、通配符字面转义、Unicode casefold、稳定并列顺序、匹配计数和逐字段结果等价。
 
-R3a-R3b 只证明隔离只读服务语义等价；归档、纠错和基础变更写服务边界分别见 R3c、R3d、R3e。上述服务均尚未接入 Agent、UI 或生产数据库。
+R3a-R3b 只证明隔离只读服务语义等价；归档、纠错、基础变更和摘要缓存写服务边界分别见 R3c、R3d、R3e、R3f。上述服务均尚未接入 Agent、UI 或生产数据库。
 
 ## 17. Rust 归档服务编排边界（R3c）
 
@@ -399,3 +399,15 @@ R3d 仍只在系统临时目录中的隔离数据库运行。Streamlit 的“移
 - `tests/fixtures/apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 与 `rust/work-memory-service/tests/mutation.rs` 分别比较四个操作的 Python/Rust 结果投影和忽略随机 UUID/运行时时间后的最终数据库语义；测试数据库均位于系统临时目录。
 
 R3e 只接通独立基础变更服务，不把创建、追加或删除切到生产调用链，也不改变 R3c 归档和 R3d 纠错各自的聚合事务边界。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
+
+## 20. Rust Bucket 摘要缓存服务边界（R3f）
+
+`work-memory-service::BucketSummaryService` 把 R2l-R2m 已验证的两类摘要写事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交 Bucket ID、摘要片段和可选限制：
+
+- `update_bucket_summary` 使用 Python 默认的 1200 字符上限；`update_bucket_summary_with_max_chars` 接受至少 100 字符的显式上限。两者都在服务内部构造 `UpdateBucketSummaryRequest`，保持片段 trim/空值拒绝、Unicode casefold 加空白折叠去重、首段保留和中间旧事实淘汰规则。
+- `rebuild_bucket_summary` 使用 Python 默认的最新八条非 NULL Entry summary 窗口和 1200 字符上限；`rebuild_bucket_summary_with_limits` 接受显式 Entry/字符限制。两者都在服务内部构造 `RebuildBucketSummaryRequest`，保持先限制最新窗口、再过滤空白、恢复时间正序和按清理后文本精确去重的语义。
+- 四个入口都返回 Store 事务提交后的权威摘要字符串，不暴露 request、连接、SQL 或事务闭包。更新与重建只修改目标 Bucket 的 `summary` 和 `updated_at`，`last_active_at`、其他 Bucket 字段、Entry 与其余八张业务表保持不变。
+- 空更新片段、过小更新字符上限、非正重建 Entry 上限和缺失 Bucket 通过 `ServiceError::Store` 返回；请求校验或 Store 事务失败不会留下部分修改。
+- `tests/fixtures/apply_bucket_summary_service_fixture.py` 为 Python 权威路径提供更新、重建和仅准备 Entry 的固定场景；`export_bucket_summary_service_fixture.py` 排除运行时 `updated_at` 并规范化 JSON 字段，`rust/work-memory-service/tests/bucket_summary.rs` 比较返回摘要、九表最终语义、默认值接线、非法/缺失请求和无部分修改。数据库均位于系统临时目录。
+
+R3f 只接通独立摘要缓存维护，不替代 R3c 归档或 R3d 纠错事务内部的摘要更新，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
