@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-05
-> 当前阶段：R2/R3/R4 渐进推进（R2a-R2o、R3a-R3i、R4a 已完成）——Rust 已具备九表强类型读写基础、R3 产品服务编排，以及 transport-independent Responses/兼容 Chat Completions Structured Outputs adapter core；真实 HTTP/API Key/timeout/proxy、完整 LLM 归档闭环、Agent/UI 集成和生产路径仍未迁移，生产运行路径仍是 Python。
+> 当前阶段：R2/R3/R4 渐进推进（R2a-R2o、R3a-R3i、R4a-R4b 已完成）——Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter core 和基于社区 `ureq` 的真实 HTTP transport；完整 LLM 归档闭环、Agent/UI 集成和生产路径仍未迁移，生产运行路径仍是 Python。
 
 ## 1. 目标
 
@@ -279,20 +279,30 @@ R3 尚未完成的范围：
 
 R4a transport-independent Structured Outputs adapter core 已完成：
 
-- 创建 `rust/work-memory-agent/` 并加入 Cargo workspace；本阶段不依赖 HTTP client，不读取环境变量或 API Key。
+- 创建 `rust/work-memory-agent/` 并加入 Cargo workspace；R4a 不依赖 HTTP client，不读取环境变量或 API Key。
 - `LlmEndpointConfig` 解析 official/custom site、规范化 Base URL，并支持 `responses`/`response` 与 `chat`/`chat_completions`/`chat-completions` aliases；官方站点固定使用 `https://api.openai.com/v1`，远程 custom URL 必须使用 HTTPS，本机 loopback 可使用 HTTP。
 - `StructuredOutputContract` 为 `ClassificationContract`、`ExtractionContract` 和 `BucketSummaryContract` 暴露 schema name、strict JSON Schema 与现有 contract 反序列化入口；fixture 使用当前 Python OpenAI SDK 的 `to_strict_json_schema` 逐值比较三份 Schema。
 - `StructuredOutputAdapter` 构造 Responses `text.format` 或 Chat Completions `response_format.json_schema` 请求，归一化 output text、refusal、incomplete/content filter、非法 JSON 和 contract error。
 - 注入式 `StructuredOutputTransport` 让普通测试只使用 fake transport。网络错误、408/409/429、5xx 以及可恢复的输出错误执行有限重试；其他 4xx、refusal 和 content filter 不重试。
 
+R4b 基于社区 crate 的真实 HTTP transport 已完成：
+
+- `UreqStructuredOutputTransport` 复用 `ureq` `3.3.0` 的 `Agent`、rustls、JSON body、timeout 和 proxy 实现，不自写 HTTP/TLS/连接池/proxy 协议；crate MSRV 为 Rust 1.85，与本 workspace 保持一致，选型取舍和来源见 [`DECISIONS.md`](./DECISIONS.md) 的 ADR-007。
+- `LlmHttpTransportConfig` 只承载 timeout/proxy mode 等非密钥配置，默认 timeout 为 30 秒；可显式关闭环境 proxy 以保证 loopback 测试确定性。`from_env` 只读取 `OPENAI_API_KEY`，不隐式读取 `.env`。
+- 默认 `ureq` 配置读取 `ALL_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY` 及小写 aliases，并遵守 `NO_PROXY`；启用 `socks-proxy` 后，Python 当前的 `socks://` 语义由 crate 解析为 SOCKS5，不修改进程环境。
+- 每次请求发送 JSON POST 和 `Authorization: Bearer <API_KEY>`，HTTP 4xx/5xx 映射为现有 `LlmTransportError::HttpStatus`；响应 body 由 crate JSON reader 解码，网络/timeout/非法 JSON 使用不包含 URL、body 或 key 的固定 transport error。
+- API Key 存在 transport 私有字段，`Debug` 显式脱敏；R4b 仍不接入 Agent、UI、生产数据库或完整 `archive_user_input`，Python 继续是生产写入唯一者。
+
+R4 验收：
+
+- `rust/work-memory-agent/tests/structured_output.rs` 继续验证 request/schema/retry mock 回归；`tests/http_transport.rs` 使用 loopback mock server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout。
+- 普通测试不调用真实模型、不读取真实 API Key；真实模型验证仍保持独立命令，完整报告必须保留站点、模型、Prompt 版本和结构化结果，且密钥不能进入日志或 Git。
+
 R4 后续范围：
 
-- R4b 实现真实 HTTP transport、Authorization/API Key、timeout 和 proxy 边界，并保持密钥不进入日志或 Git。
 - 把分类/提取 Prompt、候选加载、风险门控和 R3c 写服务接成完整归档闭环。
 - 迁移受控工具注册、调用审计、最近消息窗口和 Bucket 上下文注入。
 - 复用分类与提取离线评估集，真实模型验证保持独立命令。
-
-R4a 验收：request/schema/retry mock 回归完全通过且不调用真实模型。完整 R4 验收仍要求真实模型报告保留站点、模型、Prompt 版本和完整结构化结果，且密钥不会进入日志或 Git。
 
 ### R5：Rust API 与 UI 切换
 
@@ -320,7 +330,7 @@ R4a 验收：request/schema/retry mock 回归完全通过且不调用真实模�
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 JSON 解析；R4a 增加与当前 Python OpenAI SDK 等价的三份 strict JSON Schema |
 | SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API、R2k 独立 Entry 追加 API、R2l 独立 Bucket 滚动摘要更新 API、R2m 独立 Bucket 摘要重建 API、R2n 独立提取结果保存 API、R2o 独立分类审计保存 API 已完成；其余写语义与集成待办 |
 | Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` | R3a-R3i Bucket 列表/单项/详情/关键词搜索、已验证分类/提取的归档写编排、指定/最近 Entry 纠错、独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除、滚动摘要更新/重建、独立提取结果保存、分类审计保存和单条 ChatMessage 持久化编排已完成；完整 LLM 闭环、Agent/UI 和生产集成待办 |
-| LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a 已完成 endpoint/request/response/retry core；真实 HTTP/API Key/timeout/proxy 待 R4b |
+| LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a core 与 R4b `ureq` HTTP/API Key/timeout/proxy 已完成；完整 Agent/归档接线待后续 |
 | Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | R4 后续待办 |
 | Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
 

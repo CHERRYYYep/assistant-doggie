@@ -96,3 +96,33 @@
 - 一段时间内仓库会同时包含 Python 和 Rust。
 - 必须维护跨实现一致性测试，并明确每项能力的当前所有者。
 - 迁移计划、阶段状态和最终删除条件记录在 `RUST_MIGRATION.md`。
+
+## ADR-007：R4b HTTP transport 复用 `ureq`
+
+状态：接受（2026-08-05）
+
+决定：
+
+- R4b 使用社区 crate `ureq` `3.3.0`，不自写 HTTP、TLS、连接池或代理协议实现。
+- `work-memory-agent` 继续保持同步 `StructuredOutputTransport` trait，因此使用 `ureq::Agent`，不为一个同步边界引入 Tokio 或异步 runtime。
+- 启用 `json` 与 `socks-proxy` feature；默认使用 `ureq` 的 rustls TLS 和 gzip 能力。
+- `Agent::config_builder()` 继承 `Config::default()` 的代理环境解析：按 `ALL_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY` 及小写 alias 查找，并由 `NO_PROXY` 决定 loopback/主机绕过；`socks://` 由 crate 作为 SOCKS5 处理，不在进程环境中改写字符串。
+- API Key 只存在于 transport 私有字段；`Debug` 主动脱敏，HTTP 错误映射为固定消息，不把请求 URL、响应 body 或 Authorization 值写进错误。
+- 真实 HTTP transport 仍是独立边界，不读取生产数据库、不接入 Agent/UI，也不让 Python/Rust 并发写生产 SQLite。
+
+候选比较：
+
+- `reqwest` 的 blocking API 同样成熟，但会额外引入 blocking runtime 相关的配置和依赖；当前 trait 已经是同步调用，`ureq` 的 `Agent`/`ConfigBuilder`/proxy/timeout API 更贴合最小迁移边界。
+- 自写 `TcpStream`、TLS、HTTP 状态/重定向和 proxy 逻辑被明确排除，因为这些能力已有成熟社区实现且安全风险高。
+
+验收：
+
+- 本地 mock HTTP server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout。
+- 单元测试验证 Python 既有 `socks://` 规范化语义对应 `ureq::ProxyProtocol::Socks5`。
+- 普通测试只使用 loopback mock server 或 fake transport；不读取真实 API Key，不调用真实模型。
+
+选型来源：
+
+- [`ureq 3.3.0 API documentation`](https://docs.rs/ureq/3.3.0/ureq/)
+- [`ureq 3.3.0 source and feature list`](https://github.com/algesten/ureq/tree/3.3.0)
+- [`reqwest blocking client documentation`](https://docs.rs/reqwest/latest/reqwest/blocking/)
