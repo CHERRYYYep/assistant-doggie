@@ -445,22 +445,31 @@ fn validate_index(
     table: &'static str,
     index: &IndexSpec,
 ) -> Result<(), StoreError> {
+    validate_index_columns(connection, table, index.name, index.columns)
+}
+
+pub(crate) fn validate_index_columns(
+    connection: &Connection,
+    table: &'static str,
+    index_name: &'static str,
+    expected: &'static [&'static str],
+) -> Result<(), StoreError> {
     let exists = connection.query_row(
         "SELECT EXISTS(
             SELECT 1 FROM sqlite_schema
             WHERE type = 'index' AND tbl_name = ?1 AND name = ?2
          )",
-        [table, index.name],
+        [table, index_name],
         |row| row.get::<_, bool>(0),
     )?;
     if !exists {
         return Err(StoreError::MissingIndex {
             table,
-            index: index.name,
+            index: index_name,
         });
     }
 
-    let pragma = format!("PRAGMA index_info({})", index.name);
+    let pragma = format!("PRAGMA index_info({index_name})");
     let mut statement = connection.prepare(&pragma)?;
     let mut columns = statement
         .query_map([], |row| {
@@ -472,14 +481,14 @@ fn validate_index(
     if found
         .iter()
         .map(String::as_str)
-        .eq(index.columns.iter().copied())
+        .eq(expected.iter().copied())
     {
         Ok(())
     } else {
         Err(StoreError::InvalidIndexColumns {
             table,
-            index: index.name,
-            expected: index.columns,
+            index: index_name,
+            expected,
             found,
         })
     }
@@ -489,6 +498,24 @@ fn validate_foreign_key(
     connection: &Connection,
     table: &'static str,
     expected: &ForeignKeySpec,
+) -> Result<(), StoreError> {
+    validate_foreign_key_reference(
+        connection,
+        table,
+        expected.column,
+        expected.referenced_table,
+        expected.referenced_column,
+        expected.on_delete,
+    )
+}
+
+pub(crate) fn validate_foreign_key_reference(
+    connection: &Connection,
+    table: &'static str,
+    column: &'static str,
+    referenced_table: &'static str,
+    referenced_column: &'static str,
+    on_delete: &'static str,
 ) -> Result<(), StoreError> {
     let pragma = format!("PRAGMA foreign_key_list({table})");
     let mut statement = connection.prepare(&pragma)?;
@@ -502,11 +529,11 @@ fn validate_foreign_key(
     })?;
 
     for row in rows {
-        let (referenced_table, column, referenced_column, on_delete) = row?;
-        if column == expected.column
-            && referenced_table == expected.referenced_table
-            && referenced_column == expected.referenced_column
-            && on_delete == expected.on_delete
+        let (found_table, found_column, found_referenced_column, found_on_delete) = row?;
+        if found_column == column
+            && found_table == referenced_table
+            && found_referenced_column == referenced_column
+            && found_on_delete == on_delete
         {
             return Ok(());
         }
@@ -514,9 +541,9 @@ fn validate_foreign_key(
 
     Err(StoreError::MissingForeignKey {
         table,
-        column: expected.column,
-        referenced_table: expected.referenced_table,
-        referenced_column: expected.referenced_column,
-        on_delete: expected.on_delete,
+        column,
+        referenced_table,
+        referenced_column,
+        on_delete,
     })
 }

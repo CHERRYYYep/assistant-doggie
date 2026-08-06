@@ -10,7 +10,7 @@
 - 普通问题直接分析和回答；每轮默认加载活跃 Bucket 概览，并主动保存值得长期跟踪的工作事实。
 - Bucket 表示持续存在的事务上下文，不是无限增长的聊天记录。
 - 仅高置信度且候选唯一时自动归档；空工作区中有效的新建判断可直接创建首个 Bucket。
-- 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline 和 Decision。
+- 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline、Decision、Hypothesis、Entity 和 Tag；旧 Python 数据库导入时只能恢复其中已经落盘的四类 legacy 结构化表。
 - 所有派生信息可追溯到原文，误归档可移动并保留纠错记录。
 - `confidence` 是待校准的风险信号，不等于真实正确概率。
 
@@ -29,8 +29,8 @@ Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs
 
 ## 技术栈与目录
 
-- 当前生产运行时：Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- 渐进重构目标：Rust；领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`，SQLite 九表强类型只读仓储、离线 migration 安全层和隔离写 API 位于 `rust/work-memory-store/`，Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存和聊天消息持久化编排位于 `rust/work-memory-service/`。R3c-R3i 已建立归档、纠错、基础变更、摘要、提取、分类审计和单条聊天消息的稳定服务边界。已提交 Rust 成果推进到 R4b；当前工作区有 R4c `work-memory-agent` Harness 草稿，复用 `async-openai` wire 类型、`ureq` HTTP transport 和严格工具契约，但尚未接入 service/store、UI 或生产数据库，生产写入继续由 Python 独占。
+- 当前检出的应用运行时仍是 Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest；在正式切换前，Python 继续独占旧数据库的生产写入。
+- Rust 目标运行时的领域核心位于 `rust/work-memory-core/`，严格 JSON 适配层位于 `rust/work-memory-contracts/`。`rust/work-memory-store/` 同时包含旧 Python 九表的只读/兼容管理边界，以及新的 Rust canonical SQLite、一次性 `import-legacy` 语义导入和受控写 API；`rust/work-memory-service/` 提供 Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、提取、分类审计和聊天持久化编排。当前 Rust canonical store 与导入器已实现，但 Agent、UI 和生产写路径仍待切换。
 - `app/`：当前 Python 模型、Schema、Prompt、LLM 封装和业务服务。
 - `ui/streamlit_app.py`：本地交互界面。
 - `tests/`：单元、集成、UI 测试与固定评估样例。
@@ -84,16 +84,23 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Rust SQLite 离线检查、基线 migration 与恢复：
+Rust SQLite 检查、一次性语义导入与 legacy 恢复：
 
 ```bash
-cargo run -p work-memory-store --bin work-memory-store-admin -- inspect DATABASE
-cargo run -p work-memory-store --bin work-memory-store-admin -- migrate DATABASE BACKUP
+# 旧 Python 数据库：检查、登记兼容基线或恢复
+cargo run -p work-memory-store --bin work-memory-store-admin -- inspect PYTHON_DB
+cargo run -p work-memory-store --bin work-memory-store-admin -- migrate PYTHON_DB LEGACY_BACKUP
 cargo run -p work-memory-store --bin work-memory-store-admin -- \
-  restore DATABASE BACKUP SAFETY_BACKUP
+  restore PYTHON_DB LEGACY_BACKUP LEGACY_SAFETY_BACKUP
+
+# 新 Rust canonical 数据库：必须使用全新/空目标
+cargo run -p work-memory-store --bin work-memory-store-admin -- init RUST_DB
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  import-legacy PYTHON_DB RUST_DB
+cargo run -p work-memory-store --bin work-memory-store-admin -- inspect-rust RUST_DB
 ```
 
-执行 `migrate` 或 `restore` 前必须停止 Python 应用、Streamlit 和其他数据库连接；输出备份路径必须尚不存在。当前命令只登记 Schema version 或执行显式恢复，不代表 Rust 已接管业务写入。完整操作顺序和失败恢复边界见 [`docs/SQLITE_MIGRATIONS.md`](./docs/SQLITE_MIGRATIONS.md)。
+`migrate`/`restore` 只服务于旧 Python 九表的兼容检查、版本登记和恢复，不是 canonical 数据迁移；真正的切换操作是 `import-legacy`。导入前必须停止 Python 应用、Streamlit 和其他数据库连接，备份旧数据库并确认 source/target 路径不同。导入器只读 source，target 必须为空，导入业务 rows 在单一事务中提交；失败时不会留下部分 canonical 业务 rows。验证 counts、原文、结构化记忆、审计和聊天后，才能把应用切换到 Rust DB。切换后 Rust canonical DB 是唯一生产写入目标，旧 Python DB 作为冻结历史源/备份保留。完整操作顺序和失败恢复边界见 [`docs/SQLITE_MIGRATIONS.md`](./docs/SQLITE_MIGRATIONS.md)。
 
 少量真实模型分类与提取评估会产生 API 调用：
 
@@ -127,4 +134,4 @@ python -m app.live_extraction_evaluation \
 
 ## 当前边界
 
-MVP 暂不包含多用户、云同步、附件、向量检索和复杂 Agent 编排。`hypotheses` 与 `entities` 已能由 LLM 输出，但尚未持久化；滚动摘要是可重建缓存，原始 Entry 始终是事实来源。
+MVP 暂不包含多用户、云同步、附件、向量检索和复杂 Agent 编排。Rust canonical store 可持久化 `todo`、`evidence`、`timeline`、`decision`、`hypothesis`、`entity` 和 `tag` 七类 memory item；旧 Python 数据库只有前四类 legacy 表，因此一次性导入无法恢复历史上从未落盘的 hypothesis/entity。滚动摘要是可重建缓存，原始 Entry 始终是事实来源。

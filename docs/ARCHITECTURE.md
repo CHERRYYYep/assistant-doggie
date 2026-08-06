@@ -1,10 +1,10 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-05）：当前生产路径仍是本文件描述的 Python 单体；R4a/R4b 已完成，R4c Agent Harness boundary 已提交。Rust 已具备确定性领域核心、严格 JSON 契约、九表强类型 SQLite 仓储与离线 migration/备份恢复安全层、隔离写事务、R3a-R3i 产品服务、R4a Structured Outputs adapter、R4b 基于社区 `ureq` 的真实 HTTP transport，以及 R4c 基础工具循环/协议归一化。R4c 尚未接入 `work-memory-service`、SQLite 聊天持久化、API、UI 或生产数据库，生产运行时继续由 Python 独占写入。渐进切换边界、风险和最终 Rust 架构见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-06）：当前应用运行时尚未完成 cutover，Python 仍是 legacy Python SQLite 的唯一生产写入者；Rust canonical schema、强类型读写服务、一次性 `import-legacy` 语义导入和 `inspect-rust` 验证边界已实现。canonical SQLite 由 7 张业务表和 2 张 Rust schema 元数据表组成；它不是 Python 九表的兼容别名。导入时 source 只读、target 必须是新建/空的 Rust 数据库，切换后 Rust runtime/service/store 才成为 canonical DB 的唯一生产写入者。R4a/R4b 已完成，R4c Agent Harness boundary 已提交；这些能力尚未全部接入 `work-memory-service`、API、UI 或生产数据库。渐进切换边界、风险和阶段计划见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
-MVP 使用可测试的单体服务架构：
+迁移前的 MVP 使用可测试的 Python 单体服务架构；Rust canonical cutover 后，业务逻辑仍沿用相同的 Agent、归档、搜索和纠错职责，但所有持久化统一经过 Rust service/store 边界：
 
 ```text
 Streamlit UI
@@ -20,6 +20,82 @@ correction_service ──→ SQLite
 search_service     ──→ SQLite
 view_service       ──→ Streamlit 展示数据
 ```
+
+### 1.1 Rust canonical runtime data flow
+
+迁移期间，Python 图中的 SQLite 指向 **legacy Python source**；它是当前生产路径，仍由 Python/Streamlit 写入。离线导入不属于普通业务请求：
+
+```text
+冻结 Python/Streamlit
+        │
+        ├─ read-only source: legacy Python SQLite
+        │
+        └─ store_admin import-legacy
+             └─ one-time semantic import ──→ new/empty Rust canonical SQLite
+                                             └─ inspect-rust / counts / regression
+```
+
+cutover 后的目标运行时数据流为：
+
+```text
+Agent/API/UI
+    ├─ 读取上下文 ──→ Rust query/service ──→ Rust canonical SQLite
+    ├─ 归档 ────────→ classify/extract ──→ archive service/store transaction
+    │                                      ├─ archive_attempts
+    │                                      ├─ buckets / entries / bucket_tags
+    │                                      └─ memory_items
+    ├─ 纠错 ────────→ correction service/store transaction
+    │                                      ├─ move entry and its memory_items
+    │                                      ├─ rebuild affected Bucket summaries
+    │                                      ├─ corrections snapshots
+    │                                      └─ mark related archive_attempts corrected
+    └─ 对话 ────────→ chat persistence ──→ conversation_messages
+```
+
+所有业务读写都应从 Rust service/store 的强类型 API 进入；运行时不直接执行任意 SQL，也不把 legacy 表当作 canonical 表读取。归档、纠错和单条消息保存的事务边界由 Store 负责；完整 Agent turn 的跨消息事务仍由后续 runtime 编排决定。
+
+### 1.2 Source/target ownership 与导入边界
+
+| 阶段/对象 | 所有者与权限 | 约束 |
+|---|---|---|
+| legacy Python source | cutover 前由 Python 应用/Streamlit 生产写入；cutover 后冻结为只读历史源/备份 | Rust importer 以 SQLite read-only、`query_only` 和 foreign-key checking 打开，不修改 source；不能与生产写入并发使用同一份正在变化的 source |
+| Rust canonical target | 由 `init` 或 `import-legacy` 创建，随后由 Rust runtime/service/store 负责 | target 必须是不同路径上的新建或空 SQLite 文件；已有业务对象的 target 拒绝导入，失败后仅保留空 canonical schema shell 的 target 可安全重试；导入业务 rows 在一个事务中提交 |
+| 迁移命令 | `import-legacy` 只负责一次性 source → target 语义转换；`inspect-rust` 只读验证 | `migrate`/`restore` 仍只服务 legacy Python Schema 的基线、备份和恢复，不是 canonical 导入，也不应对 canonical DB 执行 |
+
+导入保留源 ID、原始文本、时间表达式、审计字段和可恢复的 JSON provenance，但不复制 Python 的表结构：
+
+```text
+legacy buckets                         → canonical buckets + bucket_tags
+legacy entries                         → canonical entries
+legacy todos/evidences/timeline_events/decisions
+                                        → canonical memory_items(kind = ...)
+legacy classification_records          → canonical archive_attempts
+legacy corrections                     → canonical corrections
+legacy chat_messages                   → canonical conversation_messages
+```
+
+Python 只有四类 legacy 结构化子表；历史上未落盘的 `hypothesis`、`entity` 和 `tag` 不能由导入器凭空恢复。导入器会验证枚举、时间戳、JSON、外键关系和 legacy memory item ID namespace；任意失败都会回滚业务 rows，但 target 可能保留空的 canonical schema shell，是否成功必须以 `inspect-rust`、counts 和逐项核验为准。
+
+### 1.3 Rust canonical tables
+
+canonical 业务表为：
+
+```text
+buckets, entries, bucket_tags, memory_items,
+archive_attempts, corrections, conversation_messages
+```
+
+关系和职责如下：
+
+- `buckets` 保存工作上下文、生命周期、摘要、活跃时间和导入 metadata；`entries` 通过 `bucket_id` 归属 Bucket，保存不可变的用户原文及归档状态。
+- `bucket_tags` 保存有序标签；`memory_items` 统一保存 `todo`、`evidence`、`timeline`、`decision`、`hypothesis`、`entity`、`tag` 七类结构化记忆。每个 item 必须属于 Bucket，`entry_id` 用于保留来源 Entry，独立删除 Entry 后可以为 `NULL`。
+- `archive_attempts` 保存分类/归档审计，包括 action、候选、焦点、模型元数据、归档状态和纠错标记；它对被删除的 Bucket/Entry 使用可空审计外键。
+- `corrections` 保存纠错命令及前后快照；`conversation_messages` 保存唯一、有序的长期对话和工具元数据，`sequence` 是 canonical 会话顺序。
+- `rust_schema_meta` 与 `rust_schema_migrations` 只保存 canonical marker/version，不承载业务数据，也不是 Python `schema_migrations` 的兼容替代品。
+
+### 1.4 Cutover 后的写入所有权
+
+完成导入核验、runtime 配置切换和健康检查后，**Rust runtime/service/store 是 canonical SQLite 的唯一生产写入者**。Agent、API、UI、归档、纠错、聊天持久化和后台修复都必须调用 Rust 的受控写 API；不允许 Python legacy service、旧 SQLAlchemy writer、临时脚本或两个 runtime 同时写 canonical 文件。Python DB 只作为冻结历史源/备份保留，legacy `migrate`/`restore` 不改变这一所有权；备份、`inspect-rust` 和只读查询也不算 canonical 业务写入者。
 
 普通 Python 函数足以表达当前流程，比提前引入复杂 Agent 框架更容易调试、测试和回滚。只有出现多角色协作、长流程状态机或复杂工具审批后，才需要考虑进一步编排。
 

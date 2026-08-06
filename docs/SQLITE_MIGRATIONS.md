@@ -1,19 +1,23 @@
-# SQLite Migration、备份与恢复
+# SQLite 迁移、备份与恢复
 
-> 状态日期：2026-08-04
-> 当前实现：`work-memory-store` R2b 离线管理基础；尚未接管 Python 生产写路径。
+> 状态日期：2026-08-06
+> 当前实现：旧 Python Schema 兼容管理与 Rust canonical SQLite 一次性语义导入均已实现；应用运行时尚未完成 Rust cutover。
 
-## 1. 适用范围
+## 1. 两条不同的存储路径
 
-本说明覆盖 Rust `work-memory-store` 对现有 Python SQLAlchemy SQLite 数据库提供的：
+仓库现在明确区分 **legacy Python SQLite** 与 **Rust canonical SQLite**。它们不是同一套长期 Schema，也不能让 Python 和 Rust 并发写同一个文件。
 
-- 完整九表 Schema、索引、主键、外键和完整性检查；
-- legacy Python Schema 到 migration version 1 的基线登记；
-- migration 前一致性备份；
-- 恢复前 safety backup 和失败后的自动回退；
-- 离线管理员命令。
+```text
+旧 Python SQLite（冻结前的生产源）
+        -- 一次性、只读、语义导入 -->
+全新 Rust canonical SQLite
+        -- cutover 后唯一生产写入者 -->
+Rust store/service/runtime
+```
 
-当前九张业务表为：
+### Legacy Python Schema
+
+旧数据库的九张业务表为：
 
 ```text
 buckets
@@ -27,140 +31,163 @@ corrections
 chat_messages
 ```
 
-本阶段不会重建或改写这些业务表，也不会把 Rust 接入应用写请求。Python 仍是生产数据库的唯一写入者。
+旧命令 `inspect`、`migrate`、`restore` 只适用于这套 Schema：
 
-## 2. Schema 状态与 version 1
+- `inspect` 检查 legacy Python Schema 或已登记的兼容 version 1；
+- `migrate` 在源库中登记 `adopt_python_schema_v1`，并先创建一致性备份；它不把数据转换成 Rust canonical Schema；
+- `restore` 验证并恢复 legacy Python 备份，使用 safety backup 做失败回退。
 
-Rust 只接受两类已验证状态：
+这些命令不是 canonical 数据迁移，也不会让 Rust 成为旧数据库的长期写入者。
 
-- `LegacyPython`：九张 Python 业务表完整，但不存在 `schema_migrations`；
-- `Versioned(1)`：九张业务表完整，且 migration history 从 version 1 连续、名称和时间戳合法。
+### Rust canonical Schema
 
-version 1 使用以下元数据表：
-
-```sql
-CREATE TABLE schema_migrations (
-    version INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    applied_at TEXT NOT NULL
-);
-```
-
-基线记录为：
+canonical 数据库由 `work-memory-store-admin init` 创建，标记为：
 
 ```text
-version = 1
-name = adopt_python_schema_v1
+schema_kind    = rust-work-memory
+schema_version = 1
+migration      = create_rust_memory_schema_v1
 ```
 
-这是一项“采用现有 Python Schema”的基线 migration：只在同一事务中创建 `schema_migrations` 并登记 version 1，不重建、不复制、不清空九张业务表。未知未来版本、空 history、非连续版本、错误 migration 名和缺少 `version` 主键都会被拒绝，Rust 不会猜测或降级打开。
+业务表为：
 
-## 3. 迁移前验证
+```text
+buckets
+entries
+bucket_tags
+memory_items
+archive_attempts
+corrections
+conversation_messages
+```
 
-`inspect`、`migrate` 和 `restore` 会按各自阶段验证：
+`rust_schema_meta` 和 `rust_schema_migrations` 是 canonical 元数据表，不是 Python 兼容 migration 表。canonical schema 使用 `memory_items.kind` 统一保存：
 
-1. 九张业务表及全部必需列存在；
-2. 每张业务表的 `id` 主键正确；
-3. SQLAlchemy 当前创建的显式索引存在，且索引列和顺序正确；
-4. 外键目标及 `ON DELETE CASCADE` / `SET NULL` 行为声明正确；
-5. `PRAGMA quick_check` 返回 `ok`；
-6. `PRAGMA foreign_key_check` 不返回违规记录；
-7. 如存在 `schema_migrations`，其表结构、连续 history、名称、时间戳和最高版本均受支持。
+```text
+todo | evidence | timeline | decision | hypothesis | entity | tag
+```
 
-验证失败时不会创建 migration 记录。已有备份文件也不会被覆盖。
+canonical schema 与 Python 九表不保证搜索评分、排序或字符串边界完全相同；Rust canonical 服务拥有自己的读写和搜索契约。
 
-## 4. 管理命令
+## 2. 一次性语义导入
 
-从仓库根目录运行：
+导入入口：
 
 ```bash
 cargo run -p work-memory-store --bin work-memory-store-admin -- \
-  inspect /absolute/path/to/work_memory.db
+  import-legacy /absolute/path/to/python.db \
+  /absolute/path/to/rust-canonical.db
+```
+
+也可以先显式初始化目标，再检查：
+
+```bash
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  init /absolute/path/to/rust-canonical.db
 
 cargo run -p work-memory-store --bin work-memory-store-admin -- \
-  migrate /absolute/path/to/work_memory.db \
-  /absolute/path/to/work_memory.before-v1.db
+  inspect-rust /absolute/path/to/rust-canonical.db
+```
+
+导入前必须满足：
+
+1. 停止 `python -m app.main`、Streamlit、Rust 服务和所有可能打开 source/target 的进程；
+2. 先对 Python source 做独立、可恢复的文件备份，并在隔离副本上演练；
+3. source 与 target 是不同路径，不能原地导入；
+4. source 是可验证的 legacy Python 九表数据库；
+5. target 不存在、是没有任何非 SQLite 内部对象的空 SQLite 文件，或是上一次失败导入留下的、Schema 完整且没有业务 rows 的 canonical 空壳；有业务 rows、未知对象或不完整 canonical marker 的 target 都会被拒绝；
+6. 确认磁盘空间足够，并保留源库作为冻结历史源/备份。
+
+导入器打开 source 时使用 SQLite read-only 与 `query_only`，不会修改 source。导入顺序和语义映射如下：
+
+| Python legacy | Rust canonical | 说明 |
+|---|---|---|
+| `buckets` | `buckets` + `bucket_tags` | 保留 Bucket ID、类型、状态、摘要、时间和标签顺序；原始标签 JSON 放入 `metadata_json` 作为导入 provenance |
+| `entries` | `entries` | 保留原文、摘要、分类置信度/原因、来源 Bucket 和 `moved_from_bucket_id`；保留 Entry ID |
+| `todos` | `memory_items(kind = todo)` | 保留 status、due date 和来源 ID |
+| `evidences` | `memory_items(kind = evidence)` | 保留 source 和来源 ID |
+| `timeline_events` | `memory_items(kind = timeline)` | `event_time` 原样保存到 `occurred_at`，包括“刚才”等表达式 |
+| `decisions` | `memory_items(kind = decision)` | 保留 reason 和来源 ID |
+| `classification_records` | `archive_attempts` | `ask_user` 映射为 `needs_confirmation`；有 Entry 的记录映射为 `archived`；Python 没有 question 字段，因此 question 保持 NULL |
+| `corrections` | `corrections` | 保留前后 JSON 快照、Unicode 和来源 ID |
+| `chat_messages` | `conversation_messages` | 按 `created_at ASC, id ASC` 重建 canonical `sequence`，保留角色、工具元数据和 details JSON |
+
+迁移中的生命周期时间是语义推断而非 Python 原始事件时间：archived Bucket 的 `archived_at` 取 legacy `updated_at`；每个导入 Entry 的 `archive_state` 为 `archived`，其 `archived_at` 取 Entry `created_at`；`classification_records.corrected = 1` 时，canonical `resolved_at` 取该记录的 `created_at`。
+
+历史 Python 数据库只有四类结构化子表，因此导入不能凭空恢复未落盘的 `hypothesis`、`entity` 或 `tag` memory item。Bucket 标签仍会进入 canonical `bucket_tags`。
+
+Python `classification_records.bucket_id` 在旧 Schema 中不一定是外键。若该 ID 在目标 Bucket 中无法解析，导入器将 canonical `archive_attempts.bucket_id` 写为 NULL，同时保留候选 JSON、focus ID 和其余原始审计字段；不会为了保留无效外键而破坏 canonical 数据库。
+
+## 3. 事务、回滚与验证
+
+source 预校验通过且 target 为空后，导入器初始化 canonical DDL，并在导入业务 rows 时使用单一 `BEGIN IMMEDIATE` 事务：
+
+1. 先写 Bucket、标签和 Entry；
+2. 再写 `memory_items`、`archive_attempts`、`corrections` 和聊天消息；
+3. 所有外键、枚举、JSON、时间戳和目标关系在写入时验证；
+4. 全部成功后一次性 commit。
+
+任意一行失败、外键冲突、坏 JSON、非法状态或 commit 失败都会回滚导入事务，不留下部分业务 rows。目标文件本身可能保留空的 canonical schema（便于诊断和重试），不能把“目标文件存在”误认为导入成功；应以 `inspect-rust`、counts 和逐项业务核验为准。
+
+建议至少核验：
+
+```text
+buckets=4
+entries=3
+memory_items=8
+archive_attempts=2
+corrections=2
+chat_messages=3
+```
+
+并核对固定源 ID、Entry 原文、Timeline 时间表达式、Bucket 标签顺序、`ask_user` 状态、Correction JSON 和 Chat sequence。只有核验通过，才执行应用 cutover。
+
+## 4. Cutover 与写入所有权
+
+推荐顺序：
+
+```text
+1. 停止 Python/Streamlit，备份并冻结 Python DB。
+2. 在隔离副本执行 import-legacy。
+3. 用 inspect-rust、counts 和回归测试验证 Rust DB。
+4. 将 Rust runtime/service/UI 配置到 Rust DB。
+5. 启动 Rust runtime，确认健康检查、读写和备份策略。
+6. 只保留 Rust 作为 canonical DB 的生产写入者。
+```
+
+在 cutover 完成前，Python 仍可作为旧数据库的生产运行路径，但 Rust 只能在隔离数据库或 canonical 目标上验证，不能与 Python 同时写同一生产文件。cutover 后不得让旧 Python 服务继续写 Rust canonical DB；Python 数据库保留为只读历史源或备份，直到完成既定保留周期。
+
+## 5. Legacy 兼容命令与恢复
+
+检查和旧 Schema 基线登记：
+
+```bash
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  inspect /absolute/path/to/python.db
 
 cargo run -p work-memory-store --bin work-memory-store-admin -- \
-  restore /absolute/path/to/work_memory.db \
-  /absolute/path/to/work_memory.before-v1.db \
-  /absolute/path/to/work_memory.before-restore.db
+  migrate /absolute/path/to/python.db \
+  /absolute/path/to/python.before-v1.db
 ```
 
-三个路径必须指向不同位置。`migrate` 的备份路径和 `restore` 的 safety backup 路径必须尚不存在；工具使用 create-new 语义，绝不覆盖已有文件。
+旧库恢复：
 
-## 5. 安全迁移流程
-
-在执行 `migrate` 前：
-
-1. 停止 `python -m app.main`、Streamlit 和所有可能连接该数据库的 Python/Rust 进程；
-2. 确认目标是预期数据库，先运行 `inspect`；
-3. 选择同一受信任磁盘上的全新备份路径，并确认有足够空间；
-4. 不要拿仓库内的开发数据库做演练，先在隔离副本验证完整流程。
-
-`migrate` 内部流程：
-
-1. 以 read-write existing 模式打开数据库，并启用外键检查和 5 秒 busy timeout；
-2. 使用 `BEGIN IMMEDIATE` 占用写者资格，阻止迁移快照与其他写入竞争；
-3. 验证当前 Schema；如已经是 version 1，则直接返回 `AlreadyCurrent`，不创建备份、不修改数据库；
-4. 在写者保留锁存在期间，通过独立只读连接和 SQLite Online Backup API 创建一致性备份；
-5. 重新检查备份的 Schema 状态与源状态一致；
-6. 在原事务中登记 version 1，再执行完整性和 migration history 验证；
-7. 验证成功后提交事务。
-
-这里使用 SQLite Online Backup API，而不是对活动数据库执行普通文件复制，因此能够把 WAL 中已提交的状态纳入一致快照。即使如此，运维流程仍要求先停止应用，不能把锁和 timeout 当作在线迁移承诺。
-
-如果 migration 在提交前失败，事务会回滚；本次新建的未采用备份会被清理。源业务表不会被 migration 代码重建。
-
-## 6. 恢复流程
-
-`restore` 会先完整验证恢复源，之后才接触目标数据库：
-
-1. 验证恢复源是受支持的 `LegacyPython` 或 `Versioned(1)`；
-2. 以 exclusive locking mode 打开目标并验证其当前状态；
-3. 使用 SQLite Online Backup API 把目标当前状态保存到全新的 safety backup；
-4. 将指定备份恢复到目标；
-5. 再次验证完整 Schema、migration history 和数据库完整性；
-6. 如恢复或验证失败，自动尝试用 safety backup 恢复原目标状态；
-7. 如果自动回退也失败，返回同时包含 restore 与 rollback 原因的复合错误，必须停止使用该目标文件并进行人工恢复。
-
-恢复成功后不会删除 safety backup。确认应用启动、读取和回归检查均正常后，再按既定保留策略归档或删除旧备份。
-
-## 7. 推荐操作清单
-
-### 升级
-
-```text
-[ ] 停止所有应用进程
-[ ] 记录数据库绝对路径和文件大小
-[ ] inspect 返回 legacy-python
-[ ] 选择不存在的备份路径
-[ ] migrate 返回 legacy-python -> version-1
-[ ] inspect 返回 version-1 和 adopt_python_schema_v1
-[ ] 运行 Rust/Python 回归或在隔离副本启动应用
-[ ] 保留升级前备份
+```bash
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  restore /absolute/path/to/python.db \
+  /absolute/path/to/python.before-v1.db \
+  /absolute/path/to/python.before-restore.db
 ```
 
-### 回退
+三个路径必须不同；输出备份和 safety backup 路径必须尚不存在，工具使用 create-new 语义，不覆盖已有文件。执行 `migrate` 或 `restore` 前仍必须停止所有数据库连接。canonical 数据库当前不使用 `schema_migrations/adopt_python_schema_v1`，不要对 canonical 文件运行旧 `migrate` 或 `restore`。
 
-```text
-[ ] 停止所有应用进程
-[ ] inspect 当前目标和准备恢复的备份
-[ ] 选择不存在的 safety backup 路径
-[ ] restore 返回预期状态变化
-[ ] inspect 恢复后的目标
-[ ] 验证业务数据和应用读取
-[ ] 同时保留原备份与 safety backup，直到故障关闭
-```
+## 6. 自动化覆盖与限制
 
-## 8. 自动化覆盖与限制
+Rust 测试在系统临时目录覆盖：
 
-`rust/work-memory-store/tests/python_migration_compat.rs` 只在系统临时目录中：
+- canonical marker/version、未知用户对象拒绝、legacy DB 不能直接作为 canonical 打开；
+- `create_new`、`append_existing`、`ask_user`、七类 memory kind、canonical 搜索、Chat sequence、Entry move、Correction 快照和 archive corrected 状态；
+- Python fixture 的完整语义导入、固定 ID/count、四类 legacy memory 映射、Timeline 时间表达式、审计/聊天 JSON、非空 target 拒绝和导入失败回滚；
+- legacy `inspect`/`migrate`/`restore` 的 Schema、备份、外键、WAL、未来版本和失败恢复边界。
 
-- 调用 Python SQLAlchemy 创建九表固定数据库；
-- 验证 legacy 识别、version 1 migration、重复 migration 幂等；
-- 比较 migration 前后全部业务 Schema 和九表行值，并验证已提交 WAL 数据进入备份；
-- 验证 legacy backup、恢复、safety backup 以及反向恢复；
-- 验证缺索引、外键损坏、未来版本、错误 migration 主键、已有备份路径和无效恢复源会被拒绝。
-
-自动化测试不会打开、复制、迁移或恢复仓库根目录的 `work_memory.db`。完整 R2 仍需实现其余七张表的强类型仓储、安全写事务和级联写入语义；在这些工作完成并正式切换所有权之前，Python 与 Rust 不得同时写同一个生产数据库。
+普通测试不调用真实 LLM，也不读取仓库根目录的 `work_memory.db`。canonical import 完成后仍需要后续阶段把 Rust Agent、service、UI 接到 canonical DB；在那之前，生产运行路径和写入所有权的切换仍是独立的 cutover 任务。

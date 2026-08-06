@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use thiserror::Error;
 use work_memory_store::{
-    MigrationOutcome, SchemaInfo, SchemaState, StoreError, inspect_database, migrate_database,
-    restore_database,
+    MigrationOutcome, RustStore, SchemaInfo, SchemaState, StoreError, inspect_database,
+    migrate_database, restore_database,
 };
 
 #[derive(Debug, Parser)]
@@ -19,8 +19,22 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Inspect the legacy Python-compatible database.
     Inspect {
         database: PathBuf,
+    },
+    /// Initialize a new Rust-owned canonical database.
+    Init {
+        rust_db: PathBuf,
+    },
+    /// Import semantic memory from a legacy Python database into a new Rust database.
+    ImportLegacy {
+        python_db: PathBuf,
+        rust_db: PathBuf,
+    },
+    /// Validate and inspect a Rust-owned canonical database.
+    InspectRust {
+        rust_db: PathBuf,
     },
     Migrate {
         database: PathBuf,
@@ -56,6 +70,39 @@ fn run(command: Command) -> Result<(), AdminError> {
         Command::Inspect { database } => {
             let info = inspect_database(database)?;
             print_schema_info(&info);
+        }
+        Command::Init { rust_db } => {
+            let _store = RustStore::initialize(&rust_db)?;
+            println!("initialized Rust canonical database: {}", rust_db.display());
+        }
+        Command::ImportLegacy { python_db, rust_db } => {
+            let report = RustStore::import_legacy_database(&python_db, &rust_db)?;
+            println!(
+                "imported legacy database {} -> {}: buckets={} entries={} memory_items={} archive_attempts={} corrections={} chat_messages={}",
+                python_db.display(),
+                rust_db.display(),
+                report.buckets,
+                report.entries,
+                report.memory_items,
+                report.archive_attempts,
+                report.corrections,
+                report.chat_messages,
+            );
+        }
+        Command::InspectRust { rust_db } => {
+            let store = RustStore::open_read_only(&rust_db)?;
+            let counts = store.counts()?;
+            println!("state=rust-canonical");
+            println!("path={}", rust_db.display());
+            println!(
+                "counts buckets={} entries={} memory_items={} archive_attempts={} corrections={} chat_messages={}",
+                counts.buckets,
+                counts.entries,
+                counts.memory_items,
+                counts.archive_attempts,
+                counts.corrections,
+                counts.chat_messages,
+            );
         }
         Command::Migrate { database, backup } => match migrate_database(database, backup)? {
             MigrationOutcome::Migrated {

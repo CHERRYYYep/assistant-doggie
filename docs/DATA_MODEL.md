@@ -8,7 +8,38 @@
 - TODO、证据、时间线等是从 entry 派生出来的结构化资产。
 - 纠错和移动要留痕，方便以后学习用户偏好。
 
-## 2. ERD 草图
+## 2. Rust canonical schema（生产目标）
+
+Rust canonical SQLite 是一次性导入后的唯一生产写入目标。它不是 Python 九表的兼容别名，而是新的聚合边界：
+
+```text
+buckets 1 ── * entries
+buckets 1 ── * bucket_tags
+buckets 1 ── * memory_items
+entries 1 ── * memory_items（entry_id 可因独立删除而为 NULL）
+buckets/entries 1 ── * archive_attempts（审计外键可因删除而为 NULL）
+corrections 保存纠错前后快照
+conversation_messages 保存单一、有序的长期对话
+```
+
+canonical 业务表为：
+
+```text
+buckets, entries, bucket_tags, memory_items,
+archive_attempts, corrections, conversation_messages
+```
+
+`memory_items.kind` 支持：
+
+```text
+todo | evidence | timeline | decision | hypothesis | entity | tag
+```
+
+canonical Bucket 标签使用 `bucket_tags(bucket_id, tag, position)` 保存顺序；`metadata_json` 用于导入 provenance 和未来扩展。`rust_schema_meta` / `rust_schema_migrations` 只保存 canonical marker/version。初始化、导入和验证命令见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+
+## 3. Legacy Python ERD 草图（迁移源）
+
+以下旧模型章节描述的是导入源和兼容读取边界，不是 Rust canonical 的长期表结构：
 
 ```text
 buckets 1 ── * entries
@@ -20,11 +51,9 @@ entries 1 ── * todos/evidences/timeline_events/decisions
 entries 1 ── * classification_records
 corrections record before/after snapshots for changed entries
 chat_messages form one independent, ordered singleton conversation timeline
-
-planned: buckets * ── * buckets through bucket_relations
 ```
 
-## 3. buckets
+## 4. Legacy Python buckets
 
 表示一个持续存在的工作对象。
 
@@ -47,7 +76,7 @@ planned: buckets * ── * buckets through bucket_relations
 - updated_at
 - last_active_at
 
-## 4. entries
+## 5. Legacy Python entries
 
 保存用户每次输入的原始内容。
 
@@ -68,7 +97,7 @@ planned: buckets * ── * buckets through bucket_relations
 - bucket_id
 - created_at
 
-## 5. todos
+## 6. Legacy Python todos
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -81,7 +110,7 @@ planned: buckets * ── * buckets through bucket_relations
 | created_at | datetime | 创建时间 |
 | updated_at | datetime | 更新时间 |
 
-## 6. evidences
+## 7. Legacy Python evidences
 
 证据可以是日志、指标、截图说明、测试结果、用户反馈等。
 
@@ -94,7 +123,7 @@ planned: buckets * ── * buckets through bucket_relations
 | source | string/null | 日志、截图、监控、会议等 |
 | created_at | datetime | 创建时间 |
 
-## 7. timeline_events
+## 8. Legacy Python timeline_events
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -107,7 +136,7 @@ planned: buckets * ── * buckets through bucket_relations
 
 MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“下午”“10:20”。
 
-## 8. decisions
+## 9. Legacy Python decisions
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
@@ -118,7 +147,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | reason | text/null | 决策原因 |
 | created_at | datetime | 创建时间 |
 
-## 9. bucket_relations（规划）
+## 10. bucket_relations（规划）
 
 用于表示 bucket 之间的关联，而不是强制单归属。
 
@@ -130,7 +159,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | relation_type | enum | related_to/blocked_by/derived_from/duplicate_of |
 | created_at | datetime | 创建时间 |
 
-## 10. corrections
+## 11. Legacy Python corrections
 
 记录用户纠错，后续可用于偏好学习。
 
@@ -145,7 +174,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | after_json | json/text | 修改后快照 |
 | created_at | datetime | 创建时间 |
 
-## 11. classification_records
+## 12. Legacy Python classification_records
 
 保存每次分类的风险证据。即使结果为 `ask_user`，也可以记录审计，但在用户确认前不创建正式 Entry。
 
@@ -165,7 +194,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 | corrected | bool | 后续是否被用户纠错 |
 | created_at | datetime | 创建时间 |
 
-## 12. chat_messages
+## 13. Legacy Python chat_messages
 
 保存应用唯一长期对话中的消息。该表不按 conversation ID 分组，因为当前产品明确只有一个对话；按 `created_at` 顺序即可恢复时间线。
 
@@ -186,7 +215,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 对话上下文默认只加载最近 40 条 `user/assistant` 消息，较早消息仍完整保存在数据库中。工具记录用于 UI 展示和审计，不作为可执行指令重新注入模型。
 
-## 13. user_preferences（规划）
+## 14. user_preferences（规划）
 
 该表尚未进入当前 SQLAlchemy 模型，以下为后续偏好学习规划。
 
@@ -211,7 +240,7 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 }
 ```
 
-## 14. 后续向量检索扩展
+## 15. 后续向量检索扩展
 
 当 entries 数量变多后，可增加：
 
@@ -221,9 +250,18 @@ MVP 先不强制解析成标准时间，因为用户可能输入“刚才”“�
 
 MVP 不需要一开始做向量库，SQLite 关键词搜索足够验证闭环。
 
-## 15. Python/Rust SQLite 兼容、migration 与事务边界（R2a-R2o）
+## 16. Python legacy 兼容、Rust canonical 导入与事务边界（R2a-R2o）
 
-当前 SQLite 业务 Schema 仍由 Python SQLAlchemy 定义，生产数据库仍由 Python 独占写入。Rust `work-memory-store` 提供九张业务表的强类型只读查询、必须离线执行的 Schema 检查/基线 migration/备份恢复、仅在隔离数据库验证的可写连接和原子事务基础，以及 append/create/ask_user 的强类型归档聚合写 API、Entry 移动纠错 API、ChatMessage 追加 API、Bucket 聚合删除 API、独立 Entry 删除 API、独立 Bucket 创建 API、独立 Entry 追加 API、独立 Bucket 滚动摘要更新 API、独立 Bucket 摘要重建 API、独立提取结果保存 API 与独立分类审计保存 API；这些 API 尚未接入生产调用链。
+当前同时存在两条存储边界：
+
+- **Rust canonical**：`RustStore::initialize/open_existing/open_read_only` 管理新的 `rust_schema_meta`、`rust_schema_migrations`、`buckets`、`entries`、`bucket_tags`、`memory_items`、`archive_attempts`、`corrections` 和 `conversation_messages`。它是一次性导入后的目标 Schema，Rust canonical 服务拥有自己的搜索评分、排序和字段边界。
+- **Python legacy compatibility**：`SqliteStore`/`WritableSqliteStore` 继续为旧 Python 九表提供只读、离线 version 1 基线和隔离回归写 API。这条边界用于兼容验证、备份/恢复和迁移期对照，不是 canonical 的长期生产写入目标。
+
+`RustStore::import_legacy_database` 只读打开 Python source，把旧 `todos/evidences/timeline_events/decisions` 映射为 `memory_items`，把 `classification_records` 映射为 `archive_attempts`，把 `chat_messages` 映射为 `conversation_messages`，并保留可恢复的源 ID、原文、JSON、时间表达式和审计字段。source/target 必须不同，target 必须为空，导入业务 rows 使用单一事务；失败时回滚业务 rows。Python source 在 cutover 后作为冻结历史源/备份保留。
+
+canonical `memory_items` 可持久化 `todo`、`evidence`、`timeline`、`decision`、`hypothesis`、`entity`、`tag` 七类；历史 Python source 只有前四类表，因此一次性导入无法恢复未曾落盘的 hypothesis/entity/tag。旧 `classification_records.bucket_id` 若无法解析为 canonical Bucket，会写成 NULL，但候选 JSON、focus ID 和其余审计数据仍保留。
+
+下方 R2a-R2o 的字段/事务说明主要记录 Python legacy compatibility 路径；新的 canonical 写入口和导入命令以本节及 `SQLITE_MIGRATIONS.md` 为准。
 
 只读查询边界：
 
@@ -336,7 +374,7 @@ R2n 独立提取结果保存写边界：
 
 - `SaveExtractionRequest` 接收已验证的核心 `ExtractionResult` 并保留精确 Bucket/Entry ID；事务先查 Bucket，再验证 Entry 存在且属于目标 Bucket，缺失 Bucket、缺失 Entry 或归属不匹配都在业务修改前返回类型化错误。
 - Todo/Evidence/Decision 按 Unicode casefold 与空白折叠后的文本 key 对事务前已有记录去重，TimelineEvent 按精确 `event_time` 与规范化文本组合去重；与 Python 相同，去重集合不会在处理本批输入时扩展，因此同一批中的规范化重复项仍可分别保存。
-- 新 Evidence 的 source 固定为 `llm-extracted`，Todo 使用 open/无 due date，Decision reason 为 NULL；`hypotheses` 与 `entities` 当前没有持久化表，保持不落库。返回值只暴露本次新建的四类结构化记录 ID。
+- 旧 Python compatibility 路径的 Evidence source 固定为 `llm-extracted`，Todo 使用 open/无 due date，Decision reason 为 NULL；该路径没有 hypotheses/entities 表，返回值只暴露四类 legacy 结构化记录 ID。Rust canonical 路径则使用统一 `memory_items` 表持久化七类 kind。
 - 同一事务把 Entry `summary` 设为提取摘要，按 Unicode casefold 合并 Bucket 标签，并用 1200 字符滚动规则更新 Bucket `summary` 与 `updated_at`；`last_active_at`、Entry 其他字段、分类/纠错/聊天审计均不变。
 - 独立 API 与归档聚合写路径共用结构化记录插入和 Bucket 缓存更新实现；`tests/fixtures/apply_save_extraction_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确 ID、验证顺序、归属错误、批内重复、重复调用和晚期失败全事务回滚。
 
@@ -347,9 +385,9 @@ R2o 独立分类审计保存写边界：
 - 新记录使用 UUID v4、运行时 UTC 时间和 `corrected=false`；`bucket_id` 直接取分类结果且不验证该审计目标是否存在（create_new 必为 NULL，ask_user 保留已验证结果中的可选值），`entry_id` 始终为 NULL。create_new、append_existing 和 ask_user 都可独立记录，重复调用会产生独立审计行。
 - 事务只新增一条 `classification_records`，不修改 Bucket、Entry、结构化记录、Correction 或 ChatMessage；独立 API 与归档聚合写路径共用候选合并和审计插入实现。`tests/fixtures/apply_save_classification_fixture.py` 驱动隔离 Python/Rust 最终语义等价测试，并覆盖精确元数据、全部 action、空输入、重复保存、缺失审计目标和插入失败回滚。
 
-完整 migration 命令和恢复步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 仍未覆盖其他剩余 CRUD 写语义，也未完成生产写路径切换。
+完整 legacy compatibility 命令、canonical `init/import-legacy/inspect-rust`、备份、恢复、回滚和 cutover 步骤见 `docs/SQLITE_MIGRATIONS.md`。R2 的 canonical schema/import 已实现，但 Rust Agent、service、UI 接线和生产写路径切换仍是后续阶段。
 
-## 16. Rust Bucket 查询与搜索服务边界（R3a-R3b）
+## 17. Rust Bucket 查询与搜索服务边界（R3a-R3b）
 
 `work-memory-service::BucketQueryService` 是首个 Rust 业务编排层，当前只持有经完整 Schema 校验、migration 历史校验和 `query_only` 保护的 `SqliteStore`：
 
@@ -400,7 +438,7 @@ R3d 仍只在系统临时目录中的隔离数据库运行。Streamlit 的“移
 
 R3e 只接通独立基础变更服务，不把创建、追加或删除切到生产调用链，也不改变 R3c 归档和 R3d 纠错各自的聚合事务边界。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
 
-## 20. Rust Bucket 摘要缓存服务边界（R3f）
+## 21. Rust Bucket 摘要缓存服务边界（R3f）
 
 `work-memory-service::BucketSummaryService` 把 R2l-R2m 已验证的两类摘要写事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交 Bucket ID、摘要片段和可选限制：
 
@@ -412,7 +450,7 @@ R3e 只接通独立基础变更服务，不把创建、追加或删除切到生�
 
 R3f 只接通独立摘要缓存维护，不替代 R3c 归档或 R3d 纠错事务内部的摘要更新，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
 
-## 21. Rust 独立提取保存服务边界（R3g）
+## 22. Rust 独立提取保存服务边界（R3g）
 
 `work-memory-service::ExtractionPersistenceService` 把 R2n 已验证的独立提取保存事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交精确 Bucket/Entry ID 和已经通过核心层验证的 `ExtractionResult`：
 
@@ -424,7 +462,7 @@ R3f 只接通独立摘要缓存维护，不替代 R3c 归档或 R3d 纠错事务
 
 R3g 只接通已验证提取结果的独立持久化，不替代 R3c 归档事务内部的提取保存，也不提供模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
 
-## 22. Rust 独立分类审计保存服务边界（R3h）
+## 23. Rust 独立分类审计保存服务边界（R3h）
 
 `work-memory-service::ClassificationAuditService` 把 R2o 已验证的独立分类审计事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交原始输入、已验证 `ClassificationResult` 和服务端拥有的审计元数据：
 
@@ -436,7 +474,7 @@ R3g 只接通已验证提取结果的独立持久化，不替代 R3c 归档事�
 
 R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归档事务内部的分类审计，也不提供分类模型调用或切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
 
-## 23. Rust 单条聊天消息持久化服务边界（R3i）
+## 24. Rust 单条聊天消息持久化服务边界（R3i）
 
 `work-memory-service::ChatMessagePersistenceService` 把 R2g 已验证的单条 ChatMessage 追加事务提升为产品服务边界。服务持有经完整 Schema 与 migration 历史校验的 `WritableSqliteStore`，但调用方只提交 `ChatRole`、消息内容、可选工具元数据与 details：
 
@@ -448,7 +486,7 @@ R3h 只接通已验证分类结果的独立审计持久化，不替代 R3c 归�
 
 R3i 只接通单条聊天消息的独立持久化，不提供完整 Agent turn 的跨消息事务，也不切换 Agent/UI/生产调用链。Python 仍是唯一生产 SQLite 写入者，且不得与 Rust 并发写同一生产数据库。
 
-## 24. Rust Structured Outputs adapter 边界（R4a）
+## 25. Rust Structured Outputs adapter 边界（R4a）
 
 R4a 不新增或修改 SQLite 表，而是在 `work-memory-contracts` 与 `work-memory-agent` 建立模型 JSON 的外部边界：
 

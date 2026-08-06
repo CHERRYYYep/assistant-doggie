@@ -6,12 +6,15 @@ use thiserror::Error;
 mod archive_write;
 mod bucket_summary_write;
 mod bucket_write;
+mod canonical;
+mod canonical_schema;
 mod chat_write;
 mod classification_write;
 mod correction_write;
 mod delete_write;
 mod entry_write;
 mod extraction_write;
+mod legacy_import;
 mod migration;
 mod read;
 mod records;
@@ -21,6 +24,11 @@ mod write;
 pub use archive_write::{ArchiveWriteOutcome, ArchiveWriteRequest, ClassificationAuditContext};
 pub use bucket_summary_write::{RebuildBucketSummaryRequest, UpdateBucketSummaryRequest};
 pub use bucket_write::CreateBucketRequest;
+pub use canonical::{
+    ImportReport, MemoryKind, RustArchiveAttempt, RustArchiveAudit, RustArchiveOutcome, RustBucket,
+    RustBucketDetail, RustChatMessage, RustCorrection, RustEntry, RustMemoryItem, RustSearchHit,
+    RustStore, RustStoreCounts,
+};
 pub use chat_write::ChatMessageWriteRequest;
 pub use classification_write::{SaveClassificationRecordOutcome, SaveClassificationRecordRequest};
 pub use correction_write::{MoveEntryOutcome, MoveEntryRequest, MoveLatestEntryRequest};
@@ -229,6 +237,46 @@ pub enum StoreError {
     AmbiguousCorrectionBucket { title: String },
     #[error("required {table} record was not found: {id}")]
     MissingRecord { table: &'static str, id: String },
+    #[error("canonical Rust schema already exists or target database is not empty")]
+    CanonicalSchemaAlreadyExists,
+    #[error("canonical Rust schema marker is missing")]
+    CanonicalSchemaMarkerMissing,
+    #[error("canonical Rust schema kind mismatch: found {found}")]
+    CanonicalSchemaKindMismatch { found: String },
+    #[error("invalid canonical Rust schema version value: {0}")]
+    CanonicalSchemaVersionInvalid(String),
+    #[error("canonical Rust schema version {found} is newer than supported version {supported}")]
+    UnsupportedCanonicalSchemaVersion { found: u32, supported: u32 },
+    #[error("canonical Rust migration mismatch: version {version}, name {name}")]
+    CanonicalMigrationMismatch { version: i64, name: String },
+    #[error("unexpected object in canonical Rust schema: {object_type} {name}")]
+    UnexpectedCanonicalObject { object_type: String, name: String },
+    #[error("canonical Rust schema constraint is missing: {table}.{constraint}")]
+    MissingCanonicalConstraint {
+        table: &'static str,
+        constraint: &'static str,
+    },
+    #[error("invalid canonical memory kind: {value}")]
+    InvalidCanonicalMemoryKind { value: String },
+    #[error("legacy import target database must be empty: {0}")]
+    ImportTargetNotEmpty(PathBuf),
+    #[error("legacy import source and target must differ: {path}")]
+    ImportSourceTargetSame { path: PathBuf },
+    #[error(
+        "legacy memory item ID collision: {id} appears in both {first_table} and {second_table}"
+    )]
+    LegacyMemoryIdCollision {
+        id: String,
+        first_table: &'static str,
+        second_table: &'static str,
+    },
+    #[error("legacy import failed for {table}.{column} record {record_id}: {reason}")]
+    LegacyImportRecord {
+        table: &'static str,
+        column: &'static str,
+        record_id: String,
+        reason: String,
+    },
     #[error("failed to serialize JSON for {context}: {source}")]
     JsonSerialization {
         context: &'static str,

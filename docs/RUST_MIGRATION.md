@@ -191,6 +191,8 @@ cargo run -p work-memory-store --bin work-memory-store-admin -- \
 | `corrections` | `corrections` | 保留纠错前后 JSON 快照、审计字段和来源 ID。 |
 | `chat_messages` | `conversation_messages` | 按 `created_at ASC, id ASC` 重新生成连续 `sequence`，保留角色、工具元数据和 details JSON。 |
 
+迁移会明确标记下列**推断值**：Python legacy 没有 canonical 生命周期时间字段，因此 archived Bucket 的 `archived_at` 取 legacy `updated_at`；导入的 Entry 统一视为已归档，`archive_state` 为 `archived` 且 `archived_at` 取 Entry `created_at`；已纠正的分类审计记录将 `resolved_at` 取其 `created_at`。这些值表达的是迁移时可复原的语义，不是 Python 中实际记录的独立事件时间。
+
 Python source 只有 todo/evidence/timeline/decision 四类结构化子表，因此导入不能凭空恢复历史上从未落盘的 `hypothesis`、`entity` 或 `tag`。旧 `classification_records.bucket_id` 不是可靠外键；若对应 Bucket 无法解析，canonical `archive_attempts.bucket_id` 写为 NULL，但候选 JSON、focus ID 和其余审计数据仍保留。
 
 导入前必须满足：source 与 target 路径不同；source 是可验证的 legacy Python 九表数据库；target 不存在或没有任何非 SQLite 内部对象和业务 rows。一个此前失败导入留下的、已回滚业务 rows 的空 canonical schema 可以重试；有业务 rows 的 target 不得追加导入。导入完成后至少核对各表 counts、固定 source ID、Entry 原文、Bucket 标签顺序、Timeline 原始时间表达式、`ask_user` 状态、Correction JSON 和 Chat sequence。

@@ -8,6 +8,8 @@
 输入文本 → 自动分类/新建 bucket → 结构化提取 → 保存 → 展示归档结果 → 查看 bucket
 ```
 
+MVP 的当前运行路径仍是 Python/Streamlit；Rust canonical 存储是后续 cutover 的生产目标。切换时先把冻结的 Python legacy SQLite 作为只读 source，一次性语义导入到全新的 Rust canonical SQLite，再把 Rust runtime/service/store 设为 canonical 数据库的唯一生产写入者。Python 与 Rust 不得并发写同一数据库；导入、回滚和验证步骤见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+
 ## 2. 功能清单
 
 ### F1：文本输入
@@ -66,7 +68,7 @@ MVP 简化：只读取最近 20 个 active bucket。
 
 ### F5：追加 entry
 
-每次用户输入都保存为 entry。
+只有分类通过并实际归档的输入才保存为正式 Entry；`ask_user` 只保存待确认的分类/归档审计，不创建 Entry。确认完成后，再由追加或新建流程写入 Entry。
 
 保存字段：
 
@@ -134,14 +136,14 @@ MVP 简化：
 
 ### F10：自然语言纠错，MVP 版
 
-第一版支持四类：
+当前已实现的第一条纠错路径是移动最近或指定 Entry，并记录前后快照。其余纠错动作先作为后续扩展，不应在未接入服务/UI 前对外宣称已完成：
 
-| 用户说法 | 系统动作 |
-|---|---|
-| 刚才那条放到 XXX | 移动最近 entry |
-| 这个单独新开一个 | 为最近 entry 新建 bucket |
-| 这个不是 idea，是 task | 修改 bucket 类型 |
-| 把 A 和 B 合并 | 合并两个 bucket |
+| 用户说法 | 系统动作 | 状态 |
+|---|---|---|
+| 刚才那条放到 XXX | 移动最近 entry，并同步派生记忆、摘要和纠错审计 | 已实现 |
+| 这个单独新开一个 | 为最近 entry 新建 bucket | 计划中 |
+| 这个不是 idea，是 task | 修改 bucket 类型 | 计划中 |
+| 把 A 和 B 合并 | 合并两个 bucket | 计划中 |
 
 ### F11：搜索历史 bucket
 
