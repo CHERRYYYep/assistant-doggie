@@ -1,30 +1,22 @@
-//! The canonical Rust application runtime.
+//! The Rust application runtime for the local work-memory MVP.
 //!
-//! This crate is the composition boundary between the Rust-owned SQLite
-//! schema, deterministic classification policy, the LLM adapters, and the
-//! transport-independent Agent Harness. The legacy Python-compatible store is
-//! intentionally not used here.
+//! This crate composes the Rust-owned SQLite service, deterministic safety
+//! gates, and structured model adapter into the complete archive loop.
 
 use std::fmt::Display;
 
 use serde_json::{Value, json};
 use thiserror::Error;
-use work_memory_agent::{
-    AGENT_SYSTEM_PROMPT, AgentHarness, AgentHarnessError, AgentHarnessRequest, AgentHistoryMessage,
-    AgentToolExecution, AgentToolExecutor, LlmError, StructuredOutputAdapter,
-    StructuredOutputTransport,
-};
-use work_memory_contracts::{
-    AgentToolArguments, ChatRole, ClassificationContract, ExtractionContract,
-};
+use work_memory_agent::{LlmError, StructuredOutputAdapter, StructuredOutputTransport};
+use work_memory_contracts::{ClassificationContract, ExtractionContract};
 use work_memory_core::{
     BucketType, BucketView, ClassificationAction, ClassificationResult, ConfidencePolicy,
     ExtractionResult,
 };
 use work_memory_service::{CanonicalService, CanonicalServiceError};
 use work_memory_store::{
-    RustArchiveAudit, RustArchiveOutcome, RustBucket, RustBucketDetail, RustChatMessage, RustEntry,
-    RustSearchHit, StoreError,
+    RustArchiveAudit, RustArchiveOutcome, RustBucket, RustBucketDetail, RustEntry, RustSearchHit,
+    StoreError,
 };
 
 /// Prompt version persisted in canonical archive audit rows.
@@ -33,8 +25,6 @@ pub const RUNTIME_PROMPT_VERSION: &str = "rust-runtime-v1";
 pub const DEFAULT_ACTIVE_BUCKET_LIMIT: usize = 20;
 /// Default model retry count for structured classification/extraction calls.
 pub const DEFAULT_STRUCTURED_OUTPUT_RETRIES: usize = 2;
-/// Default number of chat messages loaded into one Agent context.
-pub const DEFAULT_CHAT_HISTORY_LIMIT: usize = 40;
 
 /// The model boundary used by the canonical archive coordinator.
 ///
@@ -352,204 +342,24 @@ pub struct ArchiveExecution {
     pub bucket: Option<RustBucket>,
 }
 
-/// One allow-listed tool executor connected to the canonical Rust store.
-pub struct CanonicalAgentToolExecutor<'a, M> {
-    service: &'a mut CanonicalService,
-    model: &'a mut M,
-    policy: ConfidencePolicy,
-    model_name: String,
-    prompt_version: String,
-    current_focus_bucket_id: Option<String>,
-    confirmation_granted: bool,
-    active_bucket_limit: usize,
-}
-
-impl<'a, M: MemoryModel> CanonicalAgentToolExecutor<'a, M> {
-    pub fn new(
-        service: &'a mut CanonicalService,
-        model: &'a mut M,
-        policy: ConfidencePolicy,
-        model_name: impl Into<String>,
-        prompt_version: impl Into<String>,
-        confirmation_granted: bool,
-    ) -> Result<Self, RuntimeError> {
-        let model_name = non_empty(model_name.into(), "model_name")?;
-        let prompt_version = non_empty(prompt_version.into(), "prompt_version")?;
-        Ok(Self {
-            service,
-            model,
-            policy,
-            model_name,
-            prompt_version,
-            current_focus_bucket_id: None,
-            confirmation_granted,
-            active_bucket_limit: DEFAULT_ACTIVE_BUCKET_LIMIT,
-        })
-    }
-
-    pub fn with_focus_bucket(mut self, bucket_id: Option<String>) -> Self {
-        self.current_focus_bucket_id = bucket_id.filter(|value| !value.trim().is_empty());
-        self
-    }
-
-    pub fn with_active_bucket_limit(mut self, limit: usize) -> Result<Self, RuntimeError> {
-        if limit == 0 {
-            return Err(RuntimeError::InvalidLimit {
-                field: "active_bucket_limit",
-            });
-        }
-        self.active_bucket_limit = limit;
-        Ok(self)
-    }
-
-    fn archive_coordinator(&mut self) -> Result<CanonicalArchiveCoordinator<'_, M>, RuntimeError> {
-        CanonicalArchiveCoordinator::new(
-            self.service,
-            self.model,
-            self.policy,
-            self.model_name.clone(),
-            self.prompt_version.clone(),
-        )
-        .map(|coordinator| coordinator.with_focus_bucket(self.current_focus_bucket_id.clone()))
-    }
-}
-
-impl<M: MemoryModel> AgentToolExecutor for CanonicalAgentToolExecutor<'_, M> {
-    fn execute(&mut self, arguments: AgentToolArguments) -> Result<Value, String> {
-        self.execute_inner(arguments)
-            .map_err(|error| error.to_string())
-    }
-}
-
-impl<M: MemoryModel> CanonicalAgentToolExecutor<'_, M> {
-    fn execute_inner(&mut self, arguments: AgentToolArguments) -> Result<Value, RuntimeError> {
-        match arguments {
-            AgentToolArguments::ListActiveBuckets => {
-                let buckets = self.service.list_active_buckets(self.active_bucket_limit)?;
-                Ok(
-                    json!({"ok": true, "buckets": buckets.iter().map(rust_bucket_to_value).collect::<Result<Vec<_>, _>>()?}),
-                )
-            }
-            AgentToolArguments::SearchMemory { query } => {
-                let hits = self.service.search(&query, self.active_bucket_limit)?;
-                Ok(
-                    json!({"ok": true, "results": hits.iter().map(search_hit_to_value).collect::<Result<Vec<_>, _>>()?}),
-                )
-            }
-            AgentToolArguments::GetBucketDetail { bucket_id } => {
-                let detail = self
-                    .service
-                    .bucket_detail(&bucket_id)?
-                    .ok_or_else(|| RuntimeError::MissingBucket(bucket_id.clone()))?;
-                Ok(json!({"ok": true, "detail": bucket_detail_to_value(&detail)?}))
-            }
-            AgentToolArguments::ArchiveMemory { text } => {
-                let mut coordinator = self.archive_coordinator()?;
-                let execution = coordinator.archive(&text)?;
-                Ok(archive_execution_to_value(&execution)?)
-            }
-            AgentToolArguments::SaveToExistingBucket { bucket_id, text } => {
-                if !self.confirmation_granted {
-                    return Err(RuntimeError::ConfirmationRequired);
-                }
-                let mut coordinator = self.archive_coordinator()?;
-                let execution = coordinator.append_confirmed(&bucket_id, &text)?;
-                Ok(archive_execution_to_value(&execution)?)
-            }
-            AgentToolArguments::CreateBucketAndSave {
-                title,
-                bucket_type,
-                text,
-            } => {
-                if !self.confirmation_granted {
-                    return Err(RuntimeError::ConfirmationRequired);
-                }
-                let mut coordinator = self.archive_coordinator()?;
-                let execution = coordinator.create_confirmed(&title, bucket_type, &text)?;
-                Ok(archive_execution_to_value(&execution)?)
-            }
-        }
-    }
-}
-
-/// Input for one complete persisted canonical Agent turn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnRequest {
-    pub user_text: String,
-    pub model: String,
-    pub system_prompt: String,
-    pub current_focus_bucket_id: Option<String>,
-    pub confirmation_granted: bool,
-    pub max_tool_rounds: usize,
-    pub history_limit: usize,
-}
-
-impl TurnRequest {
-    pub fn new(
-        user_text: impl Into<String>,
-        model: impl Into<String>,
-    ) -> Result<Self, RuntimeError> {
-        Ok(Self {
-            user_text: required_text(user_text.into(), "user_text")?,
-            model: required_text(model.into(), "model")?,
-            system_prompt: AGENT_SYSTEM_PROMPT.to_owned(),
-            current_focus_bucket_id: None,
-            confirmation_granted: false,
-            max_tool_rounds: work_memory_agent::DEFAULT_AGENT_MAX_TOOL_ROUNDS,
-            history_limit: DEFAULT_CHAT_HISTORY_LIMIT,
-        })
-    }
-
-    pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Result<Self, RuntimeError> {
-        self.system_prompt = required_text(prompt.into(), "system_prompt")?;
-        Ok(self)
-    }
-
-    pub fn with_focus_bucket(mut self, bucket_id: Option<String>) -> Self {
-        self.current_focus_bucket_id = bucket_id.filter(|value| !value.trim().is_empty());
-        self
-    }
-
-    pub const fn with_confirmation(mut self, granted: bool) -> Self {
-        self.confirmation_granted = granted;
-        self
-    }
-
-    pub fn with_limits(
-        mut self,
-        max_tool_rounds: usize,
-        history_limit: usize,
-    ) -> Result<Self, RuntimeError> {
-        if history_limit == 0
-            || history_limit > work_memory_agent::MAX_AGENT_HISTORY_MESSAGES
-            || max_tool_rounds > work_memory_agent::MAX_AGENT_TOOL_ROUNDS
-        {
-            return Err(RuntimeError::InvalidLimit {
-                field: "turn_limits",
-            });
-        }
-        self.max_tool_rounds = max_tool_rounds;
-        self.history_limit = history_limit;
-        Ok(self)
-    }
-}
-
-/// Canonical runtime owning the application store and composing a model with
-/// the existing Agent Harness.
-pub struct CanonicalRuntime<M, T> {
+/// Rust runtime owning the MVP store and structured memory model.
+///
+/// One call to [`Self::archive`] executes the complete MVP loop: classify,
+/// apply server-side gates, extract structured memory, persist the archive, and
+/// return the stored result. Explicit confirmation methods are separate so a
+/// low-confidence classification can never silently become a write.
+pub struct CanonicalRuntime<M> {
     service: CanonicalService,
     model: M,
-    harness: AgentHarness<T>,
     policy: ConfidencePolicy,
     model_name: String,
     prompt_version: String,
 }
 
-impl<M, T> CanonicalRuntime<M, T> {
+impl<M> CanonicalRuntime<M> {
     pub fn new(
         service: CanonicalService,
         model: M,
-        harness: AgentHarness<T>,
         policy: ConfidencePolicy,
         model_name: impl Into<String>,
         prompt_version: impl Into<String>,
@@ -557,7 +367,6 @@ impl<M, T> CanonicalRuntime<M, T> {
         Ok(Self {
             service,
             model,
-            harness,
             policy,
             model_name: non_empty(model_name.into(), "model_name")?,
             prompt_version: non_empty(prompt_version.into(), "prompt_version")?,
@@ -571,80 +380,68 @@ impl<M, T> CanonicalRuntime<M, T> {
     pub fn service_mut(&mut self) -> &mut CanonicalService {
         &mut self.service
     }
-
-    pub fn harness(&self) -> &AgentHarness<T> {
-        &self.harness
-    }
-
-    pub fn harness_mut(&mut self) -> &mut AgentHarness<T> {
-        &mut self.harness
-    }
 }
 
-impl<M, T> CanonicalRuntime<M, T>
-where
-    M: MemoryModel,
-    T: StructuredOutputTransport,
-{
-    /// Persist the user message, run the bounded Agent loop against canonical
-    /// tools, persist tool activity, and only then persist a successful answer.
-    pub fn run_turn(&mut self, request: &TurnRequest) -> Result<TurnOutcome, RuntimeError> {
-        let user_text = required_text(request.user_text.clone(), "user_text")?;
-        let prior_history = self.service.list_chat_messages(request.history_limit)?;
-        self.service
-            .append_chat_message(ChatRole::User, user_text.clone(), None, None, None)?;
-        let mut history = prior_history
-            .into_iter()
-            .map(chat_to_history)
-            .collect::<Result<Vec<_>, _>>()?;
-        history.push(AgentHistoryMessage::new(ChatRole::User, user_text.clone())?);
-        let active_buckets = self
-            .service
-            .list_active_buckets(DEFAULT_ACTIVE_BUCKET_LIMIT)?;
-        let memory_context =
-            memory_context_to_string(&active_buckets, request.current_focus_bucket_id.as_deref())?;
-        let harness_request = AgentHarnessRequest::new(
-            request.model.clone(),
-            request.system_prompt.clone(),
-            memory_context,
-            history,
-            request.max_tool_rounds,
-        )?;
-        let mut executor = CanonicalAgentToolExecutor::new(
+impl<M: MemoryModel> CanonicalRuntime<M> {
+    /// Classify, extract, and persist one user-provided memory.
+    pub fn archive(
+        &mut self,
+        text: &str,
+        current_focus_bucket_id: Option<String>,
+    ) -> Result<ArchiveExecution, RuntimeError> {
+        let coordinator = CanonicalArchiveCoordinator::new(
             &mut self.service,
             &mut self.model,
             self.policy,
             self.model_name.clone(),
             self.prompt_version.clone(),
-            request.confirmation_granted,
-        )?
-        .with_focus_bucket(request.current_focus_bucket_id.clone());
-        let result = self.harness.run(&harness_request, &mut executor)?;
-        let tool_messages = persist_tool_executions(&mut self.service, result.tool_executions())?;
-        let assistant = self.service.append_chat_message(
-            ChatRole::Assistant,
-            result.assistant_text().to_owned(),
-            None,
-            None,
-            None,
         )?;
-        Ok(TurnOutcome {
-            assistant,
-            tool_messages,
-            tool_executions: result.tool_executions().to_vec(),
-        })
+        coordinator
+            .with_focus_bucket(current_focus_bucket_id)
+            .archive(text)
+    }
+
+    /// Explicitly append one memory to an existing Bucket.
+    pub fn append_confirmed(
+        &mut self,
+        bucket_id: &str,
+        text: &str,
+        current_focus_bucket_id: Option<String>,
+    ) -> Result<ArchiveExecution, RuntimeError> {
+        let coordinator = CanonicalArchiveCoordinator::new(
+            &mut self.service,
+            &mut self.model,
+            self.policy,
+            self.model_name.clone(),
+            self.prompt_version.clone(),
+        )?;
+        coordinator
+            .with_focus_bucket(current_focus_bucket_id)
+            .append_confirmed(bucket_id, text)
+    }
+
+    /// Explicitly create a Bucket and save its first memory.
+    pub fn create_confirmed(
+        &mut self,
+        title: &str,
+        bucket_type: BucketType,
+        text: &str,
+        current_focus_bucket_id: Option<String>,
+    ) -> Result<ArchiveExecution, RuntimeError> {
+        let coordinator = CanonicalArchiveCoordinator::new(
+            &mut self.service,
+            &mut self.model,
+            self.policy,
+            self.model_name.clone(),
+            self.prompt_version.clone(),
+        )?;
+        coordinator
+            .with_focus_bucket(current_focus_bucket_id)
+            .create_confirmed(title, bucket_type, text)
     }
 }
 
-/// Successful durable turn projection.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TurnOutcome {
-    pub assistant: RustChatMessage,
-    pub tool_messages: Vec<RustChatMessage>,
-    pub tool_executions: Vec<AgentToolExecution>,
-}
-
-/// Read-only API projection helpers used by the future HTTP server/UI.
+/// Read-only API projection helpers used by the HTTP server and embedded UI.
 pub fn active_buckets(service: &CanonicalService, limit: usize) -> Result<Value, RuntimeError> {
     Ok(json!({
         "buckets": service
@@ -677,48 +474,6 @@ pub fn bucket_detail(
         .bucket_detail(bucket_id)?
         .map(|detail| bucket_detail_to_value(&detail))
         .transpose()
-}
-
-fn persist_tool_executions(
-    service: &mut CanonicalService,
-    executions: &[AgentToolExecution],
-) -> Result<Vec<RustChatMessage>, RuntimeError> {
-    executions
-        .iter()
-        .map(|execution| {
-            let output = execution.output().to_string();
-            let details = json!({
-                "arguments": execution.arguments(),
-                "output": execution.output(),
-            });
-            service
-                .append_chat_message(
-                    ChatRole::Tool,
-                    output,
-                    Some(execution.name().to_owned()),
-                    Some(execution.call_id().to_owned()),
-                    Some(details),
-                )
-                .map_err(RuntimeError::from)
-        })
-        .collect()
-}
-
-fn chat_to_history(message: RustChatMessage) -> Result<AgentHistoryMessage, RuntimeError> {
-    AgentHistoryMessage::new(message.role, message.content).map_err(RuntimeError::from)
-}
-
-fn memory_context_to_string(
-    buckets: &[RustBucket],
-    focus_bucket_id: Option<&str>,
-) -> Result<String, RuntimeError> {
-    Ok(serde_json::to_string(&json!({
-        "current_focus_bucket_id": focus_bucket_id,
-        "active_buckets": buckets
-            .iter()
-            .map(rust_bucket_to_value)
-            .collect::<Result<Vec<_>, _>>()?,
-    }))?)
 }
 
 fn bucket_view_to_value(view: &BucketView) -> Result<Value, work_memory_contracts::ContractError> {
@@ -794,7 +549,7 @@ fn entry_to_value(entry: &RustEntry) -> Result<Value, RuntimeError> {
     }))
 }
 
-fn archive_execution_to_value(execution: &ArchiveExecution) -> Result<Value, RuntimeError> {
+pub fn archive_execution_to_value(execution: &ArchiveExecution) -> Result<Value, RuntimeError> {
     Ok(json!({
         "ok": true,
         "attempt_id": execution.outcome.attempt_id,
@@ -807,6 +562,11 @@ fn archive_execution_to_value(execution: &ArchiveExecution) -> Result<Value, Run
         "reason": execution.classification.reason(),
         "question": execution.classification.question(),
         "candidate_bucket_ids": execution.classification.candidate_bucket_ids(),
+        "bucket_title": execution
+            .classification
+            .title()
+            .or_else(|| execution.bucket.as_ref().map(|bucket| bucket.title.as_str())),
+        "bucket_type": execution.classification.bucket_type().map(BucketType::as_str),
         "bucket": execution.bucket.as_ref().map(rust_bucket_to_value).transpose()?,
         "extraction": execution.extraction.as_ref().map(extraction_to_value),
     }))
@@ -865,8 +625,6 @@ pub enum RuntimeError {
     Contract(#[from] work_memory_contracts::ContractError),
     #[error("store error: {0}")]
     Store(#[from] StoreError),
-    #[error("agent error: {0}")]
-    Agent(#[from] AgentHarnessError),
     #[error("model error: {0}")]
     Model(String),
     #[error("JSON error: {0}")]

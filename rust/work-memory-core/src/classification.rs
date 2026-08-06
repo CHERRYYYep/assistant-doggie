@@ -244,9 +244,6 @@ pub fn apply_low_information_reference_gate(
 }
 
 /// Apply all deterministic safeguards after an adapter parses the LLM output.
-///
-/// As in the Python MVP, a valid `create_new` result may bootstrap an empty
-/// workspace without being downgraded solely because its confidence is medium.
 pub fn postprocess_classification(
     text: &str,
     result: ClassificationResult,
@@ -259,9 +256,6 @@ pub fn postprocess_classification(
 
     let result = validate_candidate_reference(result, candidates)?;
     let result = apply_low_information_reference_gate(text.trim(), result)?;
-    if candidates.is_empty() && result.action() == ClassificationAction::CreateNew {
-        return Ok(result);
-    }
     apply_confidence_gate(result, policy)
 }
 

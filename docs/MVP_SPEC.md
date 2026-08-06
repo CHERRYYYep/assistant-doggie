@@ -1,248 +1,181 @@
-# MVP 功能规格
+# Rust Work Memory MVP 规格
 
-## 1. MVP 总目标
+## 1. 目标
 
-实现一个可以本地运行的最小闭环：
-
-```text
-输入文本 → 自动分类/新建 bucket → 结构化提取 → 保存 → 展示归档结果 → 查看 bucket
-```
-
-MVP 的当前运行路径仍是 Python/Streamlit；Rust canonical 存储是后续 cutover 的生产目标。切换时先把冻结的 Python legacy SQLite 作为只读 source，一次性语义导入到全新的 Rust canonical SQLite，再把 Rust runtime/service/store 设为 canonical 数据库的唯一生产写入者。Python 与 Rust 不得并发写同一数据库；导入、回滚和验证步骤见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
-
-## 2. 功能清单
-
-### F1：文本输入
-
-用户可以在页面输入任意文本。
-
-输入示例：
+MVP 只解决一个闭环：把一段工作事实可靠地归档到 Rust SQLite，并让用户立即看到归档结果和 Bucket 内容。
 
 ```text
-支付回调从 10:20 开始失败，日志里第三方返回 502，影响订单确认。
+输入文本
+  ↓
+读取活跃 Bucket 候选
+  ↓
+Structured Output 分类
+  ↓
+服务端安全门控
+  ├─ ask_user：保存待确认审计，不写 Entry
+  └─ append_existing/create_new：结构化提取并原子写入
+  ↓
+返回 ArchiveExecution 和 Bucket 详情
 ```
 
-输出：进入归档流程。
+## 2. 分类模型
 
-### F2：读取上下文
+分类结果包含：
 
-系统在分类前读取：
+- `action`：`append_existing`、`create_new` 或 `ask_user`
+- `bucket_id`：追加时的服务端候选 ID
+- `bucket_type`、`title`：新建时使用
+- `confidence`：`0.0..=1.0` 的风险信号
+- `reason`：分类理由
+- `question`：需要确认时的问题
+- `candidate_bucket_ids`：服务端候选 ID 的子集
 
-- 当前焦点 bucket。
-- 最近活跃 buckets。
-- 最近几条 entries。
-- 用户偏好。
+模型只能引用 runtime 提供的 Bucket 候选。runtime 会过滤未知 ID，不允许模型自行创建或猜测持久化 ID。
 
-MVP 简化：只读取最近 20 个 active bucket。
+## 3. 安全门控
 
-### F3：分类决策
+默认策略：
 
-系统输出三种动作之一：
-
-| action | 含义 |
+| 条件 | 结果 |
 |---|---|
-| append_existing | 追加到已有 bucket |
-| create_new | 创建新 bucket |
-| ask_user | 需要确认目标或新建意图 |
+| 已经是 `ask_user` | 只保存归档审计 |
+| 多个候选 Bucket | 请求确认 |
+| 唯一候选且 `confidence >= 0.85` | 自动归档 |
+| `0.55 <= confidence < 0.85` | 请求确认 |
+| `confidence < 0.55` | 请求确认 |
+| 模糊指代且只有“继续处理/补充一下”等低信息动作 | 请求确认 |
 
-置信度策略：
+空工作区不改变上述规则：`create_new` 仍需达到自动归档阈值，低置信度新建只返回确认信息。这样可以避免把不确定输入误当成第一个长期事务。
 
-| 条件 | 策略 |
-|---|---|
-| confidence >= 0.85 且候选唯一 | 直接归档 |
-| 0.55 <= confidence < 0.85 | 不写正式 Entry，先确认 |
-| confidence < 0.55 | 不写正式 Entry，必须确认 |
-| 多个相似候选 | 无论分数高低都先确认 |
+## 4. 归档写入
 
-### F4：新建 bucket
+通过自动归档或确认接口写入时，Rust service 在一个 SQLite 事务中完成：
 
-如果系统判断为新主题，则创建 bucket。
+1. 创建或读取目标 Bucket。
+2. 创建原始 Entry。
+3. 保存结构化 memory items。
+4. 更新 Bucket 摘要、标签和活动时间。
+5. 保存 archive attempt 审计及最终状态。
 
-新建字段：
+正式 Entry 的事实字段包括 `raw_text`、`summary`、`content_type`、分类置信度、分类理由和时间戳。提取结果可以包含：
 
-- title
-- type
-- status = active
-- summary
-- tags
+- `summary`
+- `todos`
+- `evidences`
+- `timeline_events`
+- `decisions`
+- `hypotheses`
+- `entities`
+- `tags`
 
-### F5：追加 entry
+缺失内容使用空数组，不应由模型补造事实。`timeline_events.event_time` 保留用户原文表达，避免在 MVP 中丢失模糊时间信息。
 
-只有分类通过并实际归档的输入才保存为正式 Entry；`ask_user` 只保存待确认的分类/归档审计，不创建 Entry。确认完成后，再由追加或新建流程写入 Entry。
+`ask_user` 只创建 archive attempt，`entry_id`、`bucket_id` 和 memory item 列表为空。用户确认后必须调用显式确认接口，不能通过再次调用普通归档接口绕过确认。
 
-保存字段：
+## 5. HTTP 接口
 
-- bucket_id
-- raw_text
-- summary
-- content_type
-- created_at
+### 5.1 自动归档
 
-### F6：结构化提取
+`POST /api/archive`
 
-从输入中提取：
-
-- summary
-- todos
-- evidences
-- timeline_events
-- decisions
-- hypotheses
-- entities
-- tags
-
-缺失内容返回空数组，不要编造。
-
-### F7：更新 bucket 摘要
-
-每次归档后更新 bucket 的整体摘要。
-
-MVP 简化：
-
-- bucket.summary 可以先拼接/压缩最近摘要。
-- 后续再引入更稳定的 rolling summary 逻辑。
-
-### F8：归档反馈
-
-每次归档后必须告诉用户：
-
-```text
-已归档到：支付回调失败排查
-类型：incident
-动作：新建 bucket / 追加已有 bucket
-置信度：0.91
-原因：内容描述线上支付回调失败和日志证据，符合 incident 类型。
+```json
+{
+  "text": "支付回调从 10:20 开始失败，第三方返回 502。",
+  "focus_bucket_id": "optional-bucket-id"
+}
 ```
 
-确认后追加：
+成功响应包含：
 
-```text
-我先放到了「支付回调失败排查」。如果不对，你可以说：“把刚才那条移到 XXX”。
+```json
+{
+  "ok": true,
+  "archive_state": "archived",
+  "action": "create_new",
+  "confidence": 0.93,
+  "bucket_id": "bucket-id",
+  "entry_id": "entry-id",
+  "bucket_title": "支付回调故障",
+  "bucket_type": "incident",
+  "candidate_bucket_ids": [],
+  "extraction": {"summary": "..."}
+}
 ```
 
-### F9：bucket 详情
+当需要确认时，`archive_state` 为 `needs_confirmation`，响应中的 `bucket_id`、`entry_id` 和 `memory_item_ids` 均为 `null` 或空数组，不会创建正式 Entry；`question`、`candidate_bucket_ids`、`bucket_title` 和 `bucket_type` 用于渲染确认操作。
 
-详情页展示：
+### 5.2 确认追加
 
-- 标题
-- 类型
-- 状态
-- 摘要
-- 时间线
-- TODO
-- 证据
-- 决策
-- 原始记录
+`POST /api/archive/append`
 
-### F10：自然语言纠错，MVP 版
-
-当前已实现的第一条纠错路径是移动最近或指定 Entry，并记录前后快照。其余纠错动作先作为后续扩展，不应在未接入服务/UI 前对外宣称已完成：
-
-| 用户说法 | 系统动作 | 状态 |
-|---|---|---|
-| 刚才那条放到 XXX | 移动最近 entry，并同步派生记忆、摘要和纠错审计 | 已实现 |
-| 这个单独新开一个 | 为最近 entry 新建 bucket | 计划中 |
-| 这个不是 idea，是 task | 修改 bucket 类型 | 计划中 |
-| 把 A 和 B 合并 | 合并两个 bucket | 计划中 |
-
-### F11：搜索历史 bucket
-
-用户可以通过关键词找 bucket。
-
-MVP 搜索字段：
-
-- bucket.title
-- bucket.summary
-- bucket.tags
-- entry.raw_text
-
-## 3. 页面规格
-
-### 页面 1：主输入页
-
-布局：
-
-```text
-左侧：活跃 bucket 列表
-右侧上方：输入框
-右侧下方：归档结果
+```json
+{
+  "bucket_id": "bucket-id",
+  "text": "备用通道已恢复。",
+  "confirmation_granted": true
+}
 ```
 
-### 页面 2：bucket 详情页
+### 5.3 确认新建
 
-可以先在同一个 Streamlit 页面中实现，不需要独立路由。
+`POST /api/archive/create`
 
-展示区块：
+`bucket_type` 必须是 `idea`、`task`、`incident`、`experiment`、`decision`、`meeting`、`knowledge` 或 `draft`。
 
-```text
-摘要
-时间线
-TODO
-证据
-决策
-原始记录
+```json
+{
+  "title": "支付回调故障",
+  "bucket_type": "incident",
+  "text": "第三方返回 502。",
+  "confirmation_granted": true
+}
 ```
 
-## 4. API / 函数规格
+### 5.4 查询和纠错
 
-MVP 可以先不做 HTTP API，直接写 Python 函数。
+- `GET /api/buckets/active?limit=20`
+- `GET /api/buckets/search?q=支付&limit=20`
+- `GET /api/buckets/:id`
+- `POST /api/corrections/move`，请求 `{ "entry_id": "...", "target_bucket_id": "...", "command_text": "..." }`
+- `POST /api/buckets/status`，请求 `{ "bucket_id": "...", "status": "active|paused|archived" }`
 
-核心函数：
+详情响应至少包含 Bucket、Entry 和 memory 列表，便于 UI 在归档后立即展开查看。
 
-```python
-archive_user_input(text: str) -> ArchiveResult
-classify_input(text: str, active_buckets: list[Bucket]) -> ClassificationResult
-extract_info(text: str) -> ExtractionResult
-create_bucket(...)
-append_entry(...)
-search_buckets(query: str)
-correct_last_action(command: str)
-```
+## 6. 内嵌 UI
 
-## 5. 验收标准
+首页提供：
 
-### 场景 A：incident 连续输入
+1. 文本输入和归档按钮。
+2. 最近的活跃 Bucket 列表。
+3. 归档状态、分类理由、置信度和提取摘要。
+4. `needs_confirmation` 时的确认追加/确认新建按钮。
+5. Bucket 详情中的摘要和原始 Entry。
 
-输入 1：
+UI 只调用 HTTP API，不直接访问 SQLite。
 
-```text
-支付回调从 10:20 开始大量失败，日志里第三方返回 502。
-```
+## 7. 验收场景
 
-期望：创建 incident bucket。
+### 场景 A：新建并追加故障事务
 
-输入 2：
+1. 输入“支付回调从 10:20 开始失败，第三方返回 502”。
+2. 分类为高置信度 `create_new`，创建 `incident` Bucket。
+3. 输入“10:40 切备用通道后恢复了”。
+4. 分类为唯一高置信度 `append_existing`，追加到同一 Bucket。
+5. Bucket 详情包含两条原始 Entry 和提取出的事实。
 
-```text
-刚才那个支付问题，10:40 切备用通道后恢复了。
-```
+### 场景 B：不确定输入先确认
 
-期望：追加到同一个 bucket。
+1. 空工作区输入一条低置信度的新主题。
+2. 响应为 `needs_confirmation`，数据库只有 archive attempt，没有 Entry。
+3. 用户调用 `/api/archive/create` 并携带 `confirmation_granted: true`。
+4. 创建 Bucket、第一条 Entry 和结构化 memory。
 
-### 场景 B：experiment 连续输入
+### 场景 C：纠错移动
 
-输入 1：
+1. 对一个已有 Entry 调用 `/api/corrections/move`。
+2. Entry 的 `bucket_id` 变为目标 Bucket，保留 `moved_from_bucket_id`。
+3. 返回纠错结果，并写入 correction audit。
 
-```text
-今天压测接口 A，QPS 到 1200 后 P99 延迟 2.3s。
-```
+## 8. 非目标与限制
 
-期望：创建 experiment bucket。
-
-输入 2：
-
-```text
-把连接池从 50 调到 100 后，P99 降到了 1.4s。
-```
-
-期望：追加到同一个 bucket。
-
-### 场景 C：纠错
-
-用户：
-
-```text
-刚才那条不要放到支付问题，放到接口稳定性问题里。
-```
-
-期望：最近 entry 被移动，并记录 correction log。
+MVP 不包含多用户权限、远程部署安全层、附件、向量检索、复杂对话编排、自动合并多个 Bucket 或后台任务队列。服务默认只适合本机受信环境；需要对外提供时，必须在 HTTP 层前置认证、TLS、限流和请求幂等控制。

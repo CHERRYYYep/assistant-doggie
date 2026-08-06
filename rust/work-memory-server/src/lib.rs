@@ -9,13 +9,11 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 use serde_json::{Value, json};
-use thiserror::Error;
-use work_memory_agent::{AgentToolExecution, StructuredOutputTransport};
-use work_memory_core::BucketStatus;
+use work_memory_core::{BucketStatus, BucketType};
 use work_memory_runtime::{
-    CanonicalRuntime, RuntimeError, TurnOutcome, active_buckets, bucket_detail, search_memory,
+    CanonicalRuntime, RuntimeError, active_buckets, archive_execution_to_value, bucket_detail,
+    search_memory,
 };
-use work_memory_store::RustChatMessage;
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8787";
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -88,40 +86,28 @@ impl HttpResponse {
     }
 }
 
-/// A generic server wrapper around the canonical runtime.
-pub struct Server<M, T> {
-    runtime: CanonicalRuntime<M, T>,
-    default_model: String,
+/// HTTP server for the Rust MVP runtime.
+pub struct Server<M> {
+    runtime: CanonicalRuntime<M>,
 }
 
-impl<M, T> Server<M, T> {
-    pub fn new(
-        runtime: CanonicalRuntime<M, T>,
-        default_model: impl Into<String>,
-    ) -> Result<Self, ServerError> {
-        let default_model = default_model.into().trim().to_owned();
-        if default_model.is_empty() {
-            return Err(ServerError::EmptyDefaultModel);
-        }
-        Ok(Self {
-            runtime,
-            default_model,
-        })
+impl<M> Server<M> {
+    pub const fn new(runtime: CanonicalRuntime<M>) -> Self {
+        Self { runtime }
     }
 
-    pub fn runtime(&self) -> &CanonicalRuntime<M, T> {
+    pub fn runtime(&self) -> &CanonicalRuntime<M> {
         &self.runtime
     }
 
-    pub fn runtime_mut(&mut self) -> &mut CanonicalRuntime<M, T> {
+    pub fn runtime_mut(&mut self) -> &mut CanonicalRuntime<M> {
         &mut self.runtime
     }
 }
 
-impl<M, T> Server<M, T>
+impl<M> Server<M>
 where
     M: work_memory_runtime::MemoryModel,
-    T: StructuredOutputTransport,
 {
     /// Dispatch one request without performing network I/O.
     pub fn handle_request(&mut self, request: HttpRequest) -> HttpResponse {
@@ -136,7 +122,9 @@ where
             ("GET", path) if path.starts_with("/api/buckets/") => {
                 self.handle_bucket_detail(&path["/api/buckets/".len()..])
             }
-            ("POST", "/api/chat") => self.handle_chat(&request.body),
+            ("POST", "/api/archive") => self.handle_archive(&request.body),
+            ("POST", "/api/archive/append") => self.handle_confirmed_append(&request.body),
+            ("POST", "/api/archive/create") => self.handle_confirmed_create(&request.body),
             ("POST", "/api/corrections/move") => self.handle_move(&request.body),
             ("POST", "/api/buckets/status") => self.handle_bucket_status(&request.body),
             _ => HttpResponse::error(404, "route not found"),
@@ -187,57 +175,101 @@ where
         }
     }
 
-    fn handle_chat(&mut self, body: &str) -> HttpResponse {
+    fn handle_archive(&mut self, body: &str) -> HttpResponse {
         let value = match parse_json_object(body) {
             Ok(value) => value,
             Err(error) => return HttpResponse::error(400, error),
         };
-        let Some(message) = value.get("message").and_then(Value::as_str) else {
-            return HttpResponse::error(400, "message must be a string");
+        let Some(text) = value.get("text").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "text must be a string");
         };
-        let model = value
-            .get("model")
-            .and_then(Value::as_str)
-            .unwrap_or(&self.default_model);
-        let mut request = match work_memory_runtime::TurnRequest::new(message, model) {
-            Ok(request) => request,
-            Err(error) => return runtime_error_response(error),
+        match self
+            .runtime
+            .archive(text, optional_string(&value, "focus_bucket_id"))
+        {
+            Ok(execution) => match archive_execution_to_value(&execution) {
+                Ok(mut body) => {
+                    body["ok"] = json!(true);
+                    HttpResponse::json(200, body)
+                }
+                Err(error) => runtime_error_response(error),
+            },
+            Err(error) => runtime_error_response(error),
+        }
+    }
+
+    fn handle_confirmed_append(&mut self, body: &str) -> HttpResponse {
+        let value = match parse_json_object(body) {
+            Ok(value) => value,
+            Err(error) => return HttpResponse::error(400, error),
         };
-        if let Some(focus) = optional_string(&value, "focus_bucket_id") {
-            request = request.with_focus_bucket(Some(focus));
+        if !value
+            .get("confirmation_granted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return runtime_error_response(RuntimeError::ConfirmationRequired);
         }
-        request = request.with_confirmation(
-            value
-                .get("confirmation_granted")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        );
-        if value.get("max_tool_rounds").is_some() || value.get("history_limit").is_some() {
-            let max_rounds = match value
-                .get("max_tool_rounds")
-                .and_then(Value::as_u64)
-                .map(usize::try_from)
-                .transpose()
-            {
-                Ok(Some(value)) => value,
-                Ok(None) | Err(_) => work_memory_agent::DEFAULT_AGENT_MAX_TOOL_ROUNDS,
-            };
-            let history_limit = match value
-                .get("history_limit")
-                .and_then(Value::as_u64)
-                .map(usize::try_from)
-                .transpose()
-            {
-                Ok(Some(value)) => value,
-                Ok(None) | Err(_) => work_memory_runtime::DEFAULT_CHAT_HISTORY_LIMIT,
-            };
-            request = match request.with_limits(max_rounds, history_limit) {
-                Ok(request) => request,
-                Err(error) => return runtime_error_response(error),
-            };
+        let Some(bucket_id) = value.get("bucket_id").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "bucket_id must be a string");
+        };
+        let Some(text) = value.get("text").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "text must be a string");
+        };
+        match self.runtime.append_confirmed(
+            bucket_id,
+            text,
+            optional_string(&value, "focus_bucket_id"),
+        ) {
+            Ok(execution) => match archive_execution_to_value(&execution) {
+                Ok(mut body) => {
+                    body["ok"] = json!(true);
+                    HttpResponse::json(200, body)
+                }
+                Err(error) => runtime_error_response(error),
+            },
+            Err(error) => runtime_error_response(error),
         }
-        match self.runtime.run_turn(&request) {
-            Ok(outcome) => HttpResponse::json(200, turn_to_value(&outcome)),
+    }
+
+    fn handle_confirmed_create(&mut self, body: &str) -> HttpResponse {
+        let value = match parse_json_object(body) {
+            Ok(value) => value,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        if !value
+            .get("confirmation_granted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return runtime_error_response(RuntimeError::ConfirmationRequired);
+        }
+        let Some(title) = value.get("title").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "title must be a string");
+        };
+        let Some(bucket_type) = value.get("bucket_type").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "bucket_type must be a string");
+        };
+        let bucket_type = match parse_bucket_type(bucket_type) {
+            Ok(bucket_type) => bucket_type,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        let Some(text) = value.get("text").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "text must be a string");
+        };
+        match self.runtime.create_confirmed(
+            title,
+            bucket_type,
+            text,
+            optional_string(&value, "focus_bucket_id"),
+        ) {
+            Ok(execution) => match archive_execution_to_value(&execution) {
+                Ok(mut body) => {
+                    body["ok"] = json!(true);
+                    HttpResponse::json(200, body)
+                }
+                Err(error) => runtime_error_response(error),
+            },
             Err(error) => runtime_error_response(error),
         }
     }
@@ -306,11 +338,10 @@ where
     }
 }
 
-/// Serve one generic runtime until the process is stopped.
-pub fn serve<M, T>(address: impl ToSocketAddrs, mut server: Server<M, T>) -> io::Result<()>
+/// Serve the Rust MVP runtime until the process is stopped.
+pub fn serve<M>(address: impl ToSocketAddrs, mut server: Server<M>) -> io::Result<()>
 where
     M: work_memory_runtime::MemoryModel,
-    T: StructuredOutputTransport,
 {
     let listener = TcpListener::bind(address)?;
     for stream in listener.incoming() {
@@ -326,10 +357,9 @@ where
     Ok(())
 }
 
-fn handle_connection<M, T>(stream: &mut TcpStream, server: &mut Server<M, T>) -> io::Result<()>
+fn handle_connection<M>(stream: &mut TcpStream, server: &mut Server<M>) -> io::Result<()>
 where
     M: work_memory_runtime::MemoryModel,
-    T: StructuredOutputTransport,
 {
     let request = read_request(stream)?;
     let response = match request {
@@ -412,43 +442,9 @@ fn runtime_error_response(error: RuntimeError) -> HttpResponse {
         | RuntimeError::Contract(_)
         | RuntimeError::Json(_) => 400,
         RuntimeError::Canonical(error) if error.store_error().is_some() => 500,
-        RuntimeError::Canonical(_)
-        | RuntimeError::Store(_)
-        | RuntimeError::Agent(_)
-        | RuntimeError::Model(_) => 500,
+        RuntimeError::Canonical(_) | RuntimeError::Store(_) | RuntimeError::Model(_) => 500,
     };
     HttpResponse::error(status, error.to_string())
-}
-
-fn turn_to_value(outcome: &TurnOutcome) -> Value {
-    json!({
-        "ok": true,
-        "assistant": chat_message_to_value(&outcome.assistant),
-        "tool_messages": outcome.tool_messages.iter().map(chat_message_to_value).collect::<Vec<_>>(),
-        "tool_executions": outcome.tool_executions.iter().map(tool_execution_to_value).collect::<Vec<_>>(),
-    })
-}
-
-fn chat_message_to_value(message: &RustChatMessage) -> Value {
-    json!({
-        "id": message.id,
-        "sequence": message.sequence,
-        "role": message.role.as_str(),
-        "content": message.content,
-        "tool_name": message.tool_name,
-        "tool_call_id": message.tool_call_id,
-        "details": message.details,
-        "created_at": message.created_at.raw(),
-    })
-}
-
-fn tool_execution_to_value(execution: &AgentToolExecution) -> Value {
-    json!({
-        "call_id": execution.call_id(),
-        "name": execution.name(),
-        "arguments": execution.arguments(),
-        "output": execution.output(),
-    })
 }
 
 fn parse_json_object(body: &str) -> Result<Value, String> {
@@ -507,6 +503,23 @@ fn parse_bucket_status(value: &str) -> Result<BucketStatus, String> {
     }
 }
 
+fn parse_bucket_type(value: &str) -> Result<BucketType, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "idea" => Ok(BucketType::Idea),
+        "task" => Ok(BucketType::Task),
+        "incident" => Ok(BucketType::Incident),
+        "experiment" => Ok(BucketType::Experiment),
+        "decision" => Ok(BucketType::Decision),
+        "meeting" => Ok(BucketType::Meeting),
+        "knowledge" => Ok(BucketType::Knowledge),
+        "draft" => Ok(BucketType::Draft),
+        _ => Err(
+            "bucket_type must be idea, task, incident, experiment, decision, meeting, knowledge, or draft"
+                .to_owned(),
+        ),
+    }
+}
+
 fn percent_decode(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     let bytes = value.as_bytes();
@@ -549,39 +562,53 @@ fn status_reason(status: u16) -> &'static str {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum ServerError {
-    #[error("default model must not be empty")]
-    EmptyDefaultModel,
-}
-
 /// Small browser UI served from the same origin as the API.
 pub const INDEX_HTML: &str = r#"<!doctype html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Doggie Work Memory</title>
+  <title>Rust Work Memory</title>
   <style>
-    body{font-family:system-ui,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;background:#f7f7f5;color:#202124}
-    main{display:grid;grid-template-columns:2fr 1fr;gap:1rem}section{background:white;border:1px solid #ddd;border-radius:12px;padding:1rem}
-    textarea{width:100%;min-height:120px;box-sizing:border-box}button{padding:.6rem 1rem;margin-top:.5rem;cursor:pointer}
-    #messages{white-space:pre-wrap;min-height:200px}.bucket{padding:.5rem 0;border-bottom:1px solid #eee;font-size:.9rem}
-    @media(max-width:700px){main{display:block}section{margin-bottom:1rem}}
+    body{font-family:system-ui,sans-serif;max-width:1100px;margin:2rem auto;padding:0 1rem;background:#f7f7f5;color:#202124}
+    main{display:grid;grid-template-columns:1.35fr 1fr;gap:1rem}section{background:white;border:1px solid #ddd;border-radius:12px;padding:1rem;margin-bottom:1rem}
+    textarea{width:100%;min-height:130px;box-sizing:border-box}button{padding:.55rem .9rem;margin:.35rem .35rem 0 0;cursor:pointer}
+    .bucket{padding:.65rem 0;border-bottom:1px solid #eee;font-size:.92rem;cursor:pointer}.bucket:hover{background:#fafafa}
+    .muted{color:#6b7280}.result{white-space:pre-wrap}.memory{padding:.4rem 0;border-bottom:1px solid #eee}
+    @media(max-width:760px){main{display:block}}
   </style>
 </head>
 <body>
-  <h1>Doggie 工作记忆</h1>
+  <h1>Rust 工作记忆 MVP</h1>
   <main>
-    <section><div id="messages"></div><textarea id="input" placeholder="记录工作事实，或直接提问"></textarea><label><input type="checkbox" id="confirm"> 本轮允许确认追加/新建</label><br><button id="send">发送</button></section>
-    <section><h2>活跃 Bucket</h2><div id="buckets">加载中…</div></section>
+    <div>
+      <section>
+        <h2>记录</h2>
+        <textarea id="input" placeholder="输入一条工作事实，例如：支付回调从 10:20 开始失败。"></textarea>
+        <br><button id="archive">归档</button>
+        <div id="result" class="result muted">等待输入…</div>
+      </section>
+      <section>
+        <h2>Bucket 详情</h2>
+        <div id="detail" class="muted">点击右侧 Bucket 查看详情。</div>
+      </section>
+    </div>
+    <section>
+      <h2>活跃 Bucket</h2>
+      <div id="buckets" class="muted">加载中…</div>
+    </section>
   </main>
 <script>
-const messages=document.querySelector('#messages'), input=document.querySelector('#input'), confirm=document.querySelector('#confirm'), buckets=document.querySelector('#buckets');
-async function refresh(){const r=await fetch('/api/buckets/active');const d=await r.json();buckets.innerHTML=(d.buckets||[]).map(b=>`<div class="bucket"><b>${escapeHtml(b.title)}</b><br>${escapeHtml(b.summary||'')}</div>`).join('')||'暂无活跃 Bucket';}
-function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-document.querySelector('#send').onclick=async()=>{const text=input.value.trim();if(!text)return;const confirmationGranted=confirm.checked;messages.textContent+='\n你：'+text+'\n';input.value='';confirm.checked=false;const r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,confirmation_granted:confirmationGranted})});const d=await r.json();messages.textContent+='Doggie：'+(d.assistant?.content||d.error)+'\n';refresh();};
-refresh();
+const input=document.querySelector('#input'), result=document.querySelector('#result'), buckets=document.querySelector('#buckets'), detail=document.querySelector('#detail');
+function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function jsonRequest(url, options){const r=await fetch(url, options);const d=await r.json();if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d;}
+async function refresh(){try{const d=await jsonRequest('/api/buckets/active');buckets.innerHTML=(d.buckets||[]).map(b=>`<div class="bucket" onclick="showBucket('${encodeURIComponent(b.id)}')"><b>${escapeHtml(b.title)}</b><br><span class="muted">${escapeHtml(b.type)} · ${escapeHtml(b.summary||'')}</span></div>`).join('')||'暂无活跃 Bucket';}catch(e){buckets.textContent=e.message;}}
+async function showBucket(encoded){try{const d=await jsonRequest('/api/buckets/'+encoded);const b=d.detail.bucket;detail.innerHTML=`<b>${escapeHtml(b.title)}</b><br><span class="muted">${escapeHtml(b.type)} · ${escapeHtml(b.status)}</span><p>${escapeHtml(b.summary||'')}</p>`+(d.detail.entries||[]).map(e=>`<div class="memory"><b>Entry</b><br>${escapeHtml(e.raw_text)}<br><span class="muted">${escapeHtml(e.summary||'')}</span></div>`).join('');}catch(e){detail.textContent=e.message;}}
+function showArchive(d,text){result.className='result';let html=`<b>${escapeHtml(d.archive_state)}</b> · ${escapeHtml(d.action)} · confidence ${escapeHtml(d.confidence)}<br>${escapeHtml(d.reason||'')}`;if(d.bucket)html+=`<br><br>已归档到：<b>${escapeHtml(d.bucket.title)}</b>`;if(d.extraction)html+=`<br>摘要：${escapeHtml(d.extraction.summary)}`;if(d.archive_state==='needs_confirmation'){html+=`<br><br>${escapeHtml(d.question||'需要确认归档目标。')}`;if((d.candidate_bucket_ids||[]).length){html+=`<br><button onclick="confirmAppend('${encodeURIComponent(d.candidate_bucket_ids[0])}',${JSON.stringify(text)})">确认追加到候选 Bucket</button>`;}if(d.bucket_title&&d.bucket_type){html+=`<button onclick="confirmCreate(${JSON.stringify(d.bucket_title)},${JSON.stringify(d.bucket_type)},${JSON.stringify(text)})">确认新建 Bucket</button>`;}}result.innerHTML=html;}
+async function archive(){const text=input.value.trim();if(!text)return;result.textContent='归档中…';try{const d=await jsonRequest('/api/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});showArchive(d,text);input.value='';await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
+async function confirmAppend(bucketId,text){try{const d=await jsonRequest('/api/archive/append',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket_id:decodeURIComponent(bucketId),text,confirmation_granted:true})});showArchive(d,text);await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
+async function confirmCreate(title,bucketType,text){try{const d=await jsonRequest('/api/archive/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,bucket_type:bucketType,text,confirmation_granted:true})});showArchive(d,text);await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
+document.querySelector('#archive').onclick=archive;refresh();
 </script>
 </body></html>"#;
 
@@ -589,20 +616,31 @@ refresh();
 mod tests {
     use std::collections::VecDeque;
 
-    use serde_json::{Value, json};
+    use serde_json::Value;
     use tempfile::tempdir;
-    use work_memory_agent::{
-        AgentHarness, LlmEndpointConfig, LlmHttpRequest, LlmHttpResponse, LlmTransportError,
-        StructuredOutputTransport,
-    };
-    use work_memory_core::ConfidencePolicy;
+    use work_memory_core::{BucketType, ClassificationResult, ConfidencePolicy, ExtractionResult};
     use work_memory_runtime::{CanonicalRuntime, MemoryModel, RuntimeError};
-    use work_memory_service::CanonicalServiceError;
+    use work_memory_service::{CanonicalService, CanonicalServiceError};
     use work_memory_store::StoreError;
 
     use super::{HttpRequest, Server, runtime_error_response};
 
-    struct Model;
+    struct Model {
+        classifications: VecDeque<Result<ClassificationResult, String>>,
+        extractions: VecDeque<Result<ExtractionResult, String>>,
+    }
+
+    impl Model {
+        fn new(
+            classifications: impl IntoIterator<Item = Result<ClassificationResult, String>>,
+            extractions: impl IntoIterator<Item = Result<ExtractionResult, String>>,
+        ) -> Self {
+            Self {
+                classifications: classifications.into_iter().collect(),
+                extractions: extractions.into_iter().collect(),
+            }
+        }
+    }
 
     impl MemoryModel for Model {
         type Error = String;
@@ -611,84 +649,154 @@ mod tests {
             &mut self,
             _text: &str,
             _candidates: &[work_memory_core::BucketView],
-        ) -> Result<work_memory_core::ClassificationResult, Self::Error> {
-            panic!("model not used by route test")
+        ) -> Result<ClassificationResult, Self::Error> {
+            self.classifications
+                .pop_front()
+                .expect("server classification fixture")
         }
 
-        fn extract(
-            &mut self,
-            _text: &str,
-        ) -> Result<work_memory_core::ExtractionResult, Self::Error> {
-            panic!("model not used by route test")
-        }
-    }
-
-    struct Transport {
-        responses: VecDeque<Value>,
-    }
-
-    impl StructuredOutputTransport for Transport {
-        fn send(
-            &mut self,
-            _request: &LlmHttpRequest,
-        ) -> Result<LlmHttpResponse, LlmTransportError> {
-            Ok(LlmHttpResponse::new(
-                self.responses.pop_front().unwrap_or_else(|| {
-                    json!({"status":"completed","output":[{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok"}]}]})
-                }),
-            ))
+        fn extract(&mut self, _text: &str) -> Result<ExtractionResult, Self::Error> {
+            self.extractions
+                .pop_front()
+                .expect("server extraction fixture")
         }
     }
 
-    fn server() -> Server<Model, Transport> {
+    fn server() -> (Server<Model>, tempfile::TempDir) {
         let database = tempdir().expect("tempdir");
         let service =
-            work_memory_service::CanonicalService::initialize(database.path().join("canonical.db"))
-                .expect("service");
-        let endpoint = LlmEndpointConfig::resolve(Some("official"), None, Some("responses"))
-            .expect("endpoint");
+            CanonicalService::initialize(database.path().join("memory.db")).expect("service");
+        let classification = ClassificationResult::create_new(
+            BucketType::Task,
+            "Rust MVP",
+            0.99,
+            "new task",
+            vec![],
+        )
+        .expect("classification");
+        let extraction = ExtractionResult::minimal("stored summary").expect("extraction");
+        let confirmed_append_extraction =
+            ExtractionResult::minimal("confirmed append summary").expect("extraction");
+        let confirmed_create_extraction =
+            ExtractionResult::minimal("confirmed create summary").expect("extraction");
         let runtime = CanonicalRuntime::new(
             service,
-            Model,
-            AgentHarness::new(
-                endpoint,
-                Transport {
-                    responses: VecDeque::new(),
-                },
+            Model::new(
+                [Ok(classification)],
+                [
+                    Ok(extraction),
+                    Ok(confirmed_append_extraction),
+                    Ok(confirmed_create_extraction),
+                ],
             ),
             ConfidencePolicy::default(),
             "fixture-model",
             "server-test-v1",
         )
         .expect("runtime");
-        Server::new(runtime, "fixture-agent").expect("server")
+        (Server::new(runtime), database)
     }
 
     #[test]
     fn health_and_static_ui_routes_are_available() {
-        let mut server = server();
+        let (mut server, _database) = server();
         let health = server.handle_request(HttpRequest::new("GET", "/health", ""));
         assert_eq!(health.status, 200);
         assert!(health.body.contains("work-memory-server"));
         let ui = server.handle_request(HttpRequest::new("GET", "/", ""));
         assert_eq!(ui.content_type, "text/html; charset=utf-8");
-        assert!(ui.body.contains("Doggie 工作记忆"));
-        assert!(ui.body.contains("confirmation_granted"));
+        assert!(ui.body.contains("Rust 工作记忆 MVP"));
+        assert!(ui.body.contains("/api/archive"));
     }
 
     #[test]
-    fn invalid_search_and_chat_requests_are_rejected_without_panic() {
-        let mut server = server();
+    fn archive_route_runs_the_mvp_loop_and_returns_result() {
+        let (mut server, _database) = server();
+        let response = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive",
+            r#"{"text":"The Rust MVP is working."}"#,
+        ));
+        assert_eq!(response.status, 200, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).expect("archive JSON");
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["archive_state"], "archived");
+        assert!(body["bucket_id"].is_string());
+        assert!(body["entry_id"].is_string());
+        assert_eq!(body["bucket_title"], "Rust MVP");
+        assert_eq!(body["bucket_type"], "task");
+        assert_eq!(body["extraction"]["summary"], "stored summary");
+    }
+
+    #[test]
+    fn confirmed_archive_routes_write_and_return_entries() {
+        let (mut server, _database) = server();
+        let initial = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive",
+            r#"{"text":"The Rust MVP is working."}"#,
+        ));
+        assert_eq!(initial.status, 200, "{}", initial.body);
+        let initial_body: Value = serde_json::from_str(&initial.body).expect("initial JSON");
+        let bucket_id = initial_body["bucket_id"]
+            .as_str()
+            .expect("initial bucket id")
+            .to_owned();
+
+        let append = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive/append",
+            format!(
+                r#"{{"bucket_id":"{bucket_id}","text":"An explicitly confirmed append.","confirmation_granted":true}}"#
+            ),
+        ));
+        assert_eq!(append.status, 200, "{}", append.body);
+        let append_body: Value = serde_json::from_str(&append.body).expect("append JSON");
+        assert_eq!(append_body["archive_state"], "archived");
+        assert_eq!(append_body["bucket_id"], bucket_id);
+        assert!(append_body["entry_id"].is_string());
+        assert_eq!(
+            append_body["extraction"]["summary"],
+            "confirmed append summary"
+        );
+
+        let create = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive/create",
+            r#"{"title":"Confirmed bucket","bucket_type":"incident","text":"A separately confirmed entry.","confirmation_granted":true}"#,
+        ));
+        assert_eq!(create.status, 200, "{}", create.body);
+        let create_body: Value = serde_json::from_str(&create.body).expect("create JSON");
+        assert_eq!(create_body["archive_state"], "archived");
+        assert_eq!(create_body["bucket_title"], "Confirmed bucket");
+        assert_eq!(create_body["bucket_type"], "incident");
+        assert!(create_body["bucket_id"].is_string());
+        assert!(create_body["entry_id"].is_string());
+        assert_eq!(
+            create_body["extraction"]["summary"],
+            "confirmed create summary"
+        );
+    }
+
+    #[test]
+    fn invalid_requests_and_confirmation_routes_are_rejected() {
+        let (mut server, _database) = server();
         let search = server.handle_request(HttpRequest::new("GET", "/api/buckets/search", ""));
         assert_eq!(search.status, 400);
-        let chat = server.handle_request(HttpRequest::new("POST", "/api/chat", "{}"));
-        assert_eq!(chat.status, 400);
+        let archive = server.handle_request(HttpRequest::new("POST", "/api/archive", "{}"));
+        assert_eq!(archive.status, 400);
+        let append = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive/append",
+            r#"{"bucket_id":"missing","text":"write"}"#,
+        ));
+        assert_eq!(append.status, 400);
+        assert!(append.body.contains("confirmation"));
     }
 
     #[test]
-    fn canonical_read_and_mutation_routes_return_json_errors() {
-        let mut server = server();
-
+    fn read_routes_and_store_failures_have_stable_json_errors() {
+        let (mut server, _database) = server();
         let active =
             server.handle_request(HttpRequest::new("GET", "/api/buckets/active?limit=1", ""));
         assert_eq!(active.status, 200);
@@ -696,37 +804,14 @@ mod tests {
         assert_eq!(active_body["ok"], true);
         assert!(active_body["buckets"].is_array());
 
-        let search = server.handle_request(HttpRequest::new(
-            "GET",
-            "/api/buckets/search?q=sqlite&limit=1",
-            "",
-        ));
-        assert_eq!(search.status, 200);
-        let search_body: Value = serde_json::from_str(&search.body).expect("search JSON");
-        assert_eq!(search_body["ok"], true);
-        assert!(search_body["results"].is_array());
-
-        let detail =
-            server.handle_request(HttpRequest::new("GET", "/api/buckets/missing-bucket", ""));
+        let detail = server.handle_request(HttpRequest::new("GET", "/api/buckets/missing", ""));
         assert_eq!(detail.status, 404);
-
         let invalid_status = server.handle_request(HttpRequest::new(
             "POST",
             "/api/buckets/status",
-            r#"{"bucket_id":"missing-bucket","status":"unknown"}"#,
+            r#"{"bucket_id":"missing","status":"unknown"}"#,
         ));
         assert_eq!(invalid_status.status, 400);
-
-        let missing_move_fields = server.handle_request(HttpRequest::new(
-            "POST",
-            "/api/corrections/move",
-            r#"{"entry_id":"entry"}"#,
-        ));
-        assert_eq!(missing_move_fields.status, 400);
-    }
-
-    #[test]
-    fn canonical_store_failures_are_internal_server_errors() {
         let response = runtime_error_response(RuntimeError::Canonical(
             CanonicalServiceError::Store(StoreError::InvalidLimit(0)),
         ));

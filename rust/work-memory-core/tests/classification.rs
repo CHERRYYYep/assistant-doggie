@@ -280,11 +280,34 @@ fn unicode_digits_count_as_concrete_facts() {
 }
 
 #[test]
-fn empty_workspace_can_bootstrap_a_medium_confidence_bucket() {
+fn empty_workspace_requires_confirmation_for_medium_confidence_new_bucket() {
     let result = ClassificationResult::create_new(
         BucketType::Task,
         "准备 Rust 重构",
         0.7,
+        "工作区为空且输入是明确的新任务。",
+        vec![],
+    )
+    .unwrap();
+
+    let gated = postprocess_classification(
+        "开始准备 Rust 重构",
+        result,
+        &[],
+        ConfidencePolicy::default(),
+    )
+    .unwrap();
+
+    assert_eq!(gated.action(), ClassificationAction::AskUser);
+    assert_eq!(gated.question(), Some("请确认是否创建这个新 Bucket。"));
+}
+
+#[test]
+fn empty_workspace_can_bootstrap_a_high_confidence_bucket() {
+    let result = ClassificationResult::create_new(
+        BucketType::Task,
+        "准备 Rust 重构",
+        0.99,
         "工作区为空且输入是明确的新任务。",
         vec![],
     )
