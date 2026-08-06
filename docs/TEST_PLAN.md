@@ -21,7 +21,9 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - correction_service 的规则部分。
 - schema 校验。
 - Agent 工具参数解析、工具白名单和历史消息装配。
-- Rust `work-memory-core` 的领域校验、候选排序和风险门控。
+- Rust `work-memory-core` 的领域校验、候选排序和风险门控；低信息输入即使高置信度也必须进入 `ask_user`。
+- Python 分类服务的低信息回归样例：`压测结果更新了`、`上次评审的事项完成了`、`Agent 那个任务继续`、`把校验相关的记一下`、`切备用后好了`、`它现在正常了`。
+- Python Agent Harness 的确定性确认保护：`archive_memory` 返回 `needs_confirmation` 后，同轮不得执行确认写入工具；没有当前轮明确确认时，也不得直接调用 `save_to_existing_bucket` / `create_bucket_and_save`。
 - Rust `work-memory-store` 的九表必需表/列校验，以及非法 Bucket/Todo/分类/Chat 枚举、JSON 语法与类型、SQLite bool、时间戳和 limit 错误。
 - Rust migration history 的版本、名称、连续性和主键校验，以及备份路径互斥与不覆盖规则。
 - Rust 强类型归档写请求的字段组合、候选合并、Unicode casefold 去重和 1200 字符滚动摘要规则。
@@ -215,6 +217,15 @@ Python 的上下文管理器是什么？
 - 返回支付回调相关 bucket。
 - 显示摘要和最近更新时间。
 
+### 场景 6：低信息输入与确认客户端
+
+1. 预先创建“接口 A 压测”和“支付回调故障”两个活跃 Bucket。
+2. 输入“压测结果更新了”，确认 API 返回 `needs_confirmation`，而不是 `archived`。
+3. 核对响应包含 `recommended_bucket`、`candidate_buckets`、`reason`、`question`、`bucket_title` / `bucket_type`（若有新建建议）以及 `last_active_at_unix_ms`。
+4. 核对 UI 同时显示推荐项、备选项、模型理由，以及“保存到推荐 Bucket / 保存到其他 Bucket / 创建新的 Bucket / 不保存”。
+5. 点击“不保存”，确认没有新 Entry；点击确认路径时，确认原文仍被保留并只写入一次。
+6. 归档后选择“修改 Bucket”，确认 `/api/corrections/move` 移动 Entry 并保留纠错审计。
+
 ## 4. 评估指标
 
 ### 分类评估集
@@ -306,7 +317,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 自动化映射：
 
 - `tests/test_llm.py`：Structured Outputs 封装和错误分支；
-- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环、工具白名单和严格参数校验；
+- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环、工具白名单、严格参数校验和确认写入防绕过；
 - `tests/test_contract_fixtures.py`：Python 对共享 JSON golden fixture 的规范化和拒绝行为；
 - `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
 - `tests/test_live_evaluation.py`：真实分类运行器的版本化元数据和报告落盘；
@@ -315,7 +326,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `tests/test_correction_service.py`：纠错移动和审计；
 - `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
 - `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
-- `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序与风险门控回归；
+- `rust/work-memory-core/tests/classification.rs`：Rust 分类契约、候选排序、低信息高置信度 `ask_user` 与风险门控回归；
 - `rust/work-memory-contracts/tests/contract_fixtures.rs`：Rust 对同一共享 JSON golden fixture 的规范化和拒绝行为。
 - `rust/work-memory-store/tests/store_validation.rs`：Rust SQLite 九表必需 Schema，以及损坏枚举、JSON、bool 和时间戳的错误分类。
 - `rust/work-memory-store/tests/python_sqlite_compat.rs`：Python 九表建库到 Rust 强类型只读查询的跨语言兼容回归，覆盖字段、可选值、JSON、枚举和排序；数据库只允许位于系统临时目录。

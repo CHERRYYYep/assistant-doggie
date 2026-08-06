@@ -49,7 +49,8 @@ Bucket 是对话的默认记忆层。用户提供可长期复用的工作事实�
 
 - 不提供 Shell、文件修改、浏览器控制或任意 Python 执行；
 - 未注册工具会返回 `unknown tool`，不会动态执行名称对应的代码；
-- 写入记忆仍复用现有 Bucket 分类、确认和事务逻辑；
+- 写入记忆仍复用现有 Bucket 分类、确认和事务逻辑；低信息输入必须先得到 `needs_confirmation`，不能因为模型 confidence 高而静默写入；
+- Python Harness 对确认写入工具增加确定性保护：同一轮如果 `archive_memory` 返回 `needs_confirmation`，不得继续执行 `save_to_existing_bucket` / `create_bucket_and_save`；当前用户轮次没有明确确认时也不能直接调用确认写入工具；
 - 工具输出被视为数据，不允许覆盖系统指令；
 - Python API Key 由 `.env` 配置；Rust server 只读取进程环境变量且不自动加载 `.env`。两条路径都不把 API Key 写入数据库或对话内容。
 

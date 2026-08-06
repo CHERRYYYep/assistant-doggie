@@ -54,6 +54,35 @@ AGENT_SYSTEM_PROMPT = """你是 Doggie，一个持续存在于单一长期对话
 
 ToolExecutor = Callable[[str, dict[str, Any]], dict[str, Any]]
 
+_CONFIRMATION_TOOLS = {"save_to_existing_bucket", "create_bucket_and_save"}
+_CONFIRMATION_REJECTION_MARKERS = ("不保存", "不要保存", "取消", "先别保存", "不用保存")
+_EXISTING_CONFIRMATION_MARKERS = (
+    "确认",
+    "确定",
+    "保存到",
+    "归档到",
+    "追加到",
+    "记到",
+    "选1",
+    "第1项",
+    "第一项",
+    "选2",
+    "第2项",
+    "第二项",
+)
+_NEW_BUCKET_CONFIRMATION_MARKERS = (
+    "确认",
+    "确定",
+    "新建",
+    "创建新",
+    "创建一个新",
+    "单独记录",
+    "分开记录",
+    "选3",
+    "第3项",
+    "第三项",
+)
+
 _RESPONSE_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
@@ -305,6 +334,76 @@ def list_chat_messages(
             active_session.close()
 
 
+def _compact_user_text(text: str) -> str:
+    """Normalize short confirmation replies without changing their meaning."""
+
+    return "".join(text.casefold().split())
+
+
+def _user_explicitly_confirms_tool(tool_name: str, user_text: str) -> bool:
+    """Return whether the current user turn explicitly authorizes a write tool."""
+
+    compact = _compact_user_text(user_text)
+    if not compact or any(marker in compact for marker in _CONFIRMATION_REJECTION_MARKERS):
+        return False
+    markers = (
+        _NEW_BUCKET_CONFIRMATION_MARKERS
+        if tool_name == "create_bucket_and_save"
+        else _EXISTING_CONFIRMATION_MARKERS
+    )
+    return any(marker in compact for marker in markers)
+
+
+def _archive_needs_confirmation(output: object) -> bool:
+    """Detect a risk-gated archive result returned by the application tool."""
+
+    if not isinstance(output, dict):
+        return False
+    archive = output.get("archive")
+    if not isinstance(archive, dict):
+        archive = output
+    return archive.get("status") == "needs_confirmation" or archive.get("action") == "ask_user"
+
+
+class _TurnConfirmationGuard:
+    """Prevent model write tools from bypassing an archive confirmation."""
+
+    def __init__(self, user_text: str, executor: ToolExecutor) -> None:
+        self._user_text = user_text
+        self._executor = executor
+        self._confirmation_required = False
+        self._archive_call_in_round = False
+
+    def begin_round(self, tool_names: Sequence[str]) -> None:
+        """Mark a round that also contains archive_memory before executing calls."""
+
+        self._archive_call_in_round = "archive_memory" in tool_names
+
+    def __call__(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name in _CONFIRMATION_TOOLS:
+            if self._archive_call_in_round or self._confirmation_required:
+                return {
+                    "ok": False,
+                    "error": (
+                        "archive_memory requires user confirmation; do not write in this turn. "
+                        "Wait for the user to choose an archive option first."
+                    ),
+                }
+            if not _user_explicitly_confirms_tool(name, self._user_text):
+                return {
+                    "ok": False,
+                    "error": (
+                        "the current user turn did not explicitly confirm this write. "
+                        "Call archive_memory and wait for confirmation instead."
+                    ),
+                }
+
+        output = self._executor(name, arguments)
+        if name == "archive_memory" and _archive_needs_confirmation(output):
+            self._confirmation_required = True
+        return output
+
+
 def _tool_payload(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """Execute one bounded application tool and return JSON-safe output."""
 
@@ -447,6 +546,9 @@ def _run_responses_harness(
 
         working_input.extend(output_items)
         tool_outputs: list[dict[str, Any]] = []
+        begin_round = getattr(tool_executor, "begin_round", None)
+        if callable(begin_round):
+            begin_round([str(getattr(call, "name", "")) for call in tool_calls])
         for call in tool_calls:
             name = str(getattr(call, "name", ""))
             call_id = str(getattr(call, "call_id", ""))
@@ -534,6 +636,14 @@ def _run_chat_harness(
                 "tool_calls": [_chat_tool_call_payload(call) for call in tool_calls],
             }
         )
+        begin_round = getattr(tool_executor, "begin_round", None)
+        if callable(begin_round):
+            begin_round(
+                [
+                    str(getattr(getattr(call, "function", None), "name", ""))
+                    for call in tool_calls
+                ]
+            )
         for call in tool_calls:
             function = getattr(call, "function", None)
             name = str(getattr(function, "name", ""))
@@ -590,6 +700,7 @@ def run_agent_turn(
     active_endpoint = endpoint or configured_endpoint()
     active_model = configured_model(model)
     active_client = client or create_openai_client(active_endpoint)
+    guarded_tool_executor = _TurnConfirmationGuard(cleaned, tool_executor)
 
     if active_endpoint.api_mode == "chat_completions":
         answer, tool_messages = _run_chat_harness(
@@ -598,7 +709,7 @@ def run_agent_turn(
             history=history,
             memory_context=memory_context,
             max_tool_rounds=max_tool_rounds,
-            tool_executor=tool_executor,
+            tool_executor=guarded_tool_executor,
         )
     else:
         answer, tool_messages = _run_responses_harness(
@@ -607,7 +718,7 @@ def run_agent_turn(
             history=history,
             memory_context=memory_context,
             max_tool_rounds=max_tool_rounds,
-            tool_executor=tool_executor,
+            tool_executor=guarded_tool_executor,
         )
 
     assistant_message = add_chat_message("assistant", answer)

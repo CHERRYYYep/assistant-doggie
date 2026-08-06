@@ -269,3 +269,146 @@ def test_registered_tool_normalizes_arguments_before_execution(monkeypatch):
             {"bucket_id": "bucket-1", "text": "故障恢复。"},
         )
     ]
+
+
+def test_harness_blocks_same_turn_write_after_archive_needs_confirmation(database_url):
+    archive_call = SimpleNamespace(
+        type="function_call",
+        name="archive_memory",
+        call_id="archive-call",
+        arguments='{"text":"压测结果更新了"}',
+    )
+    save_call = SimpleNamespace(
+        type="function_call",
+        name="save_to_existing_bucket",
+        call_id="save-call",
+        arguments='{"bucket_id":"bucket-1","text":"压测结果更新了"}',
+    )
+    client = FakeResponsesClient(
+        [
+            SimpleNamespace(
+                status="completed",
+                output=[archive_call, save_call],
+                output_text="",
+            ),
+            SimpleNamespace(
+                status="completed",
+                output=[],
+                output_text="信息不够明确，我先请你确认保存位置。",
+            ),
+        ]
+    )
+    executed = []
+
+    def tool_executor(name, arguments):
+        executed.append((name, arguments))
+        if name == "archive_memory":
+            return {
+                "ok": True,
+                "archive": {
+                    "status": "needs_confirmation",
+                    "action": "ask_user",
+                },
+            }
+        return {"ok": True, "archive": {"status": "archived"}}
+
+    result = run_agent_turn(
+        "压测结果更新了",
+        client=client,
+        model="test-model",
+        endpoint=LLMEndpointConfig(
+            site="test",
+            base_url="https://example.test/v1",
+            api_mode="responses",
+        ),
+        tool_executor=tool_executor,
+    )
+
+    assert result.assistant_message.content.startswith("信息不够明确")
+    assert executed == [("archive_memory", {"text": "压测结果更新了"})]
+    blocked_output = result.tool_messages[1].details["output"]
+    assert blocked_output["ok"] is False
+    assert "requires user confirmation" in blocked_output["error"]
+
+
+def test_harness_requires_explicit_user_confirmation_for_direct_write(database_url):
+    save_call = SimpleNamespace(
+        type="function_call",
+        name="save_to_existing_bucket",
+        call_id="save-call",
+        arguments='{"bucket_id":"bucket-1","text":"QPS 达到 1200。"}',
+    )
+    client = FakeResponsesClient(
+        [
+            SimpleNamespace(status="completed", output=[save_call], output_text=""),
+            SimpleNamespace(
+                status="completed",
+                output=[],
+                output_text="请先确认要保存到哪个 Bucket。",
+            ),
+        ]
+    )
+    executed = []
+
+    def tool_executor(name, arguments):
+        executed.append((name, arguments))
+        return {"ok": True}
+
+    result = run_agent_turn(
+        "压测结果更新了",
+        client=client,
+        model="test-model",
+        endpoint=LLMEndpointConfig(
+            site="test",
+            base_url="https://example.test/v1",
+            api_mode="responses",
+        ),
+        tool_executor=tool_executor,
+    )
+
+    assert result.assistant_message.content.startswith("请先确认")
+    assert executed == []
+    assert result.tool_messages[0].details["output"]["ok"] is False
+
+
+def test_harness_allows_write_after_explicit_user_confirmation(database_url):
+    save_call = SimpleNamespace(
+        type="function_call",
+        name="save_to_existing_bucket",
+        call_id="save-call",
+        arguments='{"bucket_id":"bucket-1","text":"QPS 达到 1200。"}',
+    )
+    client = FakeResponsesClient(
+        [
+            SimpleNamespace(status="completed", output=[save_call], output_text=""),
+            SimpleNamespace(
+                status="completed",
+                output=[],
+                output_text="已按你的确认保存到接口 A 压测。",
+            ),
+        ]
+    )
+    executed = []
+
+    def tool_executor(name, arguments):
+        executed.append((name, arguments))
+        return {"ok": True, "archive": {"status": "archived"}}
+
+    run_agent_turn(
+        "确认保存到接口 A 压测",
+        client=client,
+        model="test-model",
+        endpoint=LLMEndpointConfig(
+            site="test",
+            base_url="https://example.test/v1",
+            api_mode="responses",
+        ),
+        tool_executor=tool_executor,
+    )
+
+    assert executed == [
+        (
+            "save_to_existing_bucket",
+            {"bucket_id": "bucket-1", "text": "QPS 达到 1200。"},
+        )
+    ]

@@ -574,7 +574,13 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
     main{display:grid;grid-template-columns:1.35fr 1fr;gap:1rem}section{background:white;border:1px solid #ddd;border-radius:12px;padding:1rem;margin-bottom:1rem}
     textarea{width:100%;min-height:130px;box-sizing:border-box}button{padding:.55rem .9rem;margin:.35rem .35rem 0 0;cursor:pointer}
     .bucket{padding:.65rem 0;border-bottom:1px solid #eee;font-size:.92rem;cursor:pointer}.bucket:hover{background:#fafafa}
+    button.bucket{display:block;width:100%;margin:0;border:0;border-radius:0;background:transparent;text-align:left}
     .muted{color:#6b7280}.result{white-space:pre-wrap}.memory{padding:.4rem 0;border-bottom:1px solid #eee}
+    .reason,.question,.confirmation,.candidate-card,.move-card{margin-top:.8rem;padding:.75rem;border-radius:8px;background:#f5f7fa}
+    .question{background:#fff8e1;border:1px solid #f0d98c}.candidate-card{background:#f8fafc;border:1px solid #e5e7eb}
+    .confirmation h3,.move-card h3{margin:.1rem 0 .4rem;font-size:1rem}.confirmation label,.move-card label{display:block;margin:.45rem 0}
+    input,select{box-sizing:border-box;max-width:100%;padding:.45rem;border:1px solid #cbd5e1;border-radius:6px}
+    .success{color:#166534}.warning{color:#92400e}
     @media(max-width:760px){main{display:block}}
   </style>
 </head>
@@ -599,16 +605,144 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
     </section>
   </main>
 <script>
-const input=document.querySelector('#input'), result=document.querySelector('#result'), buckets=document.querySelector('#buckets'), detail=document.querySelector('#detail');
-function escapeHtml(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-async function jsonRequest(url, options){const r=await fetch(url, options);const d=await r.json();if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d;}
-async function refresh(){try{const d=await jsonRequest('/api/buckets/active');buckets.innerHTML=(d.buckets||[]).map(b=>`<div class="bucket" onclick="showBucket('${encodeURIComponent(b.id)}')"><b>${escapeHtml(b.title)}</b><br><span class="muted">${escapeHtml(b.type)} · ${escapeHtml(b.summary||'')}</span></div>`).join('')||'暂无活跃 Bucket';}catch(e){buckets.textContent=e.message;}}
-async function showBucket(encoded){try{const d=await jsonRequest('/api/buckets/'+encoded);const b=d.detail.bucket;detail.innerHTML=`<b>${escapeHtml(b.title)}</b><br><span class="muted">${escapeHtml(b.type)} · ${escapeHtml(b.status)}</span><p>${escapeHtml(b.summary||'')}</p>`+(d.detail.entries||[]).map(e=>`<div class="memory"><b>Entry</b><br>${escapeHtml(e.raw_text)}<br><span class="muted">${escapeHtml(e.summary||'')}</span></div>`).join('');}catch(e){detail.textContent=e.message;}}
-function showArchive(d,text){result.className='result';let html=`<b>${escapeHtml(d.archive_state)}</b> · ${escapeHtml(d.action)} · confidence ${escapeHtml(d.confidence)}<br>${escapeHtml(d.reason||'')}`;if(d.bucket)html+=`<br><br>已归档到：<b>${escapeHtml(d.bucket.title)}</b>`;if(d.extraction)html+=`<br>摘要：${escapeHtml(d.extraction.summary)}`;if(d.archive_state==='needs_confirmation'){html+=`<br><br>${escapeHtml(d.question||'需要确认归档目标。')}`;if((d.candidate_bucket_ids||[]).length){html+=`<br><button onclick="confirmAppend('${encodeURIComponent(d.candidate_bucket_ids[0])}',${JSON.stringify(text)})">确认追加到候选 Bucket</button>`;}if(d.bucket_title&&d.bucket_type){html+=`<button onclick="confirmCreate(${JSON.stringify(d.bucket_title)},${JSON.stringify(d.bucket_type)},${JSON.stringify(text)})">确认新建 Bucket</button>`;}}result.innerHTML=html;}
-async function archive(){const text=input.value.trim();if(!text)return;result.textContent='归档中…';try{const d=await jsonRequest('/api/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});showArchive(d,text);input.value='';await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
-async function confirmAppend(bucketId,text){try{const d=await jsonRequest('/api/archive/append',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket_id:decodeURIComponent(bucketId),text,confirmation_granted:true})});showArchive(d,text);await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
-async function confirmCreate(title,bucketType,text){try{const d=await jsonRequest('/api/archive/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,bucket_type:bucketType,text,confirmation_granted:true})});showArchive(d,text);await refresh();if(d.bucket_id)showBucket(encodeURIComponent(d.bucket_id));}catch(e){result.textContent=e.message;}}
-document.querySelector('#archive').onclick=archive;refresh();
+const input=document.querySelector('#input');
+const result=document.querySelector('#result');
+const buckets=document.querySelector('#buckets');
+const detail=document.querySelector('#detail');
+let activeBuckets=[];
+let pendingArchive=null;
+
+function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function jsonRequest(url, options){const response=await fetch(url, options);const data=await response.json();if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data;}
+function activeBucket(bucketId){return activeBuckets.find(bucket=>bucket.id===bucketId);}
+function bucketLabel(bucket){return bucket?`「${escapeHtml(bucket.title)}」`:'未命名 Bucket';}
+function renderBucketSummary(bucket){return `<b>${bucketLabel(bucket)}</b><br><span class="muted">${escapeHtml(bucket.type||'unknown')} · ${escapeHtml(bucket.status||'')}</span><p>${escapeHtml(bucket.summary||'暂无摘要')}</p>`;}
+function renderBucketOptions(excludeId){
+  const options=activeBuckets.filter(bucket=>bucket.id!==excludeId);
+  if(!options.length)return '<option value="">暂无其他活跃 Bucket</option>';
+  return options.map(bucket=>`<option value="${escapeHtml(bucket.id)}">${escapeHtml(bucket.title)} · ${escapeHtml(bucket.type||'unknown')}</option>`).join('');
+}
+function candidateBuckets(data){
+  const supplied=new Map((data.candidate_buckets||[]).filter(bucket=>bucket&&bucket.id).map(bucket=>[bucket.id,bucket]));
+  const ordered=[];
+  for(const bucketId of (data.candidate_bucket_ids||[])){
+    const bucket=supplied.get(bucketId)||activeBucket(bucketId);
+    if(bucket&&!ordered.some(item=>item.id===bucket.id))ordered.push(bucket);
+  }
+  for(const bucket of (data.candidate_buckets||[])){
+    if(bucket&&bucket.id&&!ordered.some(item=>item.id===bucket.id))ordered.push(bucket);
+  }
+  return ordered;
+}
+async function refresh(){
+  try{
+    const data=await jsonRequest('/api/buckets/active');
+    activeBuckets=data.buckets||[];
+    buckets.innerHTML=activeBuckets.map(bucket=>`<button class="bucket" data-action="show-bucket" data-bucket-id="${escapeHtml(bucket.id)}">${renderBucketSummary(bucket)}</button>`).join('')||'暂无活跃 Bucket';
+  }catch(error){buckets.textContent=error.message;}
+}
+async function showBucket(bucketId){
+  try{
+    const data=await jsonRequest('/api/buckets/'+encodeURIComponent(bucketId));
+    const bucket=data.detail.bucket;
+    detail.innerHTML=renderBucketSummary(bucket)+(data.detail.entries||[]).map(entry=>`<div class="memory"><b>Entry</b><br>${escapeHtml(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary||'')}</span></div>`).join('');
+  }catch(error){detail.textContent=error.message;}
+}
+function renderMoveCard(data){
+  if(!data.entry_id)return '';
+  const targetOptions=renderBucketOptions(data.bucket_id);
+  const hasTarget=activeBuckets.some(bucket=>bucket.id!==data.bucket_id);
+  return `<div class="move-card"><h3>修改 Bucket</h3>${hasTarget?`<label>将这条 Entry 移动到：<select id="move-target">${targetOptions}</select></label><button data-action="move-entry" data-entry-id="${escapeHtml(data.entry_id)}">修改 Bucket</button>`:'<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<div id="move-status" class="muted"></div></div>`;
+}
+function showArchive(data){
+  result.className='result';
+  let html=`<b>${escapeHtml(data.archive_state)}</b> · ${escapeHtml(data.action)} · confidence ${escapeHtml(data.confidence)}<div class="reason"><b>模型判断理由：</b>${escapeHtml(data.reason||'未提供理由。')}</div>`;
+  if(data.archive_state==='needs_confirmation'){
+    const candidates=candidateBuckets(data);
+    const recommendedId=data.recommended_bucket_id||data.recommended_bucket?.id||candidates[0]?.id||'';
+    const recommended=data.recommended_bucket||candidates.find(bucket=>bucket.id===recommendedId)||activeBucket(recommendedId);
+    html+=`<div class="question"><b>请确认：</b>${escapeHtml(data.question||'信息不够明确，请选择归档方式。')}</div>`;
+    html+='<div class="confirmation"><h3>推荐 Bucket</h3>';
+    if(recommended){
+      html+=`<div class="candidate-card">${renderBucketSummary(recommended)}</div><button data-action="confirm-append" data-bucket-id="${escapeHtml(recommended.id)}">1. 保存到${bucketLabel(recommended)}</button>`;
+    }else{
+      html+='<p class="muted">模型没有给出可直接确认的已有 Bucket。</p>';
+    }
+    const alternatives=candidates.filter(bucket=>bucket.id!==recommendedId);
+    html+='<h3>备选 Bucket</h3>';
+    html+=alternatives.length?alternatives.map(bucket=>`<div class="candidate-card">${renderBucketSummary(bucket)}</div>`).join(''):'<p class="muted">模型没有给出其他明确候选，可从全部活跃 Bucket 中选择。</p>';
+    html+=`<label>保存到其他 Bucket：<select id="alternative-bucket">${renderBucketOptions(recommendedId)}</select></label><button data-action="confirm-alternative">2. 保存到其他 Bucket</button>`;
+    html+='</div>';
+    html+=`<div class="confirmation"><h3>创建新 Bucket</h3><label>标题：<input id="new-bucket-title" value="${escapeHtml(data.bucket_title||'')}" placeholder="例如：接口 A 压测"></label><label>类型：<select id="new-bucket-type">${['task','incident','experiment','idea','decision','meeting','knowledge','draft'].map(type=>`<option value="${type}"${type===(data.bucket_type||'task')?' selected':''}>${type}</option>`).join('')}</select></label><button data-action="confirm-create">3. 创建新的 Bucket</button></div>`;
+    html+='<button data-action="discard">4. 不保存</button>';
+  }else if(data.archive_state==='archived'){
+    if(data.bucket)html+=`<div class="confirmation success"><b>已归档到：</b>${bucketLabel(data.bucket)}</div>`;
+    if(data.extraction)html+=`<br>摘要：${escapeHtml(data.extraction.summary)}`;
+    html+=renderMoveCard(data);
+  }
+  result.innerHTML=html;
+}
+async function archive(){
+  const text=input.value.trim();
+  if(!text)return;
+  pendingArchive=null;
+  result.textContent='归档中…';
+  try{
+    const data=await jsonRequest('/api/archive',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    await refresh();
+    if(data.archive_state==='needs_confirmation'){
+      pendingArchive={text,data};
+      input.value=text;
+      showArchive(data);
+    }else{
+      input.value='';
+      showArchive(data);
+      if(data.bucket_id)showBucket(data.bucket_id);
+    }
+  }catch(error){result.textContent=error.message;}
+}
+function pendingText(){if(!pendingArchive)throw new Error('没有待确认的归档内容');return pendingArchive.text;}
+async function confirmAppend(bucketId){
+  const text=pendingText();
+  const data=await jsonRequest('/api/archive/append',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({bucket_id:bucketId,text,confirmation_granted:true})});
+  pendingArchive=null;input.value='';await refresh();showArchive(data);if(data.bucket_id)showBucket(data.bucket_id);
+}
+async function confirmCreate(){
+  const text=pendingText();
+  const title=document.querySelector('#new-bucket-title')?.value.trim();
+  const bucketType=document.querySelector('#new-bucket-type')?.value;
+  if(!title)throw new Error('新 Bucket 标题不能为空');
+  const data=await jsonRequest('/api/archive/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,bucket_type:bucketType,text,confirmation_granted:true})});
+  pendingArchive=null;input.value='';await refresh();showArchive(data);if(data.bucket_id)showBucket(data.bucket_id);
+}
+function discardPending(){pendingArchive=null;input.value='';result.className='result';result.innerHTML='<b>不保存</b><br><span class="muted">本次没有创建正式 Entry；分类审计已保留。</span>';}
+async function moveEntry(entryId){
+  const targetBucketId=document.querySelector('#move-target')?.value;
+  if(!targetBucketId)throw new Error('请选择目标 Bucket');
+  const data=await jsonRequest('/api/corrections/move',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry_id:entryId,target_bucket_id:targetBucketId,command_text:'用户在归档后修改了 Bucket。'})});
+  const status=document.querySelector('#move-status');
+  if(status)status.innerHTML=`<span class="success">已移动到${bucketLabel(activeBucket(targetBucketId)||{title:targetBucketId})}。</span>`;
+  await refresh();showBucket(targetBucketId);
+}
+result.addEventListener('click',async event=>{
+  const button=event.target.closest('button[data-action]');
+  if(!button)return;
+  const action=button.dataset.action;
+  try{
+    button.disabled=true;
+    if(action==='confirm-append')await confirmAppend(button.dataset.bucketId);
+    else if(action==='confirm-alternative'){
+      const target=document.querySelector('#alternative-bucket')?.value;
+      if(!target)throw new Error('请选择其他 Bucket');
+      await confirmAppend(target);
+    }else if(action==='confirm-create')await confirmCreate();
+    else if(action==='discard')discardPending();
+    else if(action==='move-entry')await moveEntry(button.dataset.entryId);
+  }catch(error){result.insertAdjacentHTML('beforeend',`<div class="warning">${escapeHtml(error.message)}</div>`);}finally{button.disabled=false;}
+});
+buckets.addEventListener('click',event=>{const button=event.target.closest('button[data-action="show-bucket"]');if(button)showBucket(button.dataset.bucketId);});
+document.querySelector('#archive').addEventListener('click',archive);
+refresh();
 </script>
 </body></html>"#;
 
@@ -662,10 +796,25 @@ mod tests {
         }
     }
 
-    fn server() -> (Server<Model>, tempfile::TempDir) {
+    fn server_with_queues(
+        classifications: impl IntoIterator<Item = Result<ClassificationResult, String>>,
+        extractions: impl IntoIterator<Item = Result<ExtractionResult, String>>,
+    ) -> (Server<Model>, tempfile::TempDir) {
         let database = tempdir().expect("tempdir");
         let service =
             CanonicalService::initialize(database.path().join("memory.db")).expect("service");
+        let runtime = CanonicalRuntime::new(
+            service,
+            Model::new(classifications, extractions),
+            ConfidencePolicy::default(),
+            "fixture-model",
+            "server-test-v1",
+        )
+        .expect("runtime");
+        (Server::new(runtime), database)
+    }
+
+    fn server() -> (Server<Model>, tempfile::TempDir) {
         let classification = ClassificationResult::create_new(
             BucketType::Task,
             "Rust MVP",
@@ -674,27 +823,14 @@ mod tests {
             vec![],
         )
         .expect("classification");
-        let extraction = ExtractionResult::minimal("stored summary").expect("extraction");
-        let confirmed_append_extraction =
-            ExtractionResult::minimal("confirmed append summary").expect("extraction");
-        let confirmed_create_extraction =
-            ExtractionResult::minimal("confirmed create summary").expect("extraction");
-        let runtime = CanonicalRuntime::new(
-            service,
-            Model::new(
-                [Ok(classification)],
-                [
-                    Ok(extraction),
-                    Ok(confirmed_append_extraction),
-                    Ok(confirmed_create_extraction),
-                ],
-            ),
-            ConfidencePolicy::default(),
-            "fixture-model",
-            "server-test-v1",
+        server_with_queues(
+            [Ok(classification)],
+            [
+                Ok(ExtractionResult::minimal("stored summary").expect("extraction")),
+                Ok(ExtractionResult::minimal("confirmed append summary").expect("extraction")),
+                Ok(ExtractionResult::minimal("confirmed create summary").expect("extraction")),
+            ],
         )
-        .expect("runtime");
-        (Server::new(runtime), database)
     }
 
     #[test]
@@ -707,6 +843,26 @@ mod tests {
         assert_eq!(ui.content_type, "text/html; charset=utf-8");
         assert!(ui.body.contains("Rust 工作记忆 MVP"));
         assert!(ui.body.contains("/api/archive"));
+        for marker in [
+            "推荐 Bucket",
+            "备选 Bucket",
+            "模型判断理由",
+            "创建新 Bucket",
+            "不保存",
+            "修改 Bucket",
+            "recommended_bucket",
+            "candidate_buckets",
+            "recommended_bucket_id",
+            "candidate_bucket_ids",
+            "entry_id",
+            "/api/archive/append",
+            "/api/archive/create",
+            "/api/corrections/move",
+        ] {
+            assert!(ui.body.contains(marker), "missing UI marker: {marker}");
+        }
+        assert!(!ui.body.contains("onclick="));
+        assert!(!ui.body.contains("candidate_bucket_ids[0]"));
     }
 
     #[test]
@@ -726,6 +882,94 @@ mod tests {
         assert_eq!(body["bucket_title"], "Rust MVP");
         assert_eq!(body["bucket_type"], "task");
         assert_eq!(body["extraction"]["summary"], "stored summary");
+    }
+
+    #[test]
+    fn confirmation_response_projects_recommended_and_candidate_buckets() {
+        let first = ClassificationResult::create_new(
+            BucketType::Task,
+            "接口 A 压测",
+            0.99,
+            "明确的新任务。",
+            vec![],
+        )
+        .expect("first classification");
+        let second = ClassificationResult::create_new(
+            BucketType::Incident,
+            "支付回调故障",
+            0.99,
+            "明确的新故障。",
+            vec![],
+        )
+        .expect("second classification");
+        let ask = ClassificationResult::ask_user(
+            None,
+            None,
+            0.99,
+            "输入缺少可核验事实。",
+            "请选择归档目标。",
+            vec![],
+        )
+        .expect("ask classification");
+        let (mut server, _database) = server_with_queues(
+            [Ok(first), Ok(second), Ok(ask)],
+            [
+                Ok(ExtractionResult::minimal("first").expect("extraction")),
+                Ok(ExtractionResult::minimal("second").expect("extraction")),
+            ],
+        );
+
+        for text in ["第一条事实", "第二条事实"] {
+            let response = server.handle_request(HttpRequest::new(
+                "POST",
+                "/api/archive",
+                format!(r#"{{"text":"{text}"}}"#),
+            ));
+            assert_eq!(response.status, 200, "{}", response.body);
+            let body: Value = serde_json::from_str(&response.body).expect("seed JSON");
+            assert_eq!(body["archive_state"], "archived");
+        }
+
+        let response = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive",
+            r#"{"text":"压测结果更新了"}"#,
+        ));
+        assert_eq!(response.status, 200, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).expect("confirmation JSON");
+        assert_eq!(body["archive_state"], "needs_confirmation");
+        assert_eq!(body["action"], "ask_user");
+        assert!(body["reason"].is_string());
+        assert!(body["question"].is_string());
+        assert!(body["recommended_bucket_id"].is_string());
+        assert!(body["recommended_bucket"].is_object());
+        assert_eq!(
+            body["recommended_bucket"]["id"],
+            body["recommended_bucket_id"]
+        );
+        let candidates = body["candidate_buckets"].as_array().expect("candidates");
+        let candidate_ids = body["candidate_bucket_ids"]
+            .as_array()
+            .expect("candidate ids");
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidate_ids.len(), 2);
+        assert_eq!(
+            candidates
+                .iter()
+                .filter(|candidate| candidate["is_recommended"] == true)
+                .count(),
+            1
+        );
+        for candidate in candidates {
+            for field in ["id", "title", "type", "status", "summary", "is_recommended"] {
+                assert!(
+                    !candidate[field].is_null(),
+                    "missing candidate field: {field}"
+                );
+            }
+        }
+        assert!(body["bucket_title"].is_null());
+        assert!(body["bucket_type"].is_null());
     }
 
     #[test]
@@ -776,6 +1020,21 @@ mod tests {
             create_body["extraction"]["summary"],
             "confirmed create summary"
         );
+
+        let entry_id = initial_body["entry_id"].as_str().expect("initial entry id");
+        let target_bucket_id = create_body["bucket_id"].as_str().expect("target bucket id");
+        let move_response = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/corrections/move",
+            format!(
+                r#"{{"entry_id":"{entry_id}","target_bucket_id":"{target_bucket_id}","command_text":"用户修改了 Bucket。"}}"#
+            ),
+        ));
+        assert_eq!(move_response.status, 200, "{}", move_response.body);
+        let move_body: Value = serde_json::from_str(&move_response.body).expect("move JSON");
+        assert_eq!(move_body["entry"]["id"], entry_id);
+        assert_eq!(move_body["entry"]["bucket_id"], target_bucket_id);
+        assert_eq!(move_body["entry"]["moved_from_bucket_id"], bucket_id);
     }
 
     #[test]

@@ -132,7 +132,8 @@ where
 /// Structured-output prompt boundary. The persisted audit stores only the
 /// stable version string, not these full prompts.
 const CLASSIFICATION_SYSTEM_PROMPT: &str = r#"你是工作记忆分类器。只返回符合 ClassificationResult schema 的 JSON。
-候选 Bucket 是服务端提供的唯一有效 ID。优先使用唯一且明确匹配的候选；无法安全判断时使用 ask_user。不要臆造 Bucket ID。"#;
+候选 Bucket 是服务端提供的唯一有效 ID。优先使用唯一且明确匹配的候选；无法安全判断时使用 ask_user。
+如果输入只有“那个/这个/它/上次/相关”等模糊指代，或只有“继续/更新了/完成了/好了/正常了/记一下”等低信息状态动作，且没有数字、指标、错误、日志、决定、原因或其他可核验事实，必须使用 ask_user，即使你很确定最像哪个 Bucket。不要臆造 Bucket ID。"#;
 const EXTRACTION_SYSTEM_PROMPT: &str = r#"你是工作记忆提取器。只返回符合 ExtractionResult schema 的 JSON。
 完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。"#;
 
@@ -241,6 +242,7 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             classification,
             extraction: Some(extraction),
             bucket: Some(bucket),
+            candidates: Vec::new(),
         })
     }
 
@@ -286,6 +288,7 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             classification,
             extraction: Some(extraction),
             bucket: Some(bucket),
+            candidates: Vec::new(),
         })
     }
 
@@ -329,6 +332,7 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             classification,
             extraction,
             bucket,
+            candidates,
         })
     }
 }
@@ -340,6 +344,8 @@ pub struct ArchiveExecution {
     pub classification: ClassificationResult,
     pub extraction: Option<ExtractionResult>,
     pub bucket: Option<RustBucket>,
+    /// Server-provided candidate metadata retained for confirmation clients.
+    pub candidates: Vec<BucketView>,
 }
 
 /// Rust runtime owning the MVP store and structured memory model.
@@ -550,6 +556,44 @@ fn entry_to_value(entry: &RustEntry) -> Result<Value, RuntimeError> {
 }
 
 pub fn archive_execution_to_value(execution: &ArchiveExecution) -> Result<Value, RuntimeError> {
+    let recommended_bucket_id = execution
+        .classification
+        .bucket_id()
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            execution
+                .classification
+                .candidate_bucket_ids()
+                .first()
+                .cloned()
+        });
+    let candidate_buckets = execution
+        .classification
+        .candidate_bucket_ids()
+        .iter()
+        .filter_map(|candidate_id| {
+            execution
+                .candidates
+                .iter()
+                .find(|candidate| candidate.id() == candidate_id)
+        })
+        .map(|candidate| {
+            json!({
+                "id": candidate.id(),
+                "title": candidate.title(),
+                "type": candidate.bucket_type().as_str(),
+                "status": candidate.status().as_str(),
+                "summary": candidate.summary(),
+                "tags": candidate.tags(),
+                "last_active_at_unix_ms": candidate.last_active_at_unix_ms(),
+                "is_recommended": recommended_bucket_id.as_deref() == Some(candidate.id()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let recommended_bucket = candidate_buckets
+        .iter()
+        .find(|candidate| candidate["is_recommended"] == json!(true));
+
     Ok(json!({
         "ok": true,
         "attempt_id": execution.outcome.attempt_id,
@@ -562,11 +606,18 @@ pub fn archive_execution_to_value(execution: &ArchiveExecution) -> Result<Value,
         "reason": execution.classification.reason(),
         "question": execution.classification.question(),
         "candidate_bucket_ids": execution.classification.candidate_bucket_ids(),
-        "bucket_title": execution
+        "recommended_bucket_id": recommended_bucket_id,
+        "recommended_bucket": recommended_bucket,
+        "candidate_buckets": candidate_buckets,
+        // These fields describe a proposed new Bucket only. Existing Bucket
+        // metadata is exposed separately through recommended_bucket and the
+        // candidate_buckets list, so old clients cannot mistake an append
+        // recommendation for a create-new request.
+        "bucket_title": execution.classification.title(),
+        "bucket_type": execution
             .classification
-            .title()
-            .or_else(|| execution.bucket.as_ref().map(|bucket| bucket.title.as_str())),
-        "bucket_type": execution.classification.bucket_type().map(BucketType::as_str),
+            .bucket_type()
+            .map(BucketType::as_str),
         "bucket": execution.bucket.as_ref().map(rust_bucket_to_value).transpose()?,
         "extraction": execution.extraction.as_ref().map(extraction_to_value),
     }))

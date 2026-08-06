@@ -20,30 +20,47 @@ from app.schemas import BucketView, ClassificationResult
 
 SchemaParser = Callable[[str, str, type[BaseModel]], BaseModel]
 
+# These deterministic markers are intentionally broader than the model prompt.
+# A model can be confident about a plausible Bucket even when the user supplied
+# no durable fact, so the service must prefer confirmation over silent writes.
 _VAGUE_REFERENCE_MARKERS = (
-    "刚才那个",
-    "刚才这个",
-    "那个问题",
-    "这个问题",
-    "那个事情",
-    "这个事情",
+    "刚才",
+    "刚刚",
+    "那个",
+    "这个",
+    "它",
+    "上次",
+    "之前",
+    "前面",
     "那块",
     "这块",
-    "相关的",
+    "相关",
+    "该问题",
+    "这件事",
+    "那个任务",
+    "这个任务",
 )
 _LOW_INFORMATION_ACTION_MARKERS = (
-    "继续处理",
+    "继续",
+    "更新",
+    "完成",
+    "好了",
+    "正常了",
+    "有进展",
+    "搞定",
+    "解决",
+    "记一下",
+    "记下",
     "再补一点",
     "补一点",
     "补一下",
     "补充一下",
     "跟进一下",
-    "处理一下",
+    "处理",
     "看一下",
 )
 _CONCRETE_FACT_MARKERS = (
     "恢复",
-    "完成",
     "决定",
     "确认",
     "回复说",
@@ -64,6 +81,7 @@ _CONCRETE_FACT_MARKERS = (
     "P99",
     "QPS",
 )
+_LOW_INFORMATION_CHAR_LIMIT = 24
 
 
 @dataclass(frozen=True)
@@ -147,7 +165,7 @@ def validate_candidate_reference(
     result: ClassificationResult,
     candidates: Sequence[BucketView],
 ) -> ClassificationResult:
-    """Prevent a generated Bucket ID from reaching persistence."""
+    """Prevent generated Bucket IDs from reaching persistence."""
 
     candidate_ids = {candidate.id for candidate in candidates}
     if result.action == "append_existing" and result.bucket_id not in candidate_ids:
@@ -158,22 +176,38 @@ def validate_candidate_reference(
             reason_suffix="目标 Bucket ID 不在服务端候选列表中，已阻止自动归档。",
         )
 
-    invalid_candidates = [
-        candidate_id
-        for candidate_id in result.candidate_bucket_ids
-        if candidate_id not in candidate_ids
-    ]
-    if invalid_candidates:
-        valid_ids = [
-            candidate_id
-            for candidate_id in result.candidate_bucket_ids
-            if candidate_id in candidate_ids
-        ]
+    original_ids = list(result.candidate_bucket_ids)
+    merged_ids: list[str] = []
+    if result.bucket_id in candidate_ids and result.bucket_id:
+        merged_ids.append(result.bucket_id)
+    for candidate_id in original_ids:
+        if candidate_id in candidate_ids and candidate_id not in merged_ids:
+            merged_ids.append(candidate_id)
+
+    has_invalid_candidates = any(
+        candidate_id not in candidate_ids for candidate_id in original_ids
+    )
+    if result.action == "ask_user" or has_invalid_candidates:
+        # Keep the model's explicit target first, then valid model candidates,
+        # then the bounded server list so the client can render alternatives.
+        merged_ids.extend(
+            candidate.id for candidate in candidates if candidate.id not in merged_ids
+        )
+
+    if has_invalid_candidates:
         return _ask_user_result(
             result,
             question=result.question or "请从有效候选中选择目标 Bucket。",
-            candidate_ids=valid_ids,
+            candidate_ids=merged_ids,
             reason_suffix="模型返回了不存在的候选 ID，已过滤并要求确认。",
+        )
+
+    if result.action == "ask_user" and merged_ids != original_ids:
+        return _ask_user_result(
+            result,
+            question=result.question or "请从活跃 Bucket 中选择归档目标。",
+            candidate_ids=merged_ids,
+            reason_suffix="已补充服务端候选列表，方便用户确认归档目标。",
         )
     return result
 
@@ -236,7 +270,12 @@ def _is_low_information_reference(text: str) -> bool:
     has_concrete_fact = _contains_digit_or_percent(text) or any(
         marker in text for marker in _CONCRETE_FACT_MARKERS
     )
-    return has_vague_reference and has_low_information_action and not has_concrete_fact
+    compact_status_update = len(text) <= _LOW_INFORMATION_CHAR_LIMIT
+    return (
+        has_vague_reference and has_low_information_action and not has_concrete_fact
+    ) or (
+        has_low_information_action and compact_status_update and not has_concrete_fact
+    )
 
 
 def apply_low_information_reference_gate(
@@ -245,16 +284,21 @@ def apply_low_information_reference_gate(
 ) -> ClassificationResult:
     """Ask the user before auto-merging vague, low-information continuations."""
 
-    if result.action != "append_existing" or not _is_low_information_reference(text):
+    if result.action == "ask_user" or not _is_low_information_reference(text):
         return result
 
     likely_ids = list(result.candidate_bucket_ids)
     if result.bucket_id and result.bucket_id not in likely_ids:
         likely_ids.insert(0, result.bucket_id)
 
+    question = (
+        "输入只有模糊指代和低信息动作，请确认是否创建新 Bucket 或选择已有 Bucket。"
+        if result.action == "create_new"
+        else "输入只有模糊指代和低信息动作，请确认要追加到哪个 Bucket。"
+    )
     return _ask_user_result(
         result,
-        question="输入只有模糊指代和低信息动作，请确认要追加到哪个 Bucket。",
+        question=question,
         candidate_ids=likely_ids,
         reason_suffix="输入缺少可核验事实、状态变化、决策或待办，已阻止高风险自动合并。",
     )
@@ -302,7 +346,11 @@ def classify_input(
     if not candidates and result.action == "create_new":
         return result
 
-    return apply_confidence_gate(result, policy=policy)
+    result = apply_confidence_gate(result, policy=policy)
+    # The confidence/low-information gates may create a new ask_user result
+    # after the first validation pass. Re-project active candidates so the
+    # client can always render a useful selector instead of a blank prompt.
+    return validate_candidate_reference(result, candidates)
 
 
 def save_classification_record(

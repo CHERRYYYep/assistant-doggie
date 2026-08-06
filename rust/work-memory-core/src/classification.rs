@@ -2,30 +2,48 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{BucketView, ClassificationAction, ClassificationResult, CoreError};
 
+// These markers are deliberately broader than the model prompt. A model can be
+// highly confident about a plausible Bucket even when the user supplied no new
+// fact. The server-side gate must therefore treat vague references and status-
+// only updates as confirmation-worthy regardless of the model score.
 const VAGUE_REFERENCE_MARKERS: &[&str] = &[
-    "刚才那个",
-    "刚才这个",
-    "那个问题",
-    "这个问题",
-    "那个事情",
-    "这个事情",
+    "刚才",
+    "刚刚",
+    "那个",
+    "这个",
+    "它",
+    "上次",
+    "之前",
+    "前面",
     "那块",
     "这块",
-    "相关的",
+    "相关",
+    "该问题",
+    "这件事",
+    "那个任务",
+    "这个任务",
 ];
 const LOW_INFORMATION_ACTION_MARKERS: &[&str] = &[
-    "继续处理",
+    "继续",
+    "更新",
+    "完成",
+    "好了",
+    "正常了",
+    "有进展",
+    "搞定",
+    "解决",
+    "记一下",
+    "记下",
     "再补一点",
     "补一点",
     "补一下",
     "补充一下",
     "跟进一下",
-    "处理一下",
+    "处理",
     "看一下",
 ];
 const CONCRETE_FACT_MARKERS: &[&str] = &[
     "恢复",
-    "完成",
     "决定",
     "确认",
     "回复说",
@@ -46,6 +64,7 @@ const CONCRETE_FACT_MARKERS: &[&str] = &[
     "P99",
     "QPS",
 ];
+const LOW_INFORMATION_CHAR_LIMIT: usize = 24;
 
 /// Configurable thresholds for automatic persistence.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,6 +146,19 @@ pub fn build_bucket_candidates(
     Ok(deduplicated)
 }
 
+fn likely_candidate_ids(result: &ClassificationResult) -> Vec<String> {
+    let mut ids = Vec::with_capacity(result.candidate_bucket_ids().len() + 1);
+    if let Some(bucket_id) = result.bucket_id() {
+        ids.push(bucket_id.to_owned());
+    }
+    for candidate_id in result.candidate_bucket_ids() {
+        if !ids.iter().any(|item| item == candidate_id) {
+            ids.push(candidate_id.clone());
+        }
+    }
+    ids
+}
+
 /// Reject generated Bucket IDs that were not supplied by the server.
 pub fn validate_candidate_reference(
     result: ClassificationResult,
@@ -136,6 +168,24 @@ pub fn validate_candidate_reference(
         .iter()
         .map(BucketView::id)
         .collect::<HashSet<_>>();
+    let original_ids = result.candidate_bucket_ids().to_vec();
+    let mut merged_ids = Vec::with_capacity(original_ids.len() + candidates.len() + 1);
+
+    // An explicit model target is the strongest recommendation. Then retain the
+    // model's valid candidates, followed by the bounded server list so the UI
+    // can always present a real alternative-Bucket selector.
+    if let Some(bucket_id) = result.bucket_id()
+        && candidate_ids.contains(bucket_id)
+    {
+        merged_ids.push(bucket_id.to_owned());
+    }
+    for candidate_id in &original_ids {
+        if candidate_ids.contains(candidate_id.as_str())
+            && !merged_ids.iter().any(|item| item == candidate_id)
+        {
+            merged_ids.push(candidate_id.clone());
+        }
+    }
 
     if result.action() == ClassificationAction::AppendExisting
         && result
@@ -152,25 +202,40 @@ pub fn validate_candidate_reference(
         );
     }
 
-    let has_invalid_candidates = result
-        .candidate_bucket_ids()
+    let has_invalid_candidates = original_ids
         .iter()
         .any(|candidate_id| !candidate_ids.contains(candidate_id.as_str()));
+    let should_include_server_candidates =
+        result.action() == ClassificationAction::AskUser || has_invalid_candidates;
+    if should_include_server_candidates {
+        for candidate in candidates {
+            if !merged_ids.iter().any(|item| item == candidate.id()) {
+                merged_ids.push(candidate.id().to_owned());
+            }
+        }
+    }
+
     if has_invalid_candidates {
-        let valid_ids = result
-            .candidate_bucket_ids()
-            .iter()
-            .filter(|candidate_id| candidate_ids.contains(candidate_id.as_str()))
-            .cloned()
-            .collect();
         let question = result
             .question()
             .unwrap_or("请从有效候选中选择目标 Bucket。")
             .to_owned();
         return result.into_confirmation(
             question,
-            valid_ids,
+            merged_ids,
             "模型返回了不存在的候选 ID，已过滤并要求确认。",
+        );
+    }
+
+    if result.action() == ClassificationAction::AskUser && merged_ids != original_ids {
+        let question = result
+            .question()
+            .unwrap_or("请从活跃 Bucket 中选择归档目标。")
+            .to_owned();
+        return result.into_confirmation(
+            question,
+            merged_ids,
+            "已补充服务端候选列表，方便用户确认归档目标。",
         );
     }
 
@@ -186,12 +251,7 @@ pub fn apply_confidence_gate(
         return Ok(result);
     }
 
-    let mut likely_ids = result.candidate_bucket_ids().to_vec();
-    if let Some(bucket_id) = result.bucket_id()
-        && !likely_ids.iter().any(|item| item == bucket_id)
-    {
-        likely_ids.insert(0, bucket_id.to_owned());
-    }
+    let likely_ids = likely_candidate_ids(&result);
 
     if likely_ids.len() > 1 {
         return result.into_confirmation(
@@ -218,26 +278,25 @@ pub fn apply_confidence_gate(
     result.into_confirmation(question, likely_ids, "置信度未达到自动归档阈值。")
 }
 
-/// Ask before auto-merging vague continuations that contain no concrete fact.
+/// Ask before automatically persisting vague or status-only input.
 pub fn apply_low_information_reference_gate(
     text: &str,
     result: ClassificationResult,
 ) -> Result<ClassificationResult, CoreError> {
-    if result.action() != ClassificationAction::AppendExisting
-        || !is_low_information_reference(text)
-    {
+    if result.action() == ClassificationAction::AskUser || !is_low_information_reference(text) {
         return Ok(result);
     }
 
-    let mut likely_ids = result.candidate_bucket_ids().to_vec();
-    if let Some(bucket_id) = result.bucket_id()
-        && !likely_ids.iter().any(|item| item == bucket_id)
-    {
-        likely_ids.insert(0, bucket_id.to_owned());
-    }
+    let likely_ids = likely_candidate_ids(&result);
+
+    let question = if result.action() == ClassificationAction::CreateNew {
+        "输入只有模糊指代和低信息动作，请确认是否创建新 Bucket 或选择已有 Bucket。"
+    } else {
+        "输入只有模糊指代和低信息动作，请确认要追加到哪个 Bucket。"
+    };
 
     result.into_confirmation(
-        "输入只有模糊指代和低信息动作，请确认要追加到哪个 Bucket。",
+        question,
         likely_ids,
         "输入缺少可核验事实、状态变化、决策或待办，已阻止高风险自动合并。",
     )
@@ -256,7 +315,12 @@ pub fn postprocess_classification(
 
     let result = validate_candidate_reference(result, candidates)?;
     let result = apply_low_information_reference_gate(text.trim(), result)?;
-    apply_confidence_gate(result, policy)
+    let result = apply_confidence_gate(result, policy)?;
+    // Confidence and low-information gates can create a fresh ask_user result
+    // after the first candidate validation pass. Populate its displayable
+    // candidates as well, so clients never receive a confirmation without a
+    // usable Bucket selector when active candidates exist.
+    validate_candidate_reference(result, candidates)
 }
 
 fn is_low_information_reference(text: &str) -> bool {
@@ -273,6 +337,12 @@ fn is_low_information_reference(text: &str) -> bool {
         || CONCRETE_FACT_MARKERS
             .iter()
             .any(|marker| text.contains(marker));
+    let compact_status_update = text.chars().count() <= LOW_INFORMATION_CHAR_LIMIT;
 
-    has_vague_reference && has_low_information_action && !has_concrete_fact
+    // The first branch catches references such as “那个任务继续” and “校验
+    // 相关的记一下”. The second catches inputs such as “压测结果更新了”、
+    // “切备用后好了” and “它现在正常了”, which may not contain one of the
+    // reference markers but still contain no durable fact.
+    (has_vague_reference && has_low_information_action && !has_concrete_fact)
+        || (has_low_information_action && compact_status_update && !has_concrete_fact)
 }

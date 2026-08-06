@@ -1,3 +1,5 @@
+import pytest
+
 from datetime import datetime, timezone
 
 from app.schemas import BucketView, ClassificationResult
@@ -7,6 +9,7 @@ from app.services.classify_service import (
     apply_low_information_reference_gate,
     build_bucket_candidates,
     classify_input,
+    validate_candidate_reference,
 )
 
 
@@ -153,3 +156,98 @@ def test_empty_bucket_still_asks_for_pure_vague_reference():
 
     assert result.action == "ask_user"
     assert result.question == "你指的是哪件事？"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "压测结果更新了",
+        "上次评审的事项完成了",
+        "Agent 那个任务继续",
+        "把校验相关的记一下",
+        "切备用后好了",
+        "它现在正常了",
+    ],
+)
+def test_high_confidence_low_information_status_inputs_require_confirmation(text):
+    result = ClassificationResult(
+        action="append_existing",
+        bucket_id="payment",
+        confidence=0.99,
+        reason="模型认为与现有 Bucket 相关。",
+    )
+
+    gated = apply_low_information_reference_gate(text, result)
+
+    assert gated.action == "ask_user"
+    assert gated.should_ask_user is True
+    assert gated.candidate_bucket_ids == ["payment"]
+
+
+def test_low_information_create_new_is_confirmed_and_active_candidates_are_projected():
+    def parser(_system, _user, _schema):
+        return ClassificationResult(
+            action="create_new",
+            bucket_type="experiment",
+            title="接口 A 压测",
+            confidence=0.99,
+            reason="模型建议创建新 Bucket。",
+        )
+
+    result = classify_input(
+        "压测结果更新了",
+        [bucket("payment", "支付回调故障", 3), bucket("load", "接口 A 压测", 2)],
+        parser=parser,
+        policy=ConfidencePolicy(),
+    )
+
+    assert result.action == "ask_user"
+    assert result.question == (
+        "输入只有模糊指代和低信息动作，请确认是否创建新 Bucket 或选择已有 Bucket。"
+    )
+    assert result.candidate_bucket_ids == ["payment", "load"]
+
+
+def test_ask_user_candidates_prioritize_explicit_target_then_model_and_server_candidates():
+    result = ClassificationResult(
+        action="ask_user",
+        bucket_id="payment",
+        confidence=0.99,
+        reason="两个事务相似。",
+        should_ask_user=True,
+        question="请选择归档目标。",
+        candidate_bucket_ids=["load"],
+    )
+
+    gated = validate_candidate_reference(
+        result,
+        [
+            bucket("load", "接口 A 压测", 3),
+            bucket("payment", "支付回调故障", 2),
+            bucket("release", "发布清单", 1),
+        ],
+    )
+
+    assert gated.action == "ask_user"
+    assert gated.candidate_bucket_ids == ["payment", "load", "release"]
+
+
+def test_ask_user_without_candidates_uses_active_bucket_candidates():
+    def parser(_system, _user, _schema):
+        return ClassificationResult(
+            action="ask_user",
+            confidence=0.98,
+            reason="信息不足。",
+            should_ask_user=True,
+            question="请选择归档目标。",
+        )
+
+    result = classify_input(
+        "这条内容不够明确",
+        [bucket("payment", "支付回调故障", 3), bucket("load", "接口 A 压测", 2)],
+        parser=parser,
+        policy=ConfidencePolicy(),
+    )
+
+    assert result.action == "ask_user"
+    assert result.candidate_bucket_ids == ["payment", "load"]

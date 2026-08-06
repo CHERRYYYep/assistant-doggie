@@ -12,10 +12,12 @@
 
 - `append_existing`：把内容追加到一个明确匹配的活跃 Bucket。
 - `create_new`：为新事务创建 Bucket，并保存第一条 Entry。
-- `ask_user`：分类不够安全时只保存归档尝试，不创建正式 Entry。
-- 自动归档要求候选唯一且 `confidence >= 0.85`。
+- `ask_user`：分类不够安全时只保存归档尝试，不创建正式 Entry。低信息输入（例如“压测结果更新了”“切备用后好了”“它现在正常了”）即使模型给出高 confidence，也必须先确认。
+- 自动归档要求候选唯一且 `confidence >= 0.85`；低信息门控优先于 confidence。
 - `0.55 <= confidence < 0.85` 或存在多个候选时请求确认；低于 `0.55` 也不会自动写入。
-- 空工作区中的新 Bucket 仍需通过相同的置信度门控；高置信度才会直接创建。
+- 空工作区中的新 Bucket 仍需通过相同的置信度门控；纯指代或低信息状态输入不能直接创建。
+- 确认响应同时提供推荐 Bucket、备选 Bucket、模型理由和问题；`bucket_title` / `bucket_type` 只表示建议创建的新 Bucket，不伪装已有 Bucket 元数据。
+- 内嵌 UI 提供“保存到推荐 Bucket / 保存到其他 Bucket / 创建新的 Bucket / 不保存”四条路径，并在归档后提供修改 Bucket 的入口。
 - 每条正式 Entry 保存原文，并可保存 `summary`、`todo`、`evidence`、`timeline`、`decision`、`hypothesis`、`entity` 和 `tag` memory item。
 - 归档尝试、分类原因、候选 Bucket、模型名和 Prompt 版本写入审计记录。
 - 支持显式确认追加、显式确认新建、移动 Entry 和更新 Bucket 状态。
@@ -79,7 +81,7 @@ curl -s http://127.0.0.1:8787/api/archive \
   -d '{"text":"支付回调从 10:20 开始失败，第三方返回 502。"}'
 ```
 
-需要确认时，响应 `archive_state` 为 `needs_confirmation`，并返回 `question`、`candidate_bucket_ids`；如果分类动作是新建，还会返回 `bucket_title` 和 `bucket_type`。确认追加示例：
+需要确认时，响应 `archive_state` 为 `needs_confirmation`，并返回 `recommended_bucket_id`、`recommended_bucket`、`candidate_bucket_ids`、`candidate_buckets`、`reason` 和 `question`。`candidate_buckets` 中包含 `id`、`title`、`type`、`status`、`summary`、`tags`、`last_active_at_unix_ms` 和 `is_recommended`，供客户端同时呈现推荐项与备选项；如果分类建议新建，还会返回可编辑的 `bucket_title` 和 `bucket_type`。确认追加示例：
 
 ```bash
 curl -s http://127.0.0.1:8787/api/archive/append \
@@ -95,7 +97,7 @@ curl -s http://127.0.0.1:8787/api/archive/create \
   -d '{"title":"支付回调故障","bucket_type":"incident","text":"第三方返回 502。","confirmation_granted":true}'
 ```
 
-`confirmation_granted` 必须是 JSON 布尔值 `true`。它只表示本次请求的用户确认，不是网络认证；服务应只在受信任的本机或已配置认证的反向代理后使用。
+`confirmation_granted` 必须是 JSON 布尔值 `true`。它只表示本次请求的用户确认，不是网络认证；服务应只在受信任的本机或已配置认证的反向代理后使用。用户选择“不保存”时不调用确认写入接口，正式 Entry 保持不变，但归档尝试审计仍会保留。归档成功后，客户端还可以调用 `/api/corrections/move` 修改目标 Bucket。
 
 ## 项目结构
 

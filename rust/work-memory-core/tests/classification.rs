@@ -159,6 +159,39 @@ fn invalid_suggested_candidates_are_filtered() {
 }
 
 #[test]
+fn confirmation_candidates_prioritize_explicit_target_then_model_and_server_candidates() {
+    let result = ClassificationResult::try_new(
+        ClassificationAction::AskUser,
+        Some("bucket-2".to_owned()),
+        None,
+        None,
+        0.99,
+        "两个事务相似。",
+        true,
+        Some("请选择归档目标。".to_owned()),
+        vec!["bucket-1".to_owned()],
+    )
+    .unwrap();
+    let candidates = vec![
+        bucket("bucket-1", "接口 A 压测", 100),
+        bucket("bucket-2", "支付回调故障", 90),
+        bucket("bucket-3", "发布清单", 80),
+    ];
+
+    let gated = validate_candidate_reference(result, &candidates).unwrap();
+
+    assert_eq!(gated.action(), ClassificationAction::AskUser);
+    assert_eq!(
+        gated.candidate_bucket_ids(),
+        &[
+            "bucket-2".to_owned(),
+            "bucket-1".to_owned(),
+            "bucket-3".to_owned()
+        ]
+    );
+}
+
+#[test]
 fn ambiguous_result_requires_confirmation_even_with_high_confidence() {
     let result = ClassificationResult::append_existing(
         "bucket-1",
@@ -334,4 +367,118 @@ fn confidence_policy_rejects_invalid_order_and_non_finite_values() {
             .auto_archive_threshold(),
         0.9
     );
+}
+
+#[test]
+fn high_confidence_low_information_status_inputs_require_confirmation() {
+    let inputs = [
+        "压测结果更新了",
+        "上次评审的事项完成了",
+        "Agent 那个任务继续",
+        "把校验相关的记一下",
+        "切备用后好了",
+        "它现在正常了",
+    ];
+
+    for input in inputs {
+        let result = ClassificationResult::append_existing(
+            "bucket-1",
+            Some(BucketType::Experiment),
+            0.99,
+            "模型认为与现有 Bucket 相关。",
+            vec![],
+        )
+        .unwrap();
+
+        let gated = postprocess_classification(
+            input,
+            result,
+            &[bucket("bucket-1", "接口 A 压测", 100)],
+            ConfidencePolicy::default(),
+        )
+        .unwrap();
+
+        assert_eq!(gated.action(), ClassificationAction::AskUser, "{input}");
+        assert!(gated.should_ask_user(), "{input}");
+        assert_eq!(gated.candidate_bucket_ids(), &["bucket-1".to_owned()]);
+    }
+}
+
+#[test]
+fn low_information_create_new_is_confirmed_and_gets_existing_candidates() {
+    let result = ClassificationResult::create_new(
+        BucketType::Experiment,
+        "接口 A 压测",
+        0.99,
+        "模型建议创建新 Bucket。",
+        vec![],
+    )
+    .unwrap();
+
+    let gated = postprocess_classification(
+        "压测结果更新了",
+        result,
+        &[
+            bucket("bucket-1", "接口 A 压测", 100),
+            bucket("bucket-2", "支付回调故障", 90),
+        ],
+        ConfidencePolicy::default(),
+    )
+    .unwrap();
+
+    assert_eq!(gated.action(), ClassificationAction::AskUser);
+    assert_eq!(
+        gated.question(),
+        Some("输入只有模糊指代和低信息动作，请确认是否创建新 Bucket 或选择已有 Bucket。")
+    );
+    assert_eq!(
+        gated.candidate_bucket_ids(),
+        &["bucket-1".to_owned(), "bucket-2".to_owned()]
+    );
+}
+
+#[test]
+fn ask_user_without_candidates_gets_server_candidate_list() {
+    let result =
+        ClassificationResult::ask_user(None, None, 0.98, "信息不足。", "请选择归档目标。", vec![])
+            .unwrap();
+
+    let gated = postprocess_classification(
+        "这条内容不够明确",
+        result,
+        &[
+            bucket("bucket-1", "接口 A 压测", 100),
+            bucket("bucket-2", "支付回调故障", 90),
+        ],
+        ConfidencePolicy::default(),
+    )
+    .unwrap();
+
+    assert_eq!(gated.action(), ClassificationAction::AskUser);
+    assert_eq!(
+        gated.candidate_bucket_ids(),
+        &["bucket-1".to_owned(), "bucket-2".to_owned()]
+    );
+}
+
+#[test]
+fn referenced_fact_still_allows_high_confidence_append() {
+    let result = ClassificationResult::append_existing(
+        "bucket-1",
+        Some(BucketType::Incident),
+        0.99,
+        "输入包含明确指标。",
+        vec![],
+    )
+    .unwrap();
+
+    let gated = postprocess_classification(
+        "刚才那个继续处理一下，错误率已经降到 2%",
+        result,
+        &[bucket("bucket-1", "接口 A 压测", 100)],
+        ConfidencePolicy::default(),
+    )
+    .unwrap();
+
+    assert_eq!(gated.action(), ClassificationAction::AppendExisting);
 }
