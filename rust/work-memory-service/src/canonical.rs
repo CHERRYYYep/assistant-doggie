@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use crate::query::{MemoryQuery, MemoryQueryError, MemorySearchResponse, search_memory};
 use serde_json::Value;
 use thiserror::Error;
 use work_memory_core::{
@@ -25,6 +26,8 @@ pub enum CanonicalServiceError {
     MissingExtraction { action: &'static str },
     #[error("ask_user archive must not include extraction")]
     UnexpectedExtraction,
+    #[error("memory query error: {0}")]
+    Query(#[from] MemoryQueryError),
     #[error("domain error: {0}")]
     Core(#[from] CoreError),
     #[error("store error: {0}")]
@@ -36,7 +39,10 @@ impl CanonicalServiceError {
     pub const fn store_error(&self) -> Option<&StoreError> {
         match self {
             Self::Store(error) => Some(error),
-            Self::MissingExtraction { .. } | Self::UnexpectedExtraction | Self::Core(_) => None,
+            Self::MissingExtraction { .. }
+            | Self::UnexpectedExtraction
+            | Self::Query(_)
+            | Self::Core(_) => None,
         }
     }
 
@@ -44,7 +50,10 @@ impl CanonicalServiceError {
     pub const fn core_error(&self) -> Option<&CoreError> {
         match self {
             Self::Core(error) => Some(error),
-            Self::MissingExtraction { .. } | Self::UnexpectedExtraction | Self::Store(_) => None,
+            Self::MissingExtraction { .. }
+            | Self::UnexpectedExtraction
+            | Self::Query(_)
+            | Self::Store(_) => None,
         }
     }
 }
@@ -176,6 +185,28 @@ impl CanonicalService {
         limit: usize,
     ) -> Result<Vec<RustSearchHit>, CanonicalServiceError> {
         Ok(self.store.search(query, limit)?)
+    }
+
+    /// Parse and execute a natural-language query at Entry granularity.
+    ///
+    /// This is intentionally separate from [`Self::search`] so the old Bucket
+    /// search contract remains stable for existing clients.
+    pub fn query_memory(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> Result<MemorySearchResponse, CanonicalServiceError> {
+        let plan = MemoryQuery::parse(query, limit)?;
+        Ok(search_memory(&self.store, &plan)?)
+    }
+
+    /// Execute a caller-supplied query plan. HTTP clients and Agent tools can
+    /// add structured filters after deterministic natural-language parsing.
+    pub fn query_memory_with_plan(
+        &self,
+        plan: MemoryQuery,
+    ) -> Result<MemorySearchResponse, CanonicalServiceError> {
+        Ok(search_memory(&self.store, &plan)?)
     }
 
     /// Load one Bucket with all immutable Entries and structured memory items.

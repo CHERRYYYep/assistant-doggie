@@ -12,8 +12,9 @@ use serde_json::{Value, json};
 use work_memory_core::{BucketStatus, BucketType};
 use work_memory_runtime::{
     CanonicalRuntime, RuntimeError, active_buckets, archive_execution_to_value, bucket_detail,
-    search_memory,
+    query_memory, query_memory_with_plan, search_memory,
 };
+use work_memory_service::{CanonicalServiceError, MemoryQuery, StructuredFieldFilter, TimeRange};
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8787";
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -119,10 +120,12 @@ where
             }
             ("GET", "/api/buckets/active") => self.handle_active_buckets(query),
             ("GET", "/api/buckets/search") => self.handle_search(query),
+            ("GET", "/api/memory/query") => self.handle_memory_query(query),
             ("GET", path) if path.starts_with("/api/buckets/") => {
                 self.handle_bucket_detail(&path["/api/buckets/".len()..])
             }
             ("POST", "/api/archive") => self.handle_archive(&request.body),
+            ("POST", "/api/memory/query") => self.handle_memory_query_json(&request.body),
             ("POST", "/api/archive/append") => self.handle_confirmed_append(&request.body),
             ("POST", "/api/archive/create") => self.handle_confirmed_create(&request.body),
             ("POST", "/api/corrections/move") => self.handle_move(&request.body),
@@ -155,6 +158,78 @@ where
             Err(error) => return HttpResponse::error(400, error),
         };
         match search_memory(self.runtime.service(), search_query, limit) {
+            Ok(mut body) => {
+                body["ok"] = json!(true);
+                HttpResponse::json(200, body)
+            }
+            Err(error) => runtime_error_response(error),
+        }
+    }
+
+    fn handle_memory_query(&self, query: &str) -> HttpResponse {
+        let params = query_params(query);
+        let Some(search_query) = params.get("q").filter(|value| !value.trim().is_empty()) else {
+            return HttpResponse::error(400, "query parameter q must not be empty");
+        };
+        let limit = match parse_limit(query) {
+            Ok(limit) => limit,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        match query_memory(self.runtime.service(), search_query, limit) {
+            Ok(mut body) => {
+                body["ok"] = json!(true);
+                HttpResponse::json(200, body)
+            }
+            Err(error) => runtime_error_response(error),
+        }
+    }
+
+    fn handle_memory_query_json(&self, body: &str) -> HttpResponse {
+        let value = match parse_json_object(body) {
+            Ok(value) => value,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        let Some(query_text) = value.get("query").and_then(Value::as_str) else {
+            return HttpResponse::error(400, "query must be a string");
+        };
+        if query_text.trim().is_empty() {
+            return HttpResponse::error(400, "query must not be empty");
+        }
+        let limit = match parse_json_limit(&value) {
+            Ok(limit) => limit,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        let mut plan = match MemoryQuery::parse(query_text, limit) {
+            Ok(plan) => plan,
+            Err(error) => return runtime_error_response(query_runtime_error(error)),
+        };
+
+        let statuses = match parse_json_statuses(&value) {
+            Ok(statuses) => statuses,
+            Err(error) => return HttpResponse::error(400, error),
+        };
+        if !statuses.is_empty() {
+            plan = plan.with_statuses(statuses);
+        }
+
+        let time_range = match parse_json_time_range(&value) {
+            Ok(time_range) => time_range,
+            Err(error) => return runtime_error_response(query_runtime_error(error)),
+        };
+        if let Some(time_range) = time_range {
+            plan = plan.with_time_range(Some(time_range));
+        }
+
+        let filters = match parse_json_filters(&value) {
+            Ok(filters) => filters,
+            Err(error) => return runtime_error_response(query_runtime_error(error)),
+        };
+        plan = match plan.with_structured_filters(filters) {
+            Ok(plan) => plan,
+            Err(error) => return runtime_error_response(query_runtime_error(error)),
+        };
+
+        match query_memory_with_plan(self.runtime.service(), plan) {
             Ok(mut body) => {
                 body["ok"] = json!(true);
                 HttpResponse::json(200, body)
@@ -441,10 +516,15 @@ fn runtime_error_response(error: RuntimeError) -> HttpResponse {
         | RuntimeError::Core(_)
         | RuntimeError::Contract(_)
         | RuntimeError::Json(_) => 400,
+        RuntimeError::Canonical(CanonicalServiceError::Query(_)) => 400,
         RuntimeError::Canonical(error) if error.store_error().is_some() => 500,
         RuntimeError::Canonical(_) | RuntimeError::Store(_) | RuntimeError::Model(_) => 500,
     };
     HttpResponse::error(status, error.to_string())
+}
+
+fn query_runtime_error(error: work_memory_service::MemoryQueryError) -> RuntimeError {
+    RuntimeError::Canonical(CanonicalServiceError::from(error))
 }
 
 fn parse_json_object(body: &str) -> Result<Value, String> {
@@ -485,6 +565,108 @@ fn parse_limit(query: &str) -> Result<usize, String> {
     Ok(limit)
 }
 
+fn parse_json_limit(value: &Value) -> Result<usize, String> {
+    let limit = value
+        .get("limit")
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| "limit must be a positive integer".to_owned())
+                .and_then(|limit| {
+                    usize::try_from(limit)
+                        .map_err(|_| "limit must be a positive integer".to_owned())
+                })
+        })
+        .transpose()?
+        .unwrap_or(DEFAULT_LIST_LIMIT);
+    if !(1..=MAX_LIST_LIMIT).contains(&limit) {
+        return Err(format!("limit must be between 1 and {MAX_LIST_LIMIT}"));
+    }
+    Ok(limit)
+}
+
+fn parse_json_statuses(value: &Value) -> Result<Vec<BucketStatus>, String> {
+    let Some(statuses) = value.get("statuses") else {
+        return Ok(Vec::new());
+    };
+    let Some(statuses) = statuses.as_array() else {
+        return Err("statuses must be an array of strings".to_owned());
+    };
+    statuses
+        .iter()
+        .map(|status| {
+            let status = status
+                .as_str()
+                .ok_or_else(|| "statuses must contain only strings".to_owned())?;
+            parse_bucket_status(status)
+        })
+        .collect()
+}
+
+fn parse_json_time_range(
+    value: &Value,
+) -> Result<Option<TimeRange>, work_memory_service::MemoryQueryError> {
+    let start = value.get("start_at");
+    let end = value.get("end_at");
+    match (start, end) {
+        (None, None) => Ok(None),
+        (Some(start), Some(end)) => {
+            let start = start.as_str().ok_or_else(|| {
+                work_memory_service::MemoryQueryError::InvalidTimeRange(
+                    "start_at must be a timestamp string".to_owned(),
+                )
+            })?;
+            let end = end.as_str().ok_or_else(|| {
+                work_memory_service::MemoryQueryError::InvalidTimeRange(
+                    "end_at must be a timestamp string".to_owned(),
+                )
+            })?;
+            TimeRange::from_strings(start, end, "自定义时间范围").map(Some)
+        }
+        _ => Err(work_memory_service::MemoryQueryError::InvalidTimeRange(
+            "start_at and end_at must be provided together".to_owned(),
+        )),
+    }
+}
+
+fn parse_json_filters(
+    value: &Value,
+) -> Result<Vec<StructuredFieldFilter>, work_memory_service::MemoryQueryError> {
+    let Some(filters) = value.get("filters") else {
+        return Ok(Vec::new());
+    };
+    let Some(filters) = filters.as_array() else {
+        return Err(
+            work_memory_service::MemoryQueryError::InvalidStructuredFilter(
+                "filters must be an array".to_owned(),
+            ),
+        );
+    };
+    filters
+        .iter()
+        .map(|filter| {
+            let Some(object) = filter.as_object() else {
+                return Err(
+                    work_memory_service::MemoryQueryError::InvalidStructuredFilter(
+                        "each filter must be an object".to_owned(),
+                    ),
+                );
+            };
+            let field = object.get("field").and_then(Value::as_str).ok_or_else(|| {
+                work_memory_service::MemoryQueryError::InvalidStructuredFilter(
+                    "filter.field must be a string".to_owned(),
+                )
+            })?;
+            let value = object.get("value").and_then(Value::as_str).ok_or_else(|| {
+                work_memory_service::MemoryQueryError::InvalidStructuredFilter(
+                    "filter.value must be a string".to_owned(),
+                )
+            })?;
+            StructuredFieldFilter::new(field, value)
+        })
+        .collect()
+}
+
 fn optional_string(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -498,8 +680,9 @@ fn parse_bucket_status(value: &str) -> Result<BucketStatus, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "active" => Ok(BucketStatus::Active),
         "paused" => Ok(BucketStatus::Paused),
+        "done" => Ok(BucketStatus::Done),
         "archived" => Ok(BucketStatus::Archived),
-        _ => Err("status must be active, paused, or archived".to_owned()),
+        _ => Err("status must be active, paused, done, or archived".to_owned()),
     }
 }
 
@@ -521,26 +704,26 @@ fn parse_bucket_type(value: &str) -> Result<BucketType, String> {
 }
 
 fn percent_decode(value: &str) -> String {
-    let mut output = String::with_capacity(value.len());
-    let bytes = value.as_bytes();
+    let mut bytes = Vec::with_capacity(value.len());
+    let input = value.as_bytes();
     let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%'
-            && index + 2 < bytes.len()
-            && let (Some(high), Some(low)) = (hex(bytes[index + 1]), hex(bytes[index + 2]))
+    while index < input.len() {
+        if input[index] == b'%'
+            && index + 2 < input.len()
+            && let (Some(high), Some(low)) = (hex(input[index + 1]), hex(input[index + 2]))
         {
-            output.push((high << 4 | low) as char);
+            bytes.push(high << 4 | low);
             index += 3;
             continue;
         }
-        output.push(if bytes[index] == b'+' {
-            ' '
+        bytes.push(if input[index] == b'+' {
+            b' '
         } else {
-            bytes[index] as char
+            input[index]
         });
         index += 1;
     }
-    output
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn hex(value: u8) -> Option<u8> {
@@ -580,7 +763,7 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
     .question{background:#fff8e1;border:1px solid #f0d98c}.candidate-card{background:#f8fafc;border:1px solid #e5e7eb}
     .confirmation h3,.move-card h3{margin:.1rem 0 .4rem;font-size:1rem}.confirmation label,.move-card label{display:block;margin:.45rem 0}
     input,select{box-sizing:border-box;max-width:100%;padding:.45rem;border:1px solid #cbd5e1;border-radius:6px}
-    .success{color:#166534}.warning{color:#92400e}
+    .success{color:#166534}.warning{color:#92400e}.query-plan{padding:.65rem;background:#eef6ff;border:1px solid #cfe3ff;border-radius:8px}.query-bucket{margin-top:.8rem;padding:.65rem;border:1px solid #e5e7eb;border-radius:8px}.query-entry{padding:.55rem 0;border-bottom:1px solid #eee}.query-entry:last-child{border-bottom:0}.query-evidence{font-size:.9rem}
     @media(max-width:760px){main{display:block}}
   </style>
 </head>
@@ -593,6 +776,12 @@ pub const INDEX_HTML: &str = r#"<!doctype html>
         <textarea id="input" placeholder="输入一条工作事实，例如：支付回调从 10:20 开始失败。"></textarea>
         <br><button id="archive">归档</button>
         <div id="result" class="result muted">等待输入…</div>
+      </section>
+      <section>
+        <h2>语言查询</h2>
+        <input id="memory-query" type="text" style="width:100%" placeholder="例如：查询接口 A 最近两周的压测结果">
+        <br><button id="memory-query-button">查询</button>
+        <div id="memory-query-result" class="result muted">输入自然语言查询，系统会解析实体、主题、时间范围和状态。</div>
       </section>
       <section>
         <h2>Bucket 详情</h2>
@@ -609,6 +798,9 @@ const input=document.querySelector('#input');
 const result=document.querySelector('#result');
 const buckets=document.querySelector('#buckets');
 const detail=document.querySelector('#detail');
+const memoryQueryInput=document.querySelector('#memory-query');
+const memoryQueryButton=document.querySelector('#memory-query-button');
+const memoryQueryResult=document.querySelector('#memory-query-result');
 let activeBuckets=[];
 let pendingArchive=null;
 
@@ -653,6 +845,43 @@ function renderMoveCard(data){
   const targetOptions=renderBucketOptions(data.bucket_id);
   const hasTarget=activeBuckets.some(bucket=>bucket.id!==data.bucket_id);
   return `<div class="move-card"><h3>修改 Bucket</h3>${hasTarget?`<label>将这条 Entry 移动到：<select id="move-target">${targetOptions}</select></label><button data-action="move-entry" data-entry-id="${escapeHtml(data.entry_id)}">修改 Bucket</button>`:'<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<div id="move-status" class="muted"></div></div>`;
+}
+function renderQueryPlan(plan){
+  const range=plan.time_range?`${escapeHtml(plan.time_range.label)}（${escapeHtml(plan.time_range.start)} 至 ${escapeHtml(plan.time_range.end)}）`:'未指定';
+  const statuses=(plan.statuses||[]).map(escapeHtml).join('、')||'未指定';
+  const filters=(plan.structured_filters||[]).map(filter=>`${escapeHtml(filter.field)}=${escapeHtml(filter.value)}`).join('；')||'无';
+  return `<div class="query-plan"><b>查询理解</b><br>实体：${(plan.entity_terms||[]).map(escapeHtml).join('、')||'未识别'}<br>主题：${(plan.topic_terms||[]).map(escapeHtml).join('、')||'未识别'}<br>时间范围：${range}<br>状态：${statuses}<br>结构化筛选：${filters}</div>`;
+}
+function renderMemoryQuery(data){
+  let html=renderQueryPlan(data.query_plan||{});
+  html+=`<p><b>合并回答：</b>${escapeHtml(data.answer||'')}</p>`;
+  const results=data.results||[];
+  if(!results.length){memoryQueryResult.innerHTML=html+'<p class="muted">没有匹配的 Entry。</p>';return;}
+  const groups=new Map();
+  for(const hit of results){
+    const id=hit.bucket?.id||'unknown';
+    if(!groups.has(id))groups.set(id,{bucket:hit.bucket,entries:[]});
+    groups.get(id).entries.push(hit);
+  }
+  html+='<h3>按 Bucket 合并的证据</h3>';
+  for(const group of groups.values()){
+    html+=`<div class="query-bucket"><b>${bucketLabel(group.bucket)}</b> <span class="muted">${escapeHtml(group.bucket?.status||'')} · ${group.entries.length} 条 Entry</span>`;
+    for(const hit of group.entries){
+      const entry=hit.entry||{};
+      html+=`<div class="query-entry"><b>Entry</b> · ${escapeHtml(entry.created_at||'')} · score ${escapeHtml(hit.score)}<br>${escapeHtml(entry.raw_text||'')}<br><span class="muted">${escapeHtml(entry.summary||'')}</span><br><span class="muted">匹配字段：${(hit.matched_fields||[]).map(escapeHtml).join('、')||'关键词/语义匹配'}</span></div>`;
+    }
+    html+='</div>';
+  }
+  const evidence=data.evidence||[];
+  if(evidence.length){html+='<div class="query-evidence"><h3>去重后的证据</h3>'+evidence.map(memory=>`<div class="memory"><b>${escapeHtml(memory.kind||'evidence')}</b>：${escapeHtml(memory.text||'')}</div>`).join('')+'</div>';}
+  memoryQueryResult.innerHTML=html;
+}
+async function runMemoryQuery(){
+  const query=memoryQueryInput.value.trim();
+  if(!query){memoryQueryResult.textContent='请输入自然语言查询。';return;}
+  memoryQueryResult.textContent='查询中…';
+  try{const data=await jsonRequest('/api/memory/query?q='+encodeURIComponent(query)+'&limit=20');renderMemoryQuery(data);}
+  catch(error){memoryQueryResult.textContent=error.message;}
 }
 function showArchive(data){
   result.className='result';
@@ -742,6 +971,8 @@ result.addEventListener('click',async event=>{
 });
 buckets.addEventListener('click',event=>{const button=event.target.closest('button[data-action="show-bucket"]');if(button)showBucket(button.dataset.bucketId);});
 document.querySelector('#archive').addEventListener('click',archive);
+memoryQueryButton.addEventListener('click',runMemoryQuery);
+memoryQueryInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();runMemoryQuery();}});
 refresh();
 </script>
 </body></html>"#;
@@ -750,7 +981,7 @@ refresh();
 mod tests {
     use std::collections::VecDeque;
 
-    use serde_json::Value;
+    use serde_json::{Value, json};
     use tempfile::tempdir;
     use work_memory_core::{BucketType, ClassificationResult, ConfidencePolicy, ExtractionResult};
     use work_memory_runtime::{CanonicalRuntime, MemoryModel, RuntimeError};
@@ -855,6 +1086,14 @@ mod tests {
             "recommended_bucket_id",
             "candidate_bucket_ids",
             "entry_id",
+            "语言查询",
+            "/api/memory/query",
+            "query_plan",
+            "entity_terms",
+            "topic_terms",
+            "matched_fields",
+            "去重后的证据",
+            "合并回答",
             "/api/archive/append",
             "/api/archive/create",
             "/api/corrections/move",
@@ -882,6 +1121,78 @@ mod tests {
         assert_eq!(body["bucket_title"], "Rust MVP");
         assert_eq!(body["bucket_type"], "task");
         assert_eq!(body["extraction"]["summary"], "stored summary");
+    }
+
+    #[test]
+    fn encoded_utf8_natural_language_query_is_decoded_before_search() {
+        let (mut server, _database) = server();
+        let archive = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive",
+            r#"{"text":"接口 A 压测结果已完成，P99 为 120ms，持续 10 分钟。"}"#,
+        ));
+        assert_eq!(archive.status, 200, "{}", archive.body);
+
+        let response = server.handle_request(HttpRequest::new(
+            "GET",
+            "/api/memory/query?q=%E6%8E%A5%E5%8F%A3%20A%20%E5%8E%8B%E6%B5%8B%E7%BB%93%E6%9E%9C&limit=10",
+            "",
+        ));
+        assert_eq!(response.status, 200, "{}", response.body);
+        let body: Value = serde_json::from_str(&response.body).expect("query JSON");
+        assert_eq!(body["total_entries"], 1, "{}", response.body);
+        assert_eq!(
+            body["results"][0]["entry"]["raw_text"],
+            "接口 A 压测结果已完成，P99 为 120ms，持续 10 分钟。"
+        );
+        assert_eq!(body["query_plan"]["entity_terms"], json!(["接口 A"]));
+    }
+
+    #[test]
+    fn natural_language_query_routes_return_entry_results_and_query_plan() {
+        let (mut server, _database) = server();
+        let archive = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/archive",
+            r#"{"text":"The Rust MVP is working."}"#,
+        ));
+        assert_eq!(archive.status, 200, "{}", archive.body);
+
+        let get = server.handle_request(HttpRequest::new(
+            "GET",
+            "/api/memory/query?q=Rust%20MVP&limit=10",
+            "",
+        ));
+        assert_eq!(get.status, 200, "{}", get.body);
+        let get_body: Value = serde_json::from_str(&get.body).expect("query JSON");
+        assert_eq!(get_body["ok"], true);
+        assert_eq!(get_body["total_entries"], 1);
+        assert_eq!(get_body["total_buckets"], 1);
+        assert_eq!(
+            get_body["results"][0]["entry"]["raw_text"],
+            "The Rust MVP is working."
+        );
+        assert_eq!(
+            get_body["query_plan"]["entity_terms"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let post = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/memory/query",
+            r#"{"query":"Rust","limit":10,"statuses":["active"],"filters":[{"field":"status","value":"active"}]}"#,
+        ));
+        assert_eq!(post.status, 200, "{}", post.body);
+        let post_body: Value = serde_json::from_str(&post.body).expect("query POST JSON");
+        assert_eq!(post_body["total_entries"], 1);
+        assert_eq!(post_body["query_plan"]["statuses"], json!(["active"]));
+        assert_eq!(
+            post_body["query_plan"]["structured_filters"][0]["field"],
+            "status"
+        );
     }
 
     #[test]
@@ -1051,6 +1362,16 @@ mod tests {
         ));
         assert_eq!(append.status, 400);
         assert!(append.body.contains("confirmation"));
+
+        let empty_query =
+            server.handle_request(HttpRequest::new("GET", "/api/memory/query?q=&limit=10", ""));
+        assert_eq!(empty_query.status, 400);
+        let invalid_date = server.handle_request(HttpRequest::new(
+            "POST",
+            "/api/memory/query",
+            r#"{"query":"Rust","start_at":"not-a-date","end_at":"2026-08-06"}"#,
+        ));
+        assert_eq!(invalid_date.status, 400);
     }
 
     #[test]

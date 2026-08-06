@@ -18,6 +18,8 @@ CanonicalRuntime<M>
       ├── 候选构造与置信度/低信息门控
       └── CanonicalService
               │
+              ├── 归档、详情、纠错和状态变更
+              ├── MemoryQuery 解析、筛选、排序和结果聚合
               ▼
         RustStore / SQLite
 ```
@@ -48,16 +50,39 @@ crate 职责：
 
 `/api/archive/append` 和 `/api/archive/create` 在路由层要求 `confirmation_granted: true`，然后调用独立 runtime 方法。确认路径不重新接受模型分类结果：目标 Bucket、标题和类型直接来自用户已确认的请求。
 
-### 2.3 查询与纠错
+### 2.3 自然语言查询
 
-读取接口通过 `CanonicalService` 生成 Bucket 列表、搜索投影和详情。纠错接口把 Entry 移动、派生 memory 关系、Bucket 摘要刷新和 correction audit 放在同一个 store transaction 中。
+`GET /api/memory/query` 和 `POST /api/memory/query` 都进入 canonical service 的查询路径。查询是 model-independent 的，不调用 `MemoryModel`：
+
+```text
+自然语言 query
+  → MemoryQuery 解析 query plan
+  → Bucket 状态与 Entry.created_at 时间过滤
+  → Bucket 名称/摘要/标签、Entry 原文/summary、memory entity/tag 等字段评分
+  → Entry 级结果排序
+  → 按 Bucket 分组
+  → evidence 确定性去重
+  → 确定性 answer 摘要
+```
+
+`MemoryQuery` 当前包含 `raw_text`、`terms`、`entity_terms`、`topic_terms`、`bucket_terms`、`time_range`、`statuses`、`structured_filters` 和 `limit`。`time_range` 是半开区间 `[start, end)`；执行时唯一用于时间筛选的记录时间是 `Entry.created_at`，不是结构化 memory 的 `occurred_at`。相对时间按当前 UTC 解析。
+
+结果以 `MemorySearchHit` 表示，每个命中 Entry 保留所属 Bucket、Entry、该 Entry 的 memory、`matched_fields`、`keyword_score`、`semantic_score` 和总分。因此一个 Bucket 可有多条命中 Entry，响应也可以把多个 Bucket 合并到同一份结果中。`MemoryBucketGroup` 只提供结果分组和 `matched_entry_count` / `top_score`，不替换 Entry 级结果。
+
+当前 `semantic_score` 只是响应字段名，实际是基于字符串包含、命中比例和完整短语命中的 lexical similarity，不是 embedding 或向量检索。排序还加入确定性的关键词分数和 Entry 新近程度；当前没有模型重排。`evidence` 按 memory kind 与 Unicode case-fold 后的 trimmed text 去重，`answer` 由 runtime 根据结果数量、Bucket 数量和前几条摘要确定性生成，不经过 LLM。
+
+`CanonicalService::query_memory` 负责从自然语言生成计划并执行查询，`query_memory_with_plan` 接受 HTTP 客户端或其他调用方已经补充筛选条件的计划。runtime 只负责把 `MemorySearchResponse` 投影为 HTTP/UI/Agent 可消费的 JSON。
+
+### 2.4 旧查询与纠错
+
+读取接口通过 `CanonicalService` 生成 Bucket 列表、旧搜索投影、自然语言查询结果和详情。旧 `CanonicalService::search` 及 `GET /api/buckets/search` 保持 Bucket 级契约，返回 Bucket、匹配 Entry 数和分数；它不被新 Entry 级查询响应替换。纠错接口把 Entry 移动、派生 memory 关系、Bucket 摘要刷新和 correction audit 放在同一个 store transaction 中。
 
 ## 3. SQLite 数据边界
 
 核心持久化对象：
 
 - `buckets`：标题、类型、状态、摘要、标签和活动时间。
-- `entries`：用户原文、摘要、分类元数据和所属 Bucket。
+- `entries`：用户原文、摘要、分类元数据、`created_at` 和所属 Bucket。
 - `memory_items`：todo、evidence、timeline、decision、hypothesis、entity、tag。
 - `archive_attempts`：每次分类请求的动作、置信度、候选、问题、模型和最终状态。
 - `corrections`：Entry 移动的前后关系和用户命令文本。
@@ -107,6 +132,8 @@ trait MemoryModel {
 | `POST /api/archive/create` | 用户确认后新建 |
 | `GET /api/buckets/active` | 活跃 Bucket 列表 |
 | `GET /api/buckets/search` | Bucket/Entry 搜索 |
+| `GET /api/memory/query` | 自然语言查询，返回查询计划、Entry 命中、多 Bucket 分组、evidence 和 answer |
+| `POST /api/memory/query` | 自然语言查询加显式状态、时间和结构化字段筛选 |
 | `GET /api/buckets/:id` | Bucket 详情 |
 | `POST /api/buckets/status` | 状态变更 |
 | `POST /api/corrections/move` | Entry 移动和纠错审计 |
@@ -124,7 +151,11 @@ trait MemoryModel {
 
 模型 API Key 只从进程环境读取，错误信息和调试输出不得打印密钥。数据库路径应指向专用 Rust SQLite 文件，备份时保留 SQLite 文件和应用停止时的一致性。
 
-## 8. 可测试性
+## 8. 实现状态与边界
+
+Rust canonical store/service/runtime/server 是当前唯一的目标实现。Python 版本已放弃作为目标运行路径，仓库中残留的 Python 代码、fixture 和迁移说明仅作历史或兼容参考；本阶段不新增 Python 实现测试。自然语言查询、Entry 级结果、多 Bucket 合并、evidence 去重和确定性 answer 均以 Rust 实现与 Rust 测试为准。
+
+## 9. 可测试性
 
 runtime 依赖 `MemoryModel` trait，因此测试可以注入固定的分类与提取结果，不调用真实模型。主要验证层级：
 

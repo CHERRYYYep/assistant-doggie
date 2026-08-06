@@ -1852,6 +1852,7 @@ dependencies = [
 name = "work-memory-service"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde_json",
  "tempfile",
  "thiserror",

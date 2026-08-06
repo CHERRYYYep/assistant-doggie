@@ -7,6 +7,7 @@ mod classification;
 mod correction;
 mod extraction;
 mod mutation;
+mod query;
 mod summary;
 
 use std::path::Path;
@@ -25,6 +26,10 @@ pub use classification::{ClassificationAuditSaveResult, ClassificationAuditServi
 pub use correction::{CorrectionResult, CorrectionService, ENTRY_TARGET_TYPE, MOVE_ENTRY_ACTION};
 pub use extraction::{ExtractionPersistenceService, ExtractionSaveResult};
 pub use mutation::MemoryMutationService;
+pub use query::{
+    MemoryBucketGroup, MemoryQuery, MemoryQueryError, MemorySearchHit, MemorySearchResponse,
+    StructuredFieldFilter, TimeRange, search_memory, search_memory_at,
+};
 pub use summary::BucketSummaryService;
 
 /// A Bucket and all product-visible child records loaded by the Python detail service.

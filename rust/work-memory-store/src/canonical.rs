@@ -336,6 +336,26 @@ impl RustStore {
         crate::legacy_import::import_legacy_database(source_path.as_ref(), target_path.as_ref())
     }
 
+    /// Return every Bucket, including paused, done, and archived Buckets.
+    ///
+    /// Natural-language queries need to apply lifecycle filters after parsing
+    /// the user's request, so this intentionally does not silently restrict the
+    /// result set to active Buckets.
+    pub fn list_buckets(&self) -> Result<Vec<RustBucket>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+                    last_active_at, archived_at
+             FROM buckets
+             ORDER BY last_active_at DESC, updated_at DESC, id ASC",
+        )?;
+        let rows = statement
+            .query_map([], decode_bucket_base)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|bucket| self.attach_tags(bucket))
+            .collect()
+    }
+
     pub fn list_active_buckets(&self, limit: usize) -> Result<Vec<RustBucket>, StoreError> {
         let limit = checked_limit(limit)?;
         let mut statement = self.connection.prepare(

@@ -239,3 +239,53 @@ fn archive_state_survives_reopening_the_rust_database() {
     assert_eq!(detail.entries.len(), 1);
     assert_eq!(detail.entries[0].raw_text, "Persist this fact.");
 }
+
+#[test]
+fn query_projection_exposes_plan_entries_buckets_and_evidence_without_writes() {
+    let directory = tempdir().expect("tempdir");
+    let classification = ClassificationResult::create_new(
+        BucketType::Experiment,
+        "接口 A 压测",
+        0.99,
+        "query fixture",
+        vec![],
+    )
+    .expect("classification");
+    let mut runtime = runtime(
+        service(&directory.path().join("memory.db")),
+        FixedModel::new(
+            [Ok(classification)],
+            [Ok(rich_extraction("接口 A 压测结果摘要"))],
+        ),
+    );
+    runtime
+        .archive("接口 A 压测完成，P99 为 120ms。", None)
+        .expect("archive");
+    let before = runtime.service().counts().expect("counts before");
+
+    let body =
+        work_memory_runtime::query_memory(runtime.service(), "查询接口 A 最近两周的压测结果", 10)
+            .expect("query projection");
+    assert_eq!(body["total_entries"], 1);
+    assert_eq!(body["total_buckets"], 1);
+    assert_eq!(
+        body["results"][0]["entry"]["raw_text"],
+        "接口 A 压测完成，P99 为 120ms。"
+    );
+    assert_eq!(
+        body["query_plan"]["entity_terms"],
+        serde_json::json!(["接口 A"])
+    );
+    assert_eq!(
+        body["query_plan"]["topic_terms"],
+        serde_json::json!(["压测结果"])
+    );
+    assert!(
+        body["evidence"]
+            .as_array()
+            .expect("evidence array")
+            .iter()
+            .any(|item| { item["text"] == "observed evidence" })
+    );
+    assert_eq!(runtime.service().counts().expect("counts after"), before);
+}

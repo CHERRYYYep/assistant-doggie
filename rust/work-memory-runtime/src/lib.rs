@@ -13,7 +13,10 @@ use work_memory_core::{
     BucketType, BucketView, ClassificationAction, ClassificationResult, ConfidencePolicy,
     ExtractionResult,
 };
-use work_memory_service::{CanonicalService, CanonicalServiceError};
+use work_memory_service::{
+    CanonicalService, CanonicalServiceError, MemoryBucketGroup, MemoryQuery, MemorySearchHit,
+    MemorySearchResponse,
+};
 use work_memory_store::{
     RustArchiveAudit, RustArchiveOutcome, RustBucket, RustBucketDetail, RustEntry, RustSearchHit,
     StoreError,
@@ -472,6 +475,28 @@ pub fn search_memory(
     }))
 }
 
+/// Execute the conversational Entry-level memory query and project both its
+/// parsed plan and merged evidence into the JSON shape used by HTTP, UI, and
+/// Agent callers.  The legacy [`search_memory`] projection above remains
+/// Bucket-level for backwards compatibility.
+pub fn query_memory(
+    service: &CanonicalService,
+    query: &str,
+    limit: usize,
+) -> Result<Value, RuntimeError> {
+    let response = service.query_memory(query, limit)?;
+    memory_search_response_to_value(&response)
+}
+
+/// Execute a caller-supplied conversational query plan.
+pub fn query_memory_with_plan(
+    service: &CanonicalService,
+    plan: MemoryQuery,
+) -> Result<Value, RuntimeError> {
+    let response = service.query_memory_with_plan(plan)?;
+    memory_search_response_to_value(&response)
+}
+
 pub fn bucket_detail(
     service: &CanonicalService,
     bucket_id: &str,
@@ -517,25 +542,95 @@ fn search_hit_to_value(hit: &RustSearchHit) -> Result<Value, RuntimeError> {
     }))
 }
 
+fn memory_search_response_to_value(response: &MemorySearchResponse) -> Result<Value, RuntimeError> {
+    Ok(json!({
+        "query": response.query.raw_text,
+        "query_plan": memory_query_to_value(&response.query),
+        "total_entries": response.results.len(),
+        "total_buckets": response.buckets.len(),
+        "results": response
+            .results
+            .iter()
+            .map(memory_search_hit_to_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        "buckets": response
+            .buckets
+            .iter()
+            .map(memory_bucket_group_to_value)
+            .collect::<Result<Vec<_>, _>>()?,
+        "evidence": response
+            .evidence
+            .iter()
+            .map(memory_item_to_value)
+            .collect::<Vec<_>>(),
+        "answer": response.answer,
+    }))
+}
+
+fn memory_query_to_value(query: &MemoryQuery) -> Value {
+    json!({
+        "raw_text": query.raw_text,
+        "terms": query.terms,
+        "entity_terms": query.entity_terms,
+        "topic_terms": query.topic_terms,
+        "bucket_terms": query.bucket_terms,
+        "time_range": query.time_range.as_ref().map(|range| json!({
+            "start": range.start.format("%Y-%m-%d %H:%M:%S%.f").to_string(),
+            "end": range.end.format("%Y-%m-%d %H:%M:%S%.f").to_string(),
+            "label": range.label,
+        })),
+        "statuses": query.statuses.iter().map(|status| status.as_str()).collect::<Vec<_>>(),
+        "structured_filters": query.structured_filters.iter().map(|filter| json!({
+            "field": filter.field,
+            "value": filter.value,
+        })).collect::<Vec<_>>(),
+        "limit": query.limit,
+    })
+}
+
+fn memory_search_hit_to_value(hit: &MemorySearchHit) -> Result<Value, RuntimeError> {
+    Ok(json!({
+        "bucket": rust_bucket_to_value(&hit.bucket)?,
+        "entry": entry_to_value(&hit.entry)?,
+        "memories": hit.memories.iter().map(memory_item_to_value).collect::<Vec<_>>(),
+        "matched_fields": hit.matched_fields,
+        "keyword_score": hit.keyword_score,
+        "semantic_score": hit.semantic_score,
+        "score": hit.score,
+    }))
+}
+
+fn memory_bucket_group_to_value(group: &MemoryBucketGroup) -> Result<Value, RuntimeError> {
+    Ok(json!({
+        "bucket": rust_bucket_to_value(&group.bucket)?,
+        "matched_entry_count": group.matched_entry_count,
+        "top_score": group.top_score,
+    }))
+}
+
+fn memory_item_to_value(memory: &work_memory_store::RustMemoryItem) -> Value {
+    json!({
+        "id": memory.id,
+        "bucket_id": memory.bucket_id,
+        "entry_id": memory.entry_id,
+        "kind": memory.kind.as_str(),
+        "text": memory.text,
+        "status": memory.status,
+        "due_at": memory.due_at.as_ref().map(|value| value.raw()),
+        "occurred_at": memory.occurred_at,
+        "source": memory.source,
+        "reason": memory.reason,
+        "created_at": memory.created_at.raw(),
+        "updated_at": memory.updated_at.raw(),
+        "metadata": memory.metadata,
+    })
+}
+
 fn bucket_detail_to_value(detail: &RustBucketDetail) -> Result<Value, RuntimeError> {
     Ok(json!({
         "bucket": rust_bucket_to_value(&detail.bucket)?,
         "entries": detail.entries.iter().map(entry_to_value).collect::<Result<Vec<_>, _>>()?,
-        "memories": detail.memories.iter().map(|memory| json!({
-            "id": memory.id,
-            "bucket_id": memory.bucket_id,
-            "entry_id": memory.entry_id,
-            "kind": memory.kind.as_str(),
-            "text": memory.text,
-            "status": memory.status,
-            "due_at": memory.due_at.as_ref().map(|value| value.raw()),
-            "occurred_at": memory.occurred_at,
-            "source": memory.source,
-            "reason": memory.reason,
-            "created_at": memory.created_at.raw(),
-            "updated_at": memory.updated_at.raw(),
-            "metadata": memory.metadata,
-        })).collect::<Vec<_>>(),
+        "memories": detail.memories.iter().map(memory_item_to_value).collect::<Vec<_>>(),
     }))
 }
 

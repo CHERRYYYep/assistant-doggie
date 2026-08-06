@@ -83,7 +83,9 @@ impl AgentToolDefinition {
 
 const SEARCH_MEMORY_PROPERTIES: &[AgentToolParameter] = &[AgentToolParameter {
     name: "query",
-    description: Some("简短、明确的搜索关键词"),
+    description: Some(
+        "自然语言查询，例如‘查询接口 A 最近两周的压测结果’；可表达实体、主题、时间范围和状态。结果可能包含多条 Entry 和多个 Bucket。",
+    ),
     kind: AgentToolParameterKind::String,
 }];
 const GET_BUCKET_DETAIL_PROPERTIES: &[AgentToolParameter] = &[AgentToolParameter {
@@ -136,7 +138,7 @@ pub const AGENT_TOOL_DEFINITIONS: &[AgentToolDefinition] = &[
     },
     AgentToolDefinition {
         name: SEARCH_MEMORY_TOOL,
-        description: "按关键词搜索 Bucket 标题、摘要、标签和原始记录，用于查找长期记忆。",
+        description: "用自然语言查询长期记忆。查询规划器会综合搜索 Bucket 名称、Entry 原文、summary、tag、entity（实体）和 topic（主题），并支持时间范围、状态和结构化字段筛选；结果按 Entry 返回，可能包含多条 Entry，并可合并多个 Bucket 的证据。不要只把查询当作 Bucket 名称。",
         properties: SEARCH_MEMORY_PROPERTIES,
         required: &["query"],
     },

@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use work_memory_contracts::{
     AgentToolArguments, AgentTurnContract, ArchiveContract, BucketSearchResultContract,
     BucketSummaryContract, BucketViewContract, ChatMessageContract, ClassificationContract,
-    ExtractionContract,
+    ExtractionContract, MAX_AGENT_QUERY_CHARS, SEARCH_MEMORY_TOOL, agent_tool_definition,
 };
 
 fn fixture() -> Value {
@@ -93,4 +93,93 @@ fn invalid_cases_are_rejected() {
             );
         }
     }
+}
+
+#[test]
+fn search_memory_description_covers_natural_language_query_dimensions_and_cardinality() {
+    let definition =
+        agent_tool_definition(SEARCH_MEMORY_TOOL).expect("search_memory must be registered");
+    assert_eq!(definition.required, &["query"]);
+    assert_eq!(definition.properties.len(), 1);
+    assert_eq!(definition.properties[0].name, "query");
+
+    let description = format!(
+        "{} {}",
+        definition.description,
+        definition.properties[0]
+            .description
+            .expect("query description should guide the model")
+    );
+    for phrase in [
+        "自然语言",
+        "Bucket 名称",
+        "Entry 原文",
+        "summary",
+        "tag",
+        "entity",
+        "时间范围",
+        "状态",
+        "结构化字段",
+        "多条 Entry",
+        "多个 Bucket",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "missing search contract phrase: {phrase}"
+        );
+    }
+    assert!(description.contains("接口 A 最近两周的压测结果"));
+
+    let schema = definition.parameters_schema();
+    assert_eq!(schema["type"], json!("object"));
+    assert_eq!(schema["required"], json!(["query"]));
+    assert_eq!(schema["additionalProperties"], json!(false));
+    assert_eq!(schema["properties"]["query"]["type"], json!("string"));
+}
+
+#[test]
+fn search_memory_accepts_full_natural_language_queries_and_round_trips_them() {
+    let query = " 查询接口 A 最近两周的压测结果，并只看 active 状态 ";
+    let arguments = AgentToolArguments::from_value(SEARCH_MEMORY_TOOL, json!({"query": query}))
+        .expect("natural-language search query should be accepted");
+
+    assert_eq!(arguments.tool_name(), SEARCH_MEMORY_TOOL);
+    assert_eq!(
+        arguments.to_value(),
+        json!({"query": "查询接口 A 最近两周的压测结果，并只看 active 状态"})
+    );
+}
+
+#[test]
+fn search_memory_keeps_strict_argument_validation_and_query_length_bounds() {
+    for (case, input) in [
+        ("missing query", json!({})),
+        ("empty query", json!({"query": " \n\t "})),
+        ("unknown field", json!({"query": "接口 A", "limit": 20})),
+        ("non-string query", json!({"query": 42})),
+    ] {
+        assert!(
+            AgentToolArguments::from_value(SEARCH_MEMORY_TOOL, input).is_err(),
+            "{case} must be rejected by the search_memory contract"
+        );
+    }
+
+    let max_query = "界".repeat(MAX_AGENT_QUERY_CHARS);
+    let accepted = AgentToolArguments::from_value(SEARCH_MEMORY_TOOL, json!({"query": max_query}))
+        .expect("query at the contract limit should be accepted");
+    assert_eq!(
+        accepted.to_value()["query"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count(),
+        MAX_AGENT_QUERY_CHARS
+    );
+
+    let too_long_query = "界".repeat(MAX_AGENT_QUERY_CHARS + 1);
+    assert!(
+        AgentToolArguments::from_value(SEARCH_MEMORY_TOOL, json!({"query": too_long_query}))
+            .is_err(),
+        "query over the contract limit must be rejected"
+    );
 }

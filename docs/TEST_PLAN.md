@@ -1,5 +1,7 @@
 # 测试与验收计划
 
+> 实现状态（2026-08-06）：Python 版本已放弃为目标实现，既有 Python 测试和 fixture 仅作为冻结的历史/兼容参考；本阶段不新增 Python 实现测试。自然语言记忆查询新增与回归测试全部走 Rust canonical store/service/runtime/server。
+
 ## 1. 测试目标
 
 MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
@@ -35,6 +37,7 @@ MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
 - Rust 独立提取保存请求保留精确 Bucket/Entry ID 和已验证 `ExtractionResult`，并按 Bucket 优先、Entry 归属随后检查的 Python 校验顺序拒绝无效目标。
 - Rust R4a endpoint 配置 aliases、official/custom URL 安全边界、Responses/Chat Completions strict JSON Schema request shape、响应归一化和有限重试决策。
 - Rust R4b `ureq` transport 的非密钥 timeout/proxy 配置、Bearer header、JSON POST、HTTP 状态码、非法 JSON、timeout 和 API Key 脱敏。
+- Rust `work-memory-service/tests/natural_language_query.rs`：自然语言 query plan 的前缀、实体/主题/Bucket 词项、相对时间和 `parse_at` 固定时钟；按 `Entry.created_at` 的时间范围筛选；状态、summary/tag/entity 和结构化字段筛选；多 Entry、多 Bucket 分组；evidence 去重、确定性 answer 和 lexical similarity（不应误称为 embedding）。
 
 ### 2.2 集成测试
 
@@ -353,6 +356,7 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - `rust/work-memory-service/tests/chat.rs`：Rust `ChatMessagePersistenceService` 的重复 user、tool、assistant、JSON null、非法输入和插入失败，覆盖稳定消息 UUID、产品返回投影、精确数据库工具元数据、details 边界、严格递增时间和失败无修改；`tests/fixtures/apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 驱动 Python/Rust 结果与排除随机消息 ID/时间后的九表最终语义等价，数据库只位于系统临时目录且不调用真实模型。
 - `rust/work-memory-agent/tests/structured_output.rs`：R4a 使用 fake transport 覆盖 Python/Rust endpoint 配置和三份 strict JSON Schema 等价、Responses/Chat Completions 请求 JSON、输出归一化、网络/429/5xx/incomplete/非法 JSON/contract error 有限重试，以及 401/refusal/content filter 不重试；`tests/fixtures/export_llm_adapter_fixture.py` 不读取或输出 API Key，不调用真实模型。
 - `rust/work-memory-agent/tests/http_transport.rs`：R4b 使用 loopback mock server 覆盖 JSON POST、Bearer 认证、200 响应、401/429/500 状态和 retry 交给 adapter、非法 JSON、timeout、零 timeout/空 key 拒绝及 Debug/错误脱敏；测试 transport 显式关闭环境 proxy，不调用真实 API。
+- Rust server 路由测试：GET/POST `/api/memory/query`、UTF-8 URL 解码、`query_plan` 字段、Entry 级结果、多 Bucket 合并、无效空 query/日期/status/filter，以及旧 `/api/buckets/search` 的 Bucket 级响应兼容。
 
 每次改 Prompt 或分类逻辑后，至少手动跑：
 
@@ -363,6 +367,9 @@ python -m app.extraction_evaluation /tmp/extraction-live-report.json
 - meeting 提取 TODO。
 - 纠错移动最近 entry。
 - 搜索历史 bucket。
+- `查询接口 A 最近两周的压测结果`：核对实体、主题、时间范围、Entry 数量、Bucket 数量、证据去重和确定性 answer。
+
+查询验收指标：Entry recall、Bucket recall、时间/状态/结构化筛选 precision、evidence 去重正确性，以及 `answer` 中的 Entry/Bucket 数量与实际结果一致。不要把 Python fixture 或真实模型调用作为本阶段自然语言查询的必需验证。
 
 ## 7. bug 记录模板
 
