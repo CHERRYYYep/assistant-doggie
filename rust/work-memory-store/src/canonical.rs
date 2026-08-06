@@ -207,6 +207,7 @@ pub struct RustArchiveAudit {
     pub focus_bucket_id: Option<String>,
     pub prompt_version: String,
     pub model_name: String,
+    pub confirmation_attempt_id: Option<String>,
 }
 
 impl RustArchiveAudit {
@@ -223,7 +224,31 @@ impl RustArchiveAudit {
             focus_bucket_id: clean_optional(focus_bucket_id),
             prompt_version,
             model_name,
+            confirmation_attempt_id: None,
         })
+    }
+
+    /// Bind this archive write to one pending chat confirmation attempt.
+    ///
+    /// The binding is consumed by the same SQLite transaction as the confirmed
+    /// archive write, so a repeated request cannot create a second Entry.
+    pub fn with_confirmation_attempt(
+        mut self,
+        attempt_id: impl Into<String>,
+    ) -> Result<Self, StoreError> {
+        self.confirmation_attempt_id =
+            Some(non_empty(attempt_id.into(), "confirmation_attempt_id")?);
+        Ok(self)
+    }
+
+    pub fn with_optional_confirmation_attempt(
+        self,
+        attempt_id: Option<String>,
+    ) -> Result<Self, StoreError> {
+        match attempt_id {
+            Some(attempt_id) => self.with_confirmation_attempt(attempt_id),
+            None => Ok(self),
+        }
     }
 }
 
@@ -519,6 +544,23 @@ impl RustStore {
             .map_err(StoreError::from)
     }
 
+    pub fn get_archive_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Option<RustArchiveAttempt>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, raw_text, action, archive_state, bucket_id, entry_id,
+                    confidence, reason, question, candidate_bucket_ids_json,
+                    focus_bucket_id, prompt_version, model_name, corrected,
+                    created_at, resolved_at
+             FROM archive_attempts WHERE id = ?1 LIMIT 1",
+        )?;
+        statement
+            .query_row([attempt_id], decode_archive_attempt)
+            .optional()
+            .map_err(StoreError::from)
+    }
+
     pub fn list_chat_messages(&self, limit: usize) -> Result<Vec<RustChatMessage>, StoreError> {
         let limit = checked_limit(limit)?;
         let mut statement = self.connection.prepare(
@@ -585,6 +627,43 @@ impl RustStore {
         )?;
         transaction.commit()?;
         Ok(outcome)
+    }
+
+    /// Discard a pending confirmation attempt without creating an Entry.
+    pub fn discard_archive_attempt(
+        &mut self,
+        attempt_id: &str,
+        raw_text: &str,
+    ) -> Result<(), StoreError> {
+        let attempt_id = non_empty(attempt_id.to_owned(), "attempt_id")?;
+        let raw_text = non_empty(raw_text.to_owned(), "raw_text")?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let stored_raw_text = transaction
+            .query_row(
+                "SELECT raw_text FROM archive_attempts WHERE id = ?1",
+                [&attempt_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::ArchiveAttemptNotFound(attempt_id.clone()))?;
+        if stored_raw_text != raw_text {
+            return Err(StoreError::ArchiveAttemptTextMismatch(attempt_id));
+        }
+        let timestamp = current_timestamp(&transaction)?;
+        let updated = transaction.execute(
+            "UPDATE archive_attempts
+             SET archive_state = 'discarded', resolved_at = ?1
+             WHERE id = ?2 AND archive_state = 'needs_confirmation'
+               AND resolved_at IS NULL AND corrected = 0",
+            params![timestamp, attempt_id],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::ArchiveAttemptNotPending(attempt_id));
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Append one message to the persistent conversation timeline.
@@ -788,6 +867,36 @@ fn persist_archive(
     extraction: Option<&ExtractionResult>,
     audit: &RustArchiveAudit,
 ) -> Result<RustArchiveOutcome, StoreError> {
+    if let Some(confirmation_attempt_id) = audit.confirmation_attempt_id.as_deref() {
+        let pending = transaction
+            .query_row(
+                "SELECT raw_text, archive_state, resolved_at, corrected
+                 FROM archive_attempts WHERE id = ?1",
+                [confirmation_attempt_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or_else(|| {
+                StoreError::ArchiveAttemptNotFound(confirmation_attempt_id.to_owned())
+            })?;
+        if pending.0 != raw_text {
+            return Err(StoreError::ArchiveAttemptTextMismatch(
+                confirmation_attempt_id.to_owned(),
+            ));
+        }
+        if pending.1 != "needs_confirmation" || pending.2.is_some() || pending.3 != 0 {
+            return Err(StoreError::ArchiveAttemptNotPending(
+                confirmation_attempt_id.to_owned(),
+            ));
+        }
+    }
     let attempt_id = new_id();
     let created_at = current_timestamp(transaction)?;
     let candidate_ids = merged_candidates(&audit.candidate_bucket_ids, classification);
@@ -911,6 +1020,26 @@ fn persist_archive(
             },
         ],
     )?;
+    if let Some(confirmation_attempt_id) = audit.confirmation_attempt_id.as_deref() {
+        let updated = transaction.execute(
+            "UPDATE archive_attempts
+             SET archive_state = ?1, bucket_id = ?2, entry_id = ?3, resolved_at = ?4
+             WHERE id = ?5 AND archive_state = 'needs_confirmation'
+               AND resolved_at IS NULL AND corrected = 0",
+            params![
+                archive_state,
+                bucket_id,
+                entry_id,
+                &created_at,
+                confirmation_attempt_id,
+            ],
+        )?;
+        if updated != 1 {
+            return Err(StoreError::ArchiveAttemptNotPending(
+                confirmation_attempt_id.to_owned(),
+            ));
+        }
+    }
     Ok(RustArchiveOutcome {
         attempt_id,
         archive_state: archive_state.to_owned(),

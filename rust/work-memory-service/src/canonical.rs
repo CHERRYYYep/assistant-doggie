@@ -306,6 +306,24 @@ impl CanonicalService {
         Ok(self.store.list_archive_attempts(limit)?)
     }
 
+    /// Load one archive attempt for confirmation binding and replay checks.
+    pub fn get_archive_attempt(
+        &self,
+        attempt_id: &str,
+    ) -> Result<Option<RustArchiveAttempt>, CanonicalServiceError> {
+        Ok(self.store.get_archive_attempt(attempt_id)?)
+    }
+
+    /// Resolve a pending archive attempt as discarded without creating an Entry.
+    pub fn discard_archive_attempt(
+        &mut self,
+        attempt_id: &str,
+        raw_text: &str,
+    ) -> Result<(), CanonicalServiceError> {
+        self.store.discard_archive_attempt(attempt_id, raw_text)?;
+        Ok(())
+    }
+
     /// Return recent canonical chat messages in sequence order.
     pub fn list_chat_messages(
         &self,

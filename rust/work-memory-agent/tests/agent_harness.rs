@@ -411,6 +411,88 @@ fn refusal_incomplete_content_filter_and_nonterminal_statuses_are_not_silently_a
 }
 
 #[test]
+fn explicit_tool_allowlist_filters_wire_tools_for_responses_and_chat() {
+    let read_only_tools = ["list_active_buckets", "search_memory", "get_bucket_detail"];
+
+    for mode in ["responses", "chat"] {
+        let transport = if mode == "responses" {
+            FakeTransport::new([responses_text("完成")])
+        } else {
+            FakeTransport::new([chat_text("完成")])
+        };
+        let mut harness = AgentHarness::new(endpoint(mode), transport);
+        let request = AgentHarnessRequest::new("model", "system", "memory", Vec::new(), 0)
+            .unwrap()
+            .with_allowed_tools(read_only_tools)
+            .unwrap();
+        let mut executor = |_: AgentToolArguments| Ok(json!({"ok": true}));
+
+        harness.run(&request, &mut executor).unwrap();
+
+        let tools = harness.transport().requests()[0].body()["tools"]
+            .as_array()
+            .expect("tool definitions");
+        let names = tools
+            .iter()
+            .map(|tool| {
+                if mode == "responses" {
+                    tool["name"].as_str().expect("Responses tool name")
+                } else {
+                    tool["function"]["name"].as_str().expect("Chat tool name")
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, read_only_tools);
+        assert!(!names.contains(&"archive_memory"));
+        assert!(!names.contains(&"save_to_existing_bucket"));
+        assert!(!names.contains(&"create_bucket_and_save"));
+    }
+}
+
+#[test]
+fn explicit_tool_allowlist_rejects_hidden_write_calls_without_invoking_executor() {
+    let transport = FakeTransport::new([
+        responses_tool_calls(&[(
+            "hidden-write",
+            "archive_memory",
+            r#"{"text":"不要重复保存"}"#,
+        )]),
+        responses_text("本轮归档由服务端处理，未重复写入。"),
+    ]);
+    let mut harness = AgentHarness::new(endpoint("responses"), transport);
+    let request = AgentHarnessRequest::new("model", "system", "memory", Vec::new(), 1)
+        .unwrap()
+        .with_allowed_tools(["list_active_buckets", "search_memory", "get_bucket_detail"])
+        .unwrap();
+    let mut execution_count = 0;
+    let mut executor = |_: AgentToolArguments| {
+        execution_count += 1;
+        Ok(json!({"ok": true}))
+    };
+
+    let result = harness.run(&request, &mut executor).unwrap();
+
+    assert_eq!(execution_count, 0);
+    assert_eq!(
+        result.tool_executions()[0].output()["error"],
+        json!("tool is not available in this turn: archive_memory")
+    );
+}
+
+#[test]
+fn tool_allowlist_rejects_unknown_tool_names() {
+    let error = AgentHarnessRequest::new("model", "system", "memory", Vec::new(), 0)
+        .unwrap()
+        .with_allowed_tools(["not_a_real_tool"])
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AgentHarnessError::UnknownTool { tool_name } if tool_name == "not_a_real_tool"
+    ));
+}
+
+#[test]
 fn provider_tool_definitions_match_contract_metadata() {
     use work_memory_agent::{chat_tool_definitions, response_tool_definitions};
     use work_memory_contracts::AGENT_TOOL_DEFINITIONS;

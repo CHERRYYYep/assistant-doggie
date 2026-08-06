@@ -7,7 +7,9 @@
       │ HTTP
       ▼
 work-memory-server
-      │ 路由、JSON 校验、错误映射、内嵌 UI
+      │ 路由、JSON 校验、错误映射、ChatGPT 风格内嵌 UI
+      ├── ChatResponder（默认确定性 fallback / 生产 AgentHarness）
+      │       └── 只读 Bucket、Entry 和自然语言记忆查询工具
       ▼
 CanonicalRuntime<M>
       │
@@ -50,7 +52,27 @@ crate 职责：
 
 `/api/archive/append` 和 `/api/archive/create` 在路由层要求 `confirmation_granted: true`，然后调用独立 runtime 方法。确认路径不重新接受模型分类结果：目标 Bucket、标题和类型直接来自用户已确认的请求。
 
-### 2.3 自然语言查询
+### 2.3 ChatGPT 风格对话与自动归档
+
+Rust server 的聊天入口把长期对话、归档安全门控和自然语言回答串成同一条时间线：
+
+```text
+POST /api/chat
+  → 先写入 conversation_messages(user)
+  → CanonicalRuntime.archive(text, focus_bucket_id)
+  → archived：事务性创建/追加 Entry
+  → needs_confirmation：只保留 archive attempt，不创建正式 Entry
+  → ChatResponder / AgentHarness 生成回答
+       ├── 只允许读取 Bucket、Entry 和查询结果
+       └── 禁止再次执行写工具，避免同一轮重复归档
+  → 写入 tool 消息和 conversation_messages(assistant)
+```
+
+`GET /api/chat/history` 按最近窗口读取消息，但返回时保持 `sequence` 升序，因此刷新页面可以恢复完整对话。`POST /api/chat/confirm` 接收 `append`、`create` 或 `discard`，由用户显式选择推荐 Bucket、备选 Bucket、创建新 Bucket 或不保存。低信息输入的 assistant 文本和 `archive` 结构化详情必须同时呈现推荐 Bucket、备选 Bucket、模型判断理由、四种操作和后续“修改 Bucket”入口；不能因为模型 confidence 较高就跳过确认。
+
+聊天阶段使用 `AgentHarness` 时，`search_memory` 委托给 Entry 级 `query_memory`，可识别实体、主题、时间范围和状态，并返回多 Bucket 合并结果、排序字段和去重证据。自动归档已经由 server 完成，Harness 的写入工具只返回明确错误；用户确认后的写入只能通过确认路由执行。
+
+### 2.4 自然语言查询
 
 `GET /api/memory/query` 和 `POST /api/memory/query` 都进入 canonical service 的查询路径。查询是 model-independent 的，不调用 `MemoryModel`：
 
@@ -118,7 +140,8 @@ trait MemoryModel {
 ## 5. 事务与错误处理
 
 - 自动归档的正式写入要么完整提交，要么不留下 Entry 和 memory item。
-- `ask_user` 是有意的持久化状态：它只留下 archive attempt，等待下一次显式确认。
+- `ask_user` 是有意的持久化状态：它只留下 archive attempt，等待下一次显式确认；聊天确认前不会产生正式 Entry。
+- `/api/chat` 即使分类或聊天模型失败，也保留已经接收的 user 消息，并尝试写入 assistant 错误消息，便于用户看到失败原因而不是静默丢失输入。
 - 目标 Bucket 不存在、字段为空、分类契约不一致和未知状态会返回 4xx 级 JSON 错误。
 - SQLite、模型 transport 和内部持久化错误不会伪装成成功响应。
 - 服务端默认使用单进程顺序处理连接；MVP 不承诺多进程并发写入协调。
@@ -127,7 +150,10 @@ trait MemoryModel {
 
 | 路径 | 责任 |
 |---|---|
-| `POST /api/archive` | 分类、门控、提取、归档或创建确认待办 |
+| `POST /api/chat` | 持久化 user 消息，执行自动归档并返回 assistant、tool 和归档状态 |
+| `GET /api/chat/history` | 恢复最近聊天消息，按 sequence 升序返回 |
+| `POST /api/chat/confirm` | 显式确认追加、创建新 Bucket 或不保存 |
+| `POST /api/archive` | 兼容的纯归档入口：分类、门控、提取、归档或创建确认待办 |
 | `POST /api/archive/append` | 用户确认后追加 |
 | `POST /api/archive/create` | 用户确认后新建 |
 | `GET /api/buckets/active` | 活跃 Bucket 列表 |

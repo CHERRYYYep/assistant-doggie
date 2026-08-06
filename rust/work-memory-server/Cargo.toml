@@ -9,6 +9,7 @@ description = "Small Rust HTTP server and web UI for the canonical work memory r
 serde_json = "1"
 thiserror.workspace = true
 work-memory-agent = { path = "../work-memory-agent" }
+work-memory-contracts = { path = "../work-memory-contracts" }
 work-memory-core = { path = "../work-memory-core" }
 work-memory-runtime = { path = "../work-memory-runtime" }
 work-memory-service = { path = "../work-memory-service" }

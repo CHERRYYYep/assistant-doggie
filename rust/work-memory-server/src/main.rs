@@ -6,15 +6,15 @@ use std::path::Path;
 use std::time::Duration;
 
 use work_memory_agent::{
-    LlmEndpointConfig, LlmHttpTransportConfig, StructuredOutputAdapter,
-    UreqStructuredOutputTransport,
+    AgentHarness, DEFAULT_AGENT_MAX_TOOL_ROUNDS, LlmEndpointConfig, LlmHttpTransportConfig,
+    StructuredOutputAdapter, UreqStructuredOutputTransport,
 };
 use work_memory_core::ConfidencePolicy;
 use work_memory_runtime::{
     CanonicalRuntime, DEFAULT_STRUCTURED_OUTPUT_RETRIES, RUNTIME_PROMPT_VERSION,
     StructuredMemoryModel,
 };
-use work_memory_server::{DEFAULT_BIND_ADDRESS, Server, serve};
+use work_memory_server::{AgentChatResponder, DEFAULT_BIND_ADDRESS, Server, serve};
 use work_memory_service::CanonicalService;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,9 +35,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap_or(30),
     ))?;
     let api_key = required_config("OPENAI_API_KEY", &dotenv)?;
-    let model_transport = UreqStructuredOutputTransport::new(api_key, transport_config)?;
+    let model_transport = UreqStructuredOutputTransport::new(api_key.clone(), transport_config)?;
+    let chat_transport = UreqStructuredOutputTransport::new(api_key, transport_config)?;
     let model = StructuredMemoryModel::new(
-        StructuredOutputAdapter::new(endpoint, model_transport),
+        StructuredOutputAdapter::new(endpoint.clone(), model_transport),
         &model_name,
         ConfidencePolicy::default(),
         DEFAULT_STRUCTURED_OUTPUT_RETRIES,
@@ -50,7 +51,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &model_name,
         RUNTIME_PROMPT_VERSION,
     )?;
-    let server = Server::new(runtime);
+    let chat_responder = AgentChatResponder::new(
+        AgentHarness::new(endpoint, chat_transport),
+        model_name.clone(),
+        DEFAULT_AGENT_MAX_TOOL_ROUNDS,
+    )?;
+    let server = Server::with_chat_responder(runtime, chat_responder);
     eprintln!("work-memory-server listening on {address}");
     serve(address, server)?;
     Ok(())

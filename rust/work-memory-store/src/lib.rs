@@ -224,6 +224,12 @@ pub enum StoreError {
         action: &'static str,
         reason: &'static str,
     },
+    #[error("archive confirmation attempt was not found: {0}")]
+    ArchiveAttemptNotFound(String),
+    #[error("archive confirmation attempt is no longer pending: {0}")]
+    ArchiveAttemptNotPending(String),
+    #[error("archive confirmation text does not match attempt: {0}")]
+    ArchiveAttemptTextMismatch(String),
     #[error("invalid correction write for action {action}: {reason}")]
     InvalidCorrectionWrite {
         action: &'static str,

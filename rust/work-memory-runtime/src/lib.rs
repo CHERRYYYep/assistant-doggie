@@ -148,6 +148,7 @@ pub struct CanonicalArchiveCoordinator<'a, M> {
     model_name: String,
     prompt_version: String,
     current_focus_bucket_id: Option<String>,
+    confirmation_attempt_id: Option<String>,
     active_bucket_limit: usize,
 }
 
@@ -166,12 +167,18 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             model_name: non_empty(model_name.into(), "model_name")?,
             prompt_version: non_empty(prompt_version.into(), "prompt_version")?,
             current_focus_bucket_id: None,
+            confirmation_attempt_id: None,
             active_bucket_limit: DEFAULT_ACTIVE_BUCKET_LIMIT,
         })
     }
 
     pub fn with_focus_bucket(mut self, bucket_id: Option<String>) -> Self {
         self.current_focus_bucket_id = bucket_id.filter(|value| !value.trim().is_empty());
+        self
+    }
+
+    pub fn with_confirmation_attempt(mut self, attempt_id: Option<String>) -> Self {
+        self.confirmation_attempt_id = attempt_id.filter(|value| !value.trim().is_empty());
         self
     }
 
@@ -233,7 +240,8 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             self.current_focus_bucket_id.clone(),
             self.prompt_version.clone(),
             self.model_name.clone(),
-        )?;
+        )?
+        .with_optional_confirmation_attempt(self.confirmation_attempt_id.clone())?;
         let outcome = self.service.archive(
             text,
             classification.clone(),
@@ -271,7 +279,8 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
             self.current_focus_bucket_id.clone(),
             self.prompt_version.clone(),
             self.model_name.clone(),
-        )?;
+        )?
+        .with_optional_confirmation_attempt(self.confirmation_attempt_id.clone())?;
         let outcome = self.service.archive(
             text,
             classification.clone(),
@@ -417,6 +426,17 @@ impl<M: MemoryModel> CanonicalRuntime<M> {
         text: &str,
         current_focus_bucket_id: Option<String>,
     ) -> Result<ArchiveExecution, RuntimeError> {
+        self.append_confirmed_for_attempt(bucket_id, text, current_focus_bucket_id, None)
+    }
+
+    /// Persist an explicitly confirmed append bound to a pending chat attempt.
+    pub fn append_confirmed_for_attempt(
+        &mut self,
+        bucket_id: &str,
+        text: &str,
+        current_focus_bucket_id: Option<String>,
+        confirmation_attempt_id: Option<String>,
+    ) -> Result<ArchiveExecution, RuntimeError> {
         let coordinator = CanonicalArchiveCoordinator::new(
             &mut self.service,
             &mut self.model,
@@ -426,6 +446,7 @@ impl<M: MemoryModel> CanonicalRuntime<M> {
         )?;
         coordinator
             .with_focus_bucket(current_focus_bucket_id)
+            .with_confirmation_attempt(confirmation_attempt_id)
             .append_confirmed(bucket_id, text)
     }
 
@@ -437,6 +458,18 @@ impl<M: MemoryModel> CanonicalRuntime<M> {
         text: &str,
         current_focus_bucket_id: Option<String>,
     ) -> Result<ArchiveExecution, RuntimeError> {
+        self.create_confirmed_for_attempt(title, bucket_type, text, current_focus_bucket_id, None)
+    }
+
+    /// Persist an explicitly confirmed new Bucket bound to a pending chat attempt.
+    pub fn create_confirmed_for_attempt(
+        &mut self,
+        title: &str,
+        bucket_type: BucketType,
+        text: &str,
+        current_focus_bucket_id: Option<String>,
+        confirmation_attempt_id: Option<String>,
+    ) -> Result<ArchiveExecution, RuntimeError> {
         let coordinator = CanonicalArchiveCoordinator::new(
             &mut self.service,
             &mut self.model,
@@ -446,6 +479,7 @@ impl<M: MemoryModel> CanonicalRuntime<M> {
         )?;
         coordinator
             .with_focus_bucket(current_focus_bucket_id)
+            .with_confirmation_attempt(confirmation_attempt_id)
             .create_confirmed(title, bucket_type, text)
     }
 }
