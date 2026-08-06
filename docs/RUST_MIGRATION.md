@@ -1,18 +1,20 @@
 # Rust 渐进重构计划
 
-> 状态日期：2026-08-05
-> 当前阶段：R2/R3 已完成隔离实现，R4a/R4b 已完成，R4c Agent Harness boundary 已提交并通过 fake transport 回归；Rust 已具备九表强类型读写基础、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环。完整 LLM 归档闭环、生产 Agent、API/UI 和生产数据库所有权仍未迁移，生产运行路径仍是 Python。
+> 状态日期：2026-08-06
+> 当前阶段：R2/R3 已完成隔离实现，R4a/R4b 已完成，R4c Agent Harness boundary 已提交并通过 fake transport 回归；Rust 已具备九表 legacy 兼容读写基础、Rust canonical SQLite schema、一次性 legacy semantic importer、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环。完整 LLM 归档闭环、生产 Agent、API/UI 和应用运行时 cutover 仍未完成；cutover 前 Python 继续独占 legacy 生产数据库写入，cutover 后 Rust canonical SQLite 才成为唯一生产写入目标。
 
 ## 1. 目标
 
 最终让 Rust 负责领域模型、SQLite 持久化、分类与提取编排、归档事务、搜索、纠错、Agent Harness、HTTP API 和 Web UI，并在行为与数据兼容得到验证后删除 Python 运行时。
 
-这不是一次性重写。迁移期间采用“绞杀者”方式，每次只切换一个可验证边界：
+应用和服务重构不是一次性重写。迁移期间采用“绞杀者”方式，每次只切换一个可验证边界：
 
 1. 先迁移无 I/O 的确定性规则。
 2. 再建立 JSON 与 SQLite 兼容层。
 3. 随后逐个迁移读服务和写事务。
 4. 最后替换 Agent、API 和 UI，并移除 Python。
+
+SQLite 存储边界例外：这不是把 Rust 长期接到 Python 的九张表上，也不是双写或原地改造。旧 Python SQLite 只作为一次性、只读的语义导入源；导入到全新的 Rust canonical SQLite 并完成核验后，才切换生产运行时和写入所有权。
 
 ## 2. 不变量
 
@@ -24,6 +26,11 @@
 - 纠错移动 Entry 时同步移动派生记录，并保留前后快照。
 - 普通自动化测试不调用真实 LLM。
 - 现有 `work_memory.db` 在明确迁移和备份前不得由不兼容 Schema 覆盖。
+- legacy Python source 必须以 SQLite read-only、`query_only` 打开并先完成 Schema/完整性校验；导入过程不得修改 source。
+- source 与 target 路径必须不同；target 必须是不存在、空的 SQLite 文件，或上一次失败导入留下的无业务 rows 的 canonical 空壳。已有非内部表、索引、view 或 trigger 的 target 必须拒绝。
+- canonical target 必须先初始化并验证 Rust schema；语义导入的业务 rows 在一个 `BEGIN IMMEDIATE` 事务中写入，任意失败都回滚，不得留下部分业务数据。
+- 导入成功后核验 counts、原始 Entry、结构化 memory、审计和聊天顺序；失败后只能修复 source 后重试空 target，或使用新的空 target，不能在有业务 rows 的 target 上追加导入。
+- Python 与 Rust 不得并发写同一个 SQLite 文件。cutover 前 Python 仍是 legacy 生产写入者；cutover 后 Rust canonical SQLite 是唯一生产写入目标，Python source/备份保持冻结只读。
 
 ## 3. 迁移架构
 
@@ -55,7 +62,24 @@ Rust-served Web UI -> Rust API/Agent/Services -> SQLite
                                +-> OpenAI / compatible API
 ```
 
-迁移期间禁止让 Python 和 Rust 同时写同一份生产数据库。写路径切换前，应在隔离数据库上完成契约、事务和回归对比；切换时只保留一个写入所有者。
+存储切换边界单独遵循“一次性导入、单一写入所有者”：
+
+```text
+Python app/runtime
+        |
+        v
+legacy Python SQLite（冻结前的生产源）
+        |
+        | one-time semantic import（只读 source）
+        v
+Rust canonical SQLite（全新 target）
+        |
+        | cutover 后唯一生产写入者
+        v
+Rust runtime/service/UI
+```
+
+迁移期间禁止让 Python 和 Rust 同时写同一份生产数据库。导入前停止所有可能打开 source/target 的应用连接；写路径切换前，应在隔离数据库上完成契约、事务、导入 counts 和回归对比；切换时只保留一个写入所有者。
 
 ## 4. 阶段与验收门槛
 
@@ -107,7 +131,73 @@ pytest -q
 
 限制：R1 只建立无 I/O 领域类型和 JSON 边界的一致性，Rust 尚未接入 SQLite、LLM 或 Python 生产调用链，也不会读写当前 `work_memory.db`。
 
-### R2：SQLite 仓储与迁移机制（进行中）
+### R2：Rust canonical SQLite、legacy semantic import 与兼容机制（进行中）
+
+R2 的长期目标不是让 Rust 继续读写 Python 的九张业务表，而是建立一套由 Rust 拥有的 canonical SQLite，并把旧 Python 数据一次性语义导入进去。旧九表的读取、`adopt_python_schema_v1` 基线、备份/恢复和强类型写 API 仍保留为 legacy compatibility 与隔离回归边界；它们不代表 canonical 的长期生产 Schema 或写入目标。
+
+#### R2 canonical schema
+
+Rust canonical 数据库由 `RustStore::initialize` 创建，由 `RustStore::open_existing` / `RustStore::open_read_only` 验证。canonical marker 固定为：
+
+```text
+schema kind:     rust-work-memory
+schema version:  1
+migration:       create_rust_memory_schema_v1
+```
+
+元数据表为 `rust_schema_meta` 和 `rust_schema_migrations`；业务表只有以下七张：
+
+```text
+buckets
+entries
+bucket_tags
+memory_items
+archive_attempts
+corrections
+conversation_messages
+```
+
+关键聚合边界如下：
+
+- `buckets` 保存 Bucket 的 `kind`、`lifecycle`、摘要和时间；`bucket_tags(bucket_id, tag, position)` 单独保存标签及其顺序。
+- `entries` 保存不可丢失的原始 Entry、摘要、分类置信度/原因、归属 Bucket、移动来源和归档状态。
+- `memory_items` 统一保存 `todo`、`evidence`、`timeline`、`decision`、`hypothesis`、`entity`、`tag` 七类结构化记忆；`entry_id` 可因独立 Entry 删除而为 NULL。
+- `memory_items.occurred_at` 保持文本，不把 `timeline_events.event_time` 强制解析成标准时间，以免丢失“刚才”等用户原始表达。
+- `archive_attempts` 保存每次分类/归档尝试及候选、focus、Prompt/model、确认状态和纠错状态；`ask_user` 是待确认的审计记录，不创建正式 Entry。
+- `corrections` 保存纠错命令和前后快照；`conversation_messages` 保存单一长期对话，并以 canonical `sequence` 表示顺序。
+
+canonical store 不暴露 Python SQLAlchemy schema 的裸可写连接或任意 SQL。canonical 的 Rust 读写 API、搜索排序和字段边界是独立契约；Python 九表兼容路径只用于迁移前验证、隔离测试和 legacy 备份/恢复。
+
+#### R2 one-time semantic import
+
+入口是 `RustStore::import_legacy_database(source, target)` 或离线命令：
+
+```bash
+cargo run -p work-memory-store --bin work-memory-store-admin -- \
+  import-legacy PYTHON_DB RUST_DB
+```
+
+导入器先以 SQLite `READ_ONLY`、`query_only` 和 `foreign_keys` 打开 Python source，在 target 创建或验证 canonical schema，然后在 target 的单一 `BEGIN IMMEDIATE` 事务中按下面的语义映射写入。source 从头到尾不被修改，source ID 尽可能保留。
+
+| Python legacy source | Rust canonical target | 语义与限制 |
+|---|---|---|
+| `buckets` | `buckets` + `bucket_tags` | 保留 Bucket ID、类型、状态、摘要、时间和标签顺序；原始标签 JSON 作为导入 provenance 保存在 `metadata_json`。 |
+| `entries` | `entries` | 保留原文、摘要、分类置信度/原因、Bucket 归属、`moved_from_bucket_id` 和 Entry ID。 |
+| `todos` | `memory_items(kind = todo)` | 保留 status、due date、关联 Entry 和来源 ID。 |
+| `evidences` | `memory_items(kind = evidence)` | 保留 source、关联 Entry 和来源 ID。 |
+| `timeline_events` | `memory_items(kind = timeline)` | `event_time` 原样写入文本 `occurred_at`，包括“刚才”等表达式。 |
+| `decisions` | `memory_items(kind = decision)` | 保留 reason、关联 Entry 和来源 ID。 |
+| `classification_records` | `archive_attempts` | `ask_user` 映射为待确认状态且不创建 Entry；已归档记录保留审计字段。Python 没有 question 字段时 canonical `question` 为 NULL。 |
+| `corrections` | `corrections` | 保留纠错前后 JSON 快照、审计字段和来源 ID。 |
+| `chat_messages` | `conversation_messages` | 按 `created_at ASC, id ASC` 重新生成连续 `sequence`，保留角色、工具元数据和 details JSON。 |
+
+Python source 只有 todo/evidence/timeline/decision 四类结构化子表，因此导入不能凭空恢复历史上从未落盘的 `hypothesis`、`entity` 或 `tag`。旧 `classification_records.bucket_id` 不是可靠外键；若对应 Bucket 无法解析，canonical `archive_attempts.bucket_id` 写为 NULL，但候选 JSON、focus ID 和其余审计数据仍保留。
+
+导入前必须满足：source 与 target 路径不同；source 是可验证的 legacy Python 九表数据库；target 不存在或没有任何非 SQLite 内部对象和业务 rows。一个此前失败导入留下的、已回滚业务 rows 的空 canonical schema 可以重试；有业务 rows 的 target 不得追加导入。导入完成后至少核对各表 counts、固定 source ID、Entry 原文、Bucket 标签顺序、Timeline 原始时间表达式、`ask_user` 状态、Correction JSON 和 Chat sequence。
+
+任意坏 Schema、非法枚举/JSON/时间戳、外键或目标关系错误都会在提交前失败；导入事务回滚，不留下部分业务 rows。canonical DDL 可能作为空壳保留，不能把“目标文件存在”视为导入成功。修复 source 后可复用这个空壳，或改用新的空 target 重试；成功后 source/备份冻结，不能再把 Python 写入路径接回 canonical DB。
+
+下列 R2a-R2o 继续记录 Python 九表兼容边界的实现和 Python/Rust 隔离回归；其中的 `SqliteStore`/`WritableSqliteStore`、`migrate_database` 与 `restore_database` 不改变上述 canonical 目标，也不构成生产 cutover。
 
 R2a 只读基础已完成，代码位置为 `rust/work-memory-store/`：
 
@@ -117,13 +207,14 @@ R2a 只读基础已完成，代码位置为 `rust/work-memory-store/`：
 - `list_active_buckets` 保持 Python 的 `active` 过滤以及 `last_active_at DESC, updated_at DESC` 排序；Entry 按 `created_at ASC` 读取。
 - `tests/fixtures/create_sqlite_compat_fixture.py` 只在临时路径创建固定 Python 数据库；Rust 集成测试验证 Schema、排序、过滤、字段、JSON 标签、SQLAlchemy 时间文本和只读配置。
 
-R2b migration 安全基础已完成：
+R2b legacy migration 安全基础已完成（只针对 Python 九表兼容库）：
 
 - 完整验证 Python 九张业务表的必需列、`id` 主键、显式索引列顺序、外键目标及 `CASCADE` / `SET NULL` 声明，并执行 `quick_check` 与 `foreign_key_check`。
 - 识别无 migration 表的 `LegacyPython` Schema，以及连续且受支持的 `Versioned(1)` history；version 1 使用 `adopt_python_schema_v1` 基线登记，不重建业务表。
 - `migrate_database` 在 `BEGIN IMMEDIATE` 写者保留锁下，通过独立只读连接和 SQLite Online Backup API 保存一致快照，验证备份后才在同一事务登记 version 1；重复升级不创建备份、不修改数据库。
 - `restore_database` 先验证恢复源，再保存目标 safety backup；恢复后重新验证，失败时尝试自动恢复 safety backup。
 - 提供 `work-memory-store-admin` 的 `inspect`、`migrate`、`restore` 离线命令；备份路径使用 create-new 语义，数据库、备份和 safety backup 路径必须互异。
+- `migrate_database` 的 `adopt_python_schema_v1` 只是在旧 source 上登记兼容基线，不会把旧库转换成 canonical schema；canonical 路径必须使用 `init`/`import-legacy`/`inspect-rust`。
 - Python fixture 已覆盖九表固定数据；跨语言测试比较升级前后全部业务 Schema 与行值，并覆盖升级、幂等、恢复、反向恢复、坏索引、坏外键、未来版本和已有备份拒绝。
 - 操作说明见 `docs/SQLITE_MIGRATIONS.md`。命令执行前仍必须停止所有应用数据库连接。
 
@@ -143,7 +234,7 @@ R2d 可写事务基础已完成：
 - crate 内部事务边界使用 `BEGIN IMMEDIATE`；操作成功才 commit，任一步返回错误都显式 rollback。
 - 打开时记录 SQLite `schema_version`，每次事务前重新检查连接保护、migration history 和 Schema 版本；已验证后发生 Schema 变化时拒绝写入。
 - 隔离临时数据库测试覆盖成功 commit、外键失败导致完整 rollback、坏 Schema 在写前拒绝，以及验证后 Schema 漂移拒绝。
-- 原始事务执行入口保持 crate-private，应用调用方只能通过受控的强类型业务写 API 进入事务；当前生产数据库仍只有 Python 可以写。
+- 原始事务执行入口保持 crate-private，应用调用方只能通过受控的强类型业务写 API 进入事务；这些 API 仍只服务于 legacy 隔离回归，cutover 前 legacy 生产数据库仍只有 Python 可以写。
 
 R2e 强类型归档聚合写 API 已完成：
 
@@ -235,7 +326,7 @@ R2 尚未完成的范围：
 - 当前 R2a-R2o 已完成的全部独立写 API 均已在 R3c-R3i 形成服务边界；Python Agent、UI 和生产数据库仍不调用任何 Rust 写服务。
 - 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
 
-R2a-R2o 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 version 1 升级、备份和恢复，并以受控强类型事务 API 完成归档、Entry 移动纠错、单条 ChatMessage 追加、Bucket 聚合删除、独立 Entry 删除、独立 Bucket 创建、独立 Entry 追加、独立 Bucket 滚动摘要更新、独立 Bucket 摘要重建、独立提取结果保存和独立分类审计保存及 Python/Rust 最终状态等价演练；测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义、服务层集成和生产切换准备完成。
+R2a-R2o 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 legacy version 1 升级、备份和恢复，并以受控强类型事务 API 完成归档、Entry 移动纠错、单条 ChatMessage 追加、Bucket 聚合删除、独立 Entry 删除、独立 Bucket 创建、独立 Entry 追加、独立 Bucket 滚动摘要更新、独立 Bucket 摘要重建、独立提取结果保存和独立分类审计保存及 Python/Rust 最终状态等价演练；canonical schema 的初始化、一次性语义导入、失败回滚、空 target 重试和导入后 counts/内容核验另按本节 R2 canonical 规则验收。测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义、服务层集成和生产切换准备完成。
 
 ### R3：归档、搜索、纠错、基础变更、摘要、提取、分类审计与聊天持久化服务
 
@@ -273,7 +364,7 @@ R3 尚未完成的范围：
 - 当前 R2a-R2o 已完成的独立写能力均已有 R3c-R3i 服务编排；后续只在 Agent/UI 实际需要时定义新的编辑、状态变更或跨操作事务，不提前虚构接口。
 - 使用同一输入和隔离数据库对比 Python/Rust 最终状态。
 
-验收：正常、确认、失败回滚和纠错场景均达到数据库状态等价；Rust 成为这些写路径的唯一所有者后，才移除对应 Python 业务逻辑。
+验收：正常、确认、失败回滚和纠错场景均达到数据库状态等价；这些 legacy 兼容写路径只在隔离库验证。完成一次性导入并切换到 canonical DB 后，Rust 才能成为生产写入的唯一所有者，随后才移除对应 Python 业务逻辑。
 
 ### R4：LLM adapter 与 Agent Harness
 
@@ -324,8 +415,10 @@ R4 后续范围：
 - Streamlit 先改为 API 客户端，停止直接导入 Python 服务。
 - 实现由 Rust 服务的正式 Web UI，覆盖长期对话、Bucket 侧栏、确认和纠错。
 - 增加端到端测试和数据导出入口。
+- 在应用 cutover 前完成 Python source 备份/冻结、`import-legacy`、canonical counts/内容核验和隔离回归；Rust runtime/service/UI 只配置到 Rust canonical SQLite。
+- cutover 时停止 Python/Streamlit 旧写路径；不能通过双写、原地改造或让 Python 继续写 canonical DB 来“渐进”完成存储切换。
 
-验收：用户可见 MVP 流程不依赖 Python；UI 行为与当前版本等价或有文档化改进。
+验收：用户可见 MVP 流程不依赖 Python，且 Rust canonical SQLite 是唯一生产写入目标；UI 行为与当前版本等价或有文档化改进。
 
 ### R6：移除 Python 运行时
 
@@ -333,7 +426,7 @@ R4 后续范围：
 - 将剩余固定样例与必要文档迁到 Rust 测试体系。
 - 更新安装、运行、备份、恢复和发布文档。
 
-最终验收：仓库的产品运行、测试和数据迁移不再要求 Python；历史 SQLite 数据经过备份后可被新版本安全读取或迁移。
+最终验收：仓库的产品运行、测试和后续数据维护不再要求 Python；历史 Python SQLite 已经过备份并一次性语义导入 fresh Rust canonical SQLite，导入源作为冻结历史源/备份保留，生产运行和所有未来写入只使用 Rust canonical DB，不再对旧库执行泛化的原地 canonical migration。
 
 ## 5. 当前代码映射
 
@@ -342,7 +435,9 @@ R4 后续范围：
 | 分类枚举与结果校验 | `app/schemas.py` | `work-memory-core::domain` | R0 已迁移核心部分 |
 | 候选排序与风险门控 | `app/services/classify_service.py` | `work-memory-core::classification` | R0 已迁移 |
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 JSON 解析；R4a 增加与当前 Python OpenAI SDK 等价的三份 strict JSON Schema |
-| SQLite 模型与 Session | `app/models.py`, `app/db.py` | `work-memory-store` | R2a/R2c 九表强类型只读仓储、R2b migration/备份恢复、R2d 可写事务基础、R2e 归档聚合写 API、R2f Entry 移动纠错 API、R2g ChatMessage 追加 API、R2h Bucket 聚合删除 API、R2i 独立 Entry 删除 API、R2j 独立 Bucket 创建 API、R2k 独立 Entry 追加 API、R2l 独立 Bucket 滚动摘要更新 API、R2m 独立 Bucket 摘要重建 API、R2n 独立提取结果保存 API、R2o 独立分类审计保存 API 已完成；其余写语义与集成待办 |
+| Python legacy SQLite 模型、Session 与兼容边界 | `app/models.py`, `app/db.py` | `work-memory-store::{schema,migration,read,write}` | R2a/R2c 九表强类型只读仓储、R2b `adopt_python_schema_v1`/备份恢复、R2d-R2o 受控隔离写 API 已完成；这些能力只用于 legacy source 验证和 Python/Rust 语义对照，不是 canonical 长期生产 Schema |
+| 一次性 legacy semantic import | `app/models.py`, `app/db.py`（导入源） | `work-memory-store::legacy_import` | `RustStore::import_legacy_database` / `work-memory-store-admin import-legacy` 已实现 source read-only、source/target distinct、空 target、ID 保留、语义映射、单事务提交/回滚、counts 核验和空壳重试边界 |
+| Rust canonical SQLite Schema 与 store | Python 九表是 source，不是长期目标 | `work-memory-store::canonical_schema`, `work-memory-store::canonical` | `rust-work-memory` version 1 / `create_rust_memory_schema_v1`、七张 canonical 业务表、`RustStore::initialize/open_existing/open_read_only` 和 canonical 读写 API 已实现；应用 runtime/UI 尚未 cutover |
 | Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` | R3a-R3i Bucket 列表/单项/详情/关键词搜索、已验证分类/提取的归档写编排、指定/最近 Entry 纠错、独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除、滚动摘要更新/重建、独立提取结果保存、分类审计保存和单条 ChatMessage 持久化编排已完成；完整 LLM 闭环、Agent/UI 和生产集成待办 |
 | LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a core 与 R4b `ureq` HTTP/API Key/timeout/proxy 已完成；完整 Agent/归档接线待后续 |
 | Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | Python 仍是生产实现；R4c Rust Harness 工作区草稿，尚未接 service/store |
@@ -354,7 +449,7 @@ R4 后续范围：
 Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
-rust/work-memory-store/           # R2a-R2o：九表读取/migration、隔离事务及归档/纠错/聊天/删除/Bucket/Entry/提取/分类审计/摘要基础写 API
+rust/work-memory-store/           # legacy 九表兼容读取/migration/隔离事务；canonical schema/store；一次性 legacy_import；归档/纠错/聊天/删除/Bucket/Entry/提取/分类审计/摘要写 API
 rust/work-memory-service/         # R3a-R3i：Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取/分类审计保存和聊天持久化编排；Agent/UI 集成待迁移
 rust/work-memory-agent/           # R4a-R4b adapter/HTTP；R4c Agent Harness 工作区草稿，尚未接生产
 rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
@@ -367,4 +462,5 @@ rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
 - 每个阶段性提交只迁移一个清晰边界，并使用祈使句提交信息。
 - 每次提交前同时运行受影响的 Rust 测试和现有 Python 回归。
 - 行为、接口、Schema 或运行命令变化时，同步更新本文件、`README.md`、`ARCHITECTURE.md`、`DATA_MODEL.md` 或 `TEST_PLAN.md` 中受影响的部分。
+- canonical Schema、legacy-to-canonical 字段映射、source/target 校验、导入事务/重试/回滚边界或 cutover 写入所有权变化时，必须同步更新 `DATA_MODEL.md`、`SQLITE_MIGRATIONS.md` 与本文件；不能只更新兼容层实现。
 - 未完成切换的能力必须明确标注“仅基础实现”或“未接入生产路径”，不能把代码存在误写成重构完成。
