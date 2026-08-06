@@ -1,7 +1,7 @@
 # Rust 渐进重构计划
 
 > 状态日期：2026-08-06
-> 当前阶段：R2/R3 已完成隔离实现，R4a/R4b 已完成，R4c Agent Harness boundary 已提交并通过 fake transport 回归；Rust 已具备九表 legacy 兼容读写基础、Rust canonical SQLite schema、一次性 legacy semantic importer、R3 产品服务编排、Structured Outputs adapter、基于社区 `ureq` 的真实 HTTP transport，以及未接入生产的双 API 工具循环。完整 LLM 归档闭环、生产 Agent、API/UI 和应用运行时 cutover 仍未完成；cutover 前 Python 继续独占 legacy 生产数据库写入，cutover 后 Rust canonical SQLite 才成为唯一生产写入目标。
+> 当前阶段：R2/R3 已完成隔离实现，R4a/R4b/R4c 已完成，R4d canonical runtime 与 R5a 本地 HTTP/API/UI 入口已完成并通过 fake transport、runtime 和 route smoke 回归。Rust 已具备九表 legacy 兼容边界、Rust canonical SQLite schema、一次性 legacy semantic importer、CanonicalService、Structured Outputs adapter、真实 `ureq` transport、有界 Agent Harness、完整 turn 编排和 `work-memory-server`。Python 应用仍保留用于 legacy UI、兼容回归和一次性导入；它不再是 Rust canonical 长期生产写路径。完成备份、`import-legacy`、核验和 operational cutover 后，Rust server/runtime/service/store 才成为 canonical SQLite 的唯一生产写入者。
 
 ## 1. 目标
 
@@ -34,7 +34,7 @@ SQLite 存储边界例外：这不是把 Rust 长期接到 Python 的九张表�
 
 ## 3. 迁移架构
 
-当前生产路径：
+历史 legacy 运行路径（仍可用于兼容回归）：
 
 ```text
 Streamlit UI -> Python Agent/Services -> SQLAlchemy -> SQLite
@@ -42,24 +42,25 @@ Streamlit UI -> Python Agent/Services -> SQLAlchemy -> SQLite
                            +-> OpenAI / compatible API
 ```
 
-过渡期目标：
+当前 Rust canonical 目标生产入口：
 
 ```text
-Streamlit UI (临时)
+Rust-served Web UI / HTTP API
         |
-        +-> Python 适配层 (逐步收缩)
-                    |
-                    +-> Rust HTTP/API + Rust domain/services -> SQLite
-                                      |
-                                      +-> OpenAI / compatible API
+        +-> CanonicalRuntime -> CanonicalService -> Rust canonical SQLite
+        |          |
+        |          +-> AgentHarness / StructuredMemoryModel
+        |          +-> OpenAI / compatible API
+        |
+        +-> legacy Python app（仅兼容/导入，不写 Rust canonical DB）
 ```
 
-最终路径：
+长期生产路径：
 
 ```text
-Rust-served Web UI -> Rust API/Agent/Services -> SQLite
-                               |
-                               +-> OpenAI / compatible API
+Rust-served Web UI -> Rust API/CanonicalRuntime/Services -> Rust canonical SQLite
+                                             |
+                                             +-> OpenAI / compatible API
 ```
 
 存储切换边界单独遵循“一次性导入、单一写入所有者”：
@@ -131,7 +132,7 @@ pytest -q
 
 限制：R1 只建立无 I/O 领域类型和 JSON 边界的一致性，Rust 尚未接入 SQLite、LLM 或 Python 生产调用链，也不会读写当前 `work_memory.db`。
 
-### R2：Rust canonical SQLite、legacy semantic import 与兼容机制（进行中）
+### R2：Rust canonical SQLite、legacy semantic import 与兼容机制（实现已完成；operational cutover 待完成）
 
 R2 的长期目标不是让 Rust 继续读写 Python 的九张业务表，而是建立一套由 Rust 拥有的 canonical SQLite，并把旧 Python 数据一次性语义导入进去。旧九表的读取、`adopt_python_schema_v1` 基线、备份/恢复和强类型写 API 仍保留为 legacy compatibility 与隔离回归边界；它们不代表 canonical 的长期生产 Schema 或写入目标。
 
@@ -322,15 +323,15 @@ R2o 强类型独立分类审计保存 API 已完成：
 - 每次调用只新增一条 UUID v4 分类审计，重复调用不去重；事务失败不留下记录，也不修改其他八张业务表。独立 API 与归档聚合路径共用候选合并和审计插入实现。
 - `tests/fixtures/apply_save_classification_fixture.py` 调用 Python `save_classification_record`；临时数据库测试覆盖精确元数据、全部 action、空输入、重复审计、缺失审计目标、单表影响、失败回滚和服务级最终语义等价。
 
-R2 尚未完成的范围：
+R2 的兼容实现不属于 canonical 长期生产写路径；剩余范围：
 
 - 迁移其他剩余 CRUD 写语义，并补齐对应跨语言等价测试。
-- 当前 R2a-R2o 已完成的全部独立写 API 均已在 R3c-R3i 形成服务边界；Python Agent、UI 和生产数据库仍不调用任何 Rust 写服务。
-- 在写路径正式切换前继续保持 Python 为唯一生产数据库写入者。
+- 当前 R2a-R2o 已完成的全部独立写 API 均已在 R3c-R3i 形成服务边界；legacy Python Agent/UI 仍可调用 Python service，canonical runtime 不调用 legacy schema writer。
+- 在完成 source 备份、semantic import、核验和 operational cutover 前，Python 仍可能是旧 legacy DB 的生产写入者；Rust canonical DB 不与其双写。
 
 R2a-R2o 当前验收：Rust 可以强类型只读读取 Python 创建的完整九表临时数据库，在临时隔离副本完成 legacy version 1 升级、备份和恢复，并以受控强类型事务 API 完成归档、Entry 移动纠错、单条 ChatMessage 追加、Bucket 聚合删除、独立 Entry 删除、独立 Bucket 创建、独立 Entry 追加、独立 Bucket 滚动摘要更新、独立 Bucket 摘要重建、独立提取结果保存和独立分类审计保存及 Python/Rust 最终状态等价演练；canonical schema 的初始化、一次性语义导入、失败回滚、空 target 重试和导入后 counts/内容核验另按本节 R2 canonical 规则验收。测试不会打开或修改仓库根目录的 `work_memory.db`。完整 R2 验收仍要求其余写语义、服务层集成和生产切换准备完成。
 
-### R3：归档、搜索、纠错、基础变更、摘要、提取、分类审计与聊天持久化服务
+### R3：归档、搜索、纠错、基础变更、摘要、提取、分类审计与聊天持久化服务（实现已完成；hardening/cutover 待完成）
 
 R3a-R3i Bucket 查询、搜索、归档、纠错、基础变更、摘要缓存、独立提取保存、分类审计保存与聊天持久化服务边界已完成：
 
@@ -347,7 +348,7 @@ R3a-R3i Bucket 查询、搜索、归档、纠错、基础变更、摘要缓存�
 - R3d 新增 `CorrectionService`，只能由经验证的 `WritableSqliteStore` 构造或打开现有兼容数据库；`move_entry` 接入显式 Entry/Bucket 聚合移动，`move_latest_entry` 支持显式目标 ID，或从最后一个“移到/放到”命令片段解析标题目标。
 - 最新 Entry 选择、标题候选解析、聚合移动、两个 Bucket 摘要重建、分类审计修正和 Correction 快照写入保持同一 `BEGIN IMMEDIATE` 事务；标题查询复现 SQLAlchemy `contains(..., autoescape=True)`、精确标题优先和唯一模糊候选规则。
 - `CorrectionResult` 返回事务权威的来源/目标 Bucket、移动的派生记录 ID 和已纠正审计 ID；`tests/fixtures/apply_correction_service_fixture.py`、`export_correction_service_fixture.py` 与 `rust/work-memory-service/tests/correction.rs` 覆盖指定/最近 Entry、显式/命令目标、最终目标优先、无匹配/多匹配/同 Bucket/空命令和失败无部分写入，并比较 Python/Rust 返回值与最终数据库语义。
-- 当前读写服务都只在系统临时目录的隔离数据库验证，尚未接入 Agent、UI 或生产调用链；Python 继续独占生产数据库写入。
+- legacy-compatible R3 服务继续通过 Python-schema fixture 在隔离数据库验证；canonical wrappers 已通过 `CanonicalService`、`CanonicalRuntime` 和 `work-memory-server` 接入 Agent/UI 目标路径。剩余工作是 operational cutover、正式运营 hardening、请求幂等和跨步骤失败恢复；在切换完成前，Python 仍可能是旧 legacy DB 的生产写入者。
 - R3e 新增 `MemoryMutationService`，把独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除接入产品服务层；调用方直接提交领域参数，服务内部构造强类型 Store request，并返回权威 Bucket/Entry 或删除影响 ID。
 - R3e 保持 Python 的文本/标签/可选字段/置信度规范化，以及删除时的 CASCADE、SET NULL、Todo `updated_at` 和 Bucket 缓存隔离语义；非法输入、缺失目标和事务失败不会留下部分写入。`apply_memory_mutation_service_fixture.py`、`export_memory_mutation_service_fixture.py` 与 Rust 集成测试比较四类操作的返回投影和最终数据库语义。
 - R3f 新增 `BucketSummaryService`，把独立滚动摘要更新和摘要重建接入产品服务层；默认入口分别复用 Python 的 1200 字符上限以及八条 Entry/1200 字符上限，显式入口保留自定义限制，服务内部构造 R2l-R2m 强类型 request 并返回事务提交后的摘要文本。
@@ -359,14 +360,14 @@ R3a-R3i Bucket 查询、搜索、归档、纠错、基础变更、摘要缓存�
 - R3i 新增 `ChatMessagePersistenceService`，把 R2g 单条聊天消息追加接入产品服务层；调用方直接提交 `ChatRole`、内容、可选工具元数据与 object/array/null details，服务内部构造 `ChatMessageWriteRequest`，不暴露 Store request、连接、SQL 或事务闭包。
 - `ChatMessageSaveResult` 返回 UUID、角色、内容、工具元数据、details 和时间；返回工具字符串按 Python `ChatMessageView` 裁剪，而数据库继续精确保留调用方元数据。每次调用独立提交一条消息，Store 保持内容校验、JSON null 归一、UUID v4、严格递增时间顺序、重复追加和失败回滚。`apply_chat_message_service_fixture.py`、`export_chat_message_service_fixture.py` 与 Rust 集成测试比较三种角色、重复消息、null/非法 details、插入失败及排除随机消息 ID/时间后的九表最终语义。
 
-R3 尚未完成的范围：
+R3 实现完成后的剩余范围：
 
-- 按 Agent/UI 实际调用需要扩展稳定详情、搜索和变更结果投影；尚未定义的编辑/状态变更不提前虚构接口。
-- 在 R4b 及后续集成中补齐真实 HTTP transport，并把候选加载、分类、风险门控、提取和 R3c 写服务接成完整 `archive_user_input` 闭环。
-- 当前 R2a-R2o 已完成的独立写能力均已有 R3c-R3i 服务编排；后续只在 Agent/UI 实际需要时定义新的编辑、状态变更或跨操作事务，不提前虚构接口。
+- canonical runtime/server 已提供稳定的详情、搜索、归档、纠错、状态变更和聊天投影；后续只在明确产品需求时定义新的编辑或跨操作事务，不提前虚构接口。
+- canonical runtime 已把候选加载、分类、风险门控、提取和 R3c 写服务接成完整 archive/tool 闭环；后续补充跨步骤事务、请求幂等和工具副作用后的恢复边界。
+- 当前 R2a-R2o 已完成的独立写能力均已有 R3c-R3i 服务编排；legacy 兼容服务仍只承担迁移/回归职责，canonical 长期写路径不回退到 legacy schema writer。
 - 使用同一输入和隔离数据库对比 Python/Rust 最终状态。
 
-验收：正常、确认、失败回滚和纠错场景均达到数据库状态等价；这些 legacy 兼容写路径只在隔离库验证。完成一次性导入并切换到 canonical DB 后，Rust 才能成为生产写入的唯一所有者，随后才移除对应 Python 业务逻辑。
+验收：正常、确认、失败回滚和纠错场景均达到数据库状态等价；legacy 兼容写路径继续只在隔离库验证，canonical runtime/server 在 Rust canonical DB 上验证。完成一次性导入并切换到 canonical DB 后，Rust 才能成为生产写入的唯一所有者，随后才移除对应 Python 业务逻辑。
 
 ### R4：LLM adapter 与 Agent Harness
 
@@ -384,43 +385,43 @@ R4b 基于社区 crate 的真实 HTTP transport 已完成：
 - `LlmHttpTransportConfig` 只承载 timeout/proxy mode 等非密钥配置，默认 timeout 为 30 秒；可显式关闭环境 proxy 以保证 loopback 测试确定性。`from_env` 只读取 `OPENAI_API_KEY`，不隐式读取 `.env`。
 - 默认 `ureq` 配置读取 `ALL_PROXY`、`HTTPS_PROXY`、`HTTP_PROXY` 及小写 aliases，并遵守 `NO_PROXY`；启用 `socks-proxy` 后，Python 当前的 `socks://` 语义由 crate 解析为 SOCKS5，不修改进程环境。
 - 每次请求发送 JSON POST 和 `Authorization: Bearer <API_KEY>`，HTTP 4xx/5xx 映射为现有 `LlmTransportError::HttpStatus`；响应 body 由 crate JSON reader 解码，网络/timeout/非法 JSON 使用不包含 URL、body 或 key 的固定 transport error。
-- API Key 存在 transport 私有字段，`Debug` 显式脱敏；R4b 仍不接入 Agent、UI、生产数据库或完整 `archive_user_input`，Python 继续是生产写入唯一者。
+- API Key 存在 transport 私有字段，`Debug` 显式脱敏；R4b 由 R4d canonical runtime/server 使用，Python 仍只负责 legacy UI/兼容路径。
 
 R4 验收：
 
 - `rust/work-memory-agent/tests/structured_output.rs` 继续验证 request/schema/retry mock 回归；`tests/http_transport.rs` 使用 loopback mock server 验证 POST、Bearer header、JSON body、200、401、429、500、非法 JSON 和 timeout；R4c `tests/agent_harness.rs` 验证 Responses/Chat 工具循环、参数拒绝、错误回传和轮数上限。
 - 普通测试不调用真实模型、不读取真实 API Key；真实模型验证仍保持独立命令，完整报告必须保留站点、模型、Prompt 版本和结构化结果，且密钥不能进入日志或 Git。
 
-R4c Agent Harness 已提交边界（未接入生产）：
+R4c Agent Harness 已提交并由 canonical runtime 接入：
 
 - `rust/work-memory-agent/src/agent_harness.rs` 提供 Responses 与 Chat Completions 两种工具循环，固定六个 memory tool，工具参数先通过 `work-memory-contracts` 严格校验；未知工具、非法 JSON、未知字段和非法 Bucket type 不会进入执行器。
 - 工具错误以 JSON 数据回传模型，工具轮数有上限；历史中的 `ChatRole::Tool` 暂不作为新的 provider turn 重放，memory context 以 `user` role 注入，避免低信任记忆获得 system 指令优先级。
 - `wire_response.rs` 复用 `async-openai` 的 Responses/Chat wire 类型；Harness 只做应用级 continuation、allow-list 和错误策略，不重新定义完整 provider response model。
-- 当前 `AgentToolExecutor` 仍由调用方注入，没有依赖 `work-memory-service` 或 `work-memory-store`；尚无完整 Agent turn 原子事务、工具调用审计、真实聊天持久化、API/UI 入口或生产数据库接管。
+- `AgentToolExecutor` 仍保持调用方注入，但 `CanonicalAgentToolExecutor` 已在 `work-memory-runtime` 接到 `CanonicalService`；`CanonicalRuntime` 负责 user/history/tool/assistant 消息持久化，`work-memory-server` 提供 API/UI 入口。跨工具副作用、工具消息和 assistant 消息仍不是一个覆盖所有步骤的单一原子事务。
 
-R4c 进入生产前的审查项：
+R4c/R4d 进入正式对外部署前的审查项：
 
 - 明确并测试 redirect 的 host/scheme 安全策略，避免 endpoint 跳转泄露 prompt 或记忆上下文。
-- 增加单轮 tool call 数、参数/输出/累计上下文大小、重复 call ID 和写操作幂等边界；当前只有 `max_tool_rounds`。
+- 写操作幂等边界、请求重试去重和 Agent 工具副作用后的恢复策略仍需补齐；单轮 tool call 数、参数/输出/累计上下文大小、重复 call ID 和最大轮数已有硬限制。
 - 收紧 Responses/Chat wire 状态、choice、role 和 function-call 完成态校验，并重新划分确定性错误与可重试错误。
-- 继续补齐生产接入前的工具调用安全和资源边界；工具 metadata、provider schema 与参数契约已集中到 `work-memory-contracts::AGENT_TOOL_DEFINITIONS`，并有 Responses/Chat parity 测试。
+- 继续补齐正式对外部署前的工具调用安全和资源边界；工具 metadata、provider schema 与参数契约已集中到 `work-memory-contracts::AGENT_TOOL_DEFINITIONS`，并有 Responses/Chat parity 测试。
 
 R4 后续范围：
 
-- 把分类/提取 Prompt、候选加载、风险门控和 R3c 写服务接成完整归档闭环。
-- 将 `AgentToolExecutor` 接到 R3 查询/归档/变更服务，并定义完整 turn 的聊天消息与工具审计事务。
+- 把分类/提取 Prompt、候选加载、风险门控和 R3c 写服务接成完整归档闭环（已由 R4d 完成，后续做语义回归和幂等增强）。
+- 将 `AgentToolExecutor` 接到 R3 查询/归档/变更服务，并定义完整 turn 的聊天消息与工具审计事务（服务接线和消息持久化已完成；跨步骤原子性仍是后续增强项）。
 - 复用分类与提取离线评估集，真实模型验证保持独立命令；完成上述安全边界后再考虑生产切换。
 
-### R5：Rust API 与 UI 切换
+### R5：Rust API 与 UI 切换（R5a 已完成，R5b 待正式运营）
 
-- 提供本地 HTTP API、健康检查和清晰错误响应。
-- Streamlit 先改为 API 客户端，停止直接导入 Python 服务。
-- 实现由 Rust 服务的正式 Web UI，覆盖长期对话、Bucket 侧栏、确认和纠错。
-- 增加端到端测试和数据导出入口。
+- `work-memory-server` 已提供本地 HTTP API、健康检查、清晰 JSON 错误响应和内嵌 Web UI，覆盖长期对话、Bucket 列表/搜索/详情、确认聊天和纠错/状态变更入口。
+- `Server` 使用标准库单请求/单连接 HTTP 实现，默认只绑定 `127.0.0.1:8787`，请求体上限 1 MiB；当前仍是单用户、无认证 MVP，不应直接暴露公网。
+- `cargo test -p work-memory-server` 已覆盖 health/UI、active/search/detail、无效 chat、纠错/状态路由 smoke；正式运营仍需认证、TLS、限流、端到端浏览器回归和请求幂等。
+- Streamlit 仍保留为 legacy UI；它不是 Rust canonical DB 的长期生产写入入口。
 - 在应用 cutover 前完成 Python source 备份/冻结、`import-legacy`、canonical counts/内容核验和隔离回归；Rust runtime/service/UI 只配置到 Rust canonical SQLite。
 - cutover 时停止 Python/Streamlit 旧写路径；不能通过双写、原地改造或让 Python 继续写 canonical DB 来“渐进”完成存储切换。
 
-验收：用户可见 MVP 流程不依赖 Python，且 Rust canonical SQLite 是唯一生产写入目标；UI 行为与当前版本等价或有文档化改进。
+验收：新部署的用户可见 MVP 流程可通过 Rust server/runtime 完成，不依赖 Python 业务 service；完成备份、导入、核验和 operational cutover 后，Rust canonical SQLite 是唯一生产写入目标；legacy Python/Streamlit 仅保留兼容和回归用途。
 
 ### R6：移除 Python 运行时
 
@@ -439,11 +440,11 @@ R4 后续范围：
 | JSON/Structured Outputs 契约 | `app/schemas.py`, `app/llm.py` | `work-memory-contracts` | R1 已完成 JSON 解析；R4a 增加与当前 Python OpenAI SDK 等价的三份 strict JSON Schema |
 | Python legacy SQLite 模型、Session 与兼容边界 | `app/models.py`, `app/db.py` | `work-memory-store::{schema,migration,read,write}` | R2a/R2c 九表强类型只读仓储、R2b `adopt_python_schema_v1`/备份恢复、R2d-R2o 受控隔离写 API 已完成；这些能力只用于 legacy source 验证和 Python/Rust 语义对照，不是 canonical 长期生产 Schema |
 | 一次性 legacy semantic import | `app/models.py`, `app/db.py`（导入源） | `work-memory-store::legacy_import` | `RustStore::import_legacy_database` / `work-memory-store-admin import-legacy` 已实现 source read-only、source/target distinct、空 target、ID 保留、语义映射、单事务提交/回滚、counts 核验和空壳重试边界 |
-| Rust canonical SQLite Schema 与 store | Python 九表是 source，不是长期目标 | `work-memory-store::canonical_schema`, `work-memory-store::canonical` | `rust-work-memory` version 1 / `create_rust_memory_schema_v1`、七张 canonical 业务表、`RustStore::initialize/open_existing/open_read_only` 和 canonical 读写 API 已实现；应用 runtime/UI 尚未 cutover |
-| Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` | R3a-R3i Bucket 列表/单项/详情/关键词搜索、已验证分类/提取的归档写编排、指定/最近 Entry 纠错、独立 Bucket 创建、Entry 追加和 Entry/Bucket 删除、滚动摘要更新/重建、独立提取结果保存、分类审计保存和单条 ChatMessage 持久化编排已完成；完整 LLM 闭环、Agent/UI 和生产集成待办 |
-| LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a core 与 R4b `ureq` HTTP/API Key/timeout/proxy 已完成；完整 Agent/归档接线待后续 |
-| Agent Harness | `app/services/agent_service.py` | `work-memory-agent` | Python 仍是生产实现；R4c Rust Harness 工作区草稿，尚未接 service/store |
-| Streamlit | `ui/streamlit_app.py` | Rust-served Web UI | R5 待办 |
+| Rust canonical SQLite Schema 与 store | Python 九表是 source，不是长期目标 | `work-memory-store::canonical_schema`, `work-memory-store::canonical` | `rust-work-memory` version 1 / `create_rust_memory_schema_v1`、七张 canonical 业务表、`RustStore::initialize/open_existing/open_read_only` 和 canonical 读写 API 已实现；只供 canonical service/runtime/server 长期写入，legacy API 只做兼容回归 |
+| Bucket/Archive/Search/Correction/Chat | `app/services/` | `work-memory-service` + `work-memory-runtime` | R3a-R3i 服务编排与 R4d canonical runtime 已接入 Bucket 列表/详情/搜索、分类/提取/归档、确认保存、纠错、状态变更和 chat/tool/assistant 持久化 |
+| LLM Structured Outputs adapter | `app/llm.py` | `work-memory-agent` | R4a core 与 R4b `ureq` HTTP/API Key/timeout/proxy 已完成，并由 `StructuredMemoryModel` 接入 canonical runtime |
+| Agent Harness | `app/services/agent_service.py` | `work-memory-agent` + `work-memory-runtime` | R4c Harness 与 `CanonicalAgentToolExecutor` 已接 service/store；有界 turn 由 `CanonicalRuntime` 编排，普通测试使用 fake transport |
+| Rust HTTP/UI | `ui/streamlit_app.py` | `rust/work-memory-server` | R5a 本地 API、health、内嵌 UI 和 route smoke 已完成；正式对外运营 hardening 与 operational cutover 待办 |
 
 ## 6. 目录约定
 
@@ -452,9 +453,10 @@ Cargo.toml                         # Rust workspace
 rust/work-memory-core/            # 无 I/O 的领域契约和确定性规则
 rust/work-memory-contracts/       # R1 已完成：严格 JSON/API 契约
 rust/work-memory-store/           # legacy 九表兼容读取/migration/隔离事务；canonical schema/store；一次性 legacy_import；归档/纠错/聊天/删除/Bucket/Entry/提取/分类审计/摘要写 API
-rust/work-memory-service/         # R3a-R3i：Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、独立提取/分类审计保存和聊天持久化编排；Agent/UI 集成待迁移
-rust/work-memory-agent/           # R4a-R4b adapter/HTTP；R4c Agent Harness 工作区草稿，尚未接生产
-rust/work-memory-server/          # R5 计划：HTTP 与静态 UI
+rust/work-memory-service/         # R3a-R3i：canonical Bucket 查询/搜索、归档、纠错、基础变更、摘要缓存、提取/分类审计和聊天持久化 facade
+rust/work-memory-agent/           # R4a-R4c Structured Outputs、ureq HTTP 和有界 Agent Harness
+rust/work-memory-runtime/         # R4d：StructuredMemoryModel、canonical tool executor 和持久化 Agent turn
+rust/work-memory-server/          # R5a：标准库 HTTP、health、API 路由和内嵌 Web UI
 ```
 
 后续 crate 只有在进入对应阶段时才创建，避免提前搭建无人使用的骨架。

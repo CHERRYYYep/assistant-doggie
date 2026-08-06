@@ -12,6 +12,21 @@ use crate::{
 
 /// Default upper bound for one model/tool exchange loop.
 pub const DEFAULT_AGENT_MAX_TOOL_ROUNDS: usize = 4;
+/// Hard upper bound accepted from an application caller. A model must not be
+/// able to turn a caller-controlled setting into an unbounded database loop.
+pub const MAX_AGENT_TOOL_ROUNDS: usize = 8;
+/// Hard upper bound for function calls returned in one model response.
+pub const MAX_AGENT_TOOL_CALLS_PER_ROUND: usize = 8;
+/// Maximum UTF-8 bytes accepted for one raw tool argument payload.
+pub const MAX_AGENT_TOOL_ARGUMENT_BYTES: usize = 32 * 1024;
+/// Maximum UTF-8 bytes retained for one tool result sent back to the model.
+pub const MAX_AGENT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+/// Maximum UTF-8 bytes for the memory context supplied to the model.
+pub const MAX_AGENT_MEMORY_CONTEXT_BYTES: usize = 64 * 1024;
+/// Maximum number of history messages supplied to one turn.
+pub const MAX_AGENT_HISTORY_MESSAGES: usize = 100;
+/// Maximum UTF-8 bytes for one persisted history message.
+pub const MAX_AGENT_HISTORY_MESSAGE_BYTES: usize = 32 * 1024;
 
 /// Shared system prompt for the single-conversation memory Harness.
 ///
@@ -44,6 +59,11 @@ impl AgentHistoryMessage {
         let content = content.into().trim().to_owned();
         if content.is_empty() {
             return Err(AgentHarnessError::EmptyHistoryMessage);
+        }
+        if content.len() > MAX_AGENT_HISTORY_MESSAGE_BYTES {
+            return Err(AgentHarnessError::HistoryMessageTooLarge {
+                max_bytes: MAX_AGENT_HISTORY_MESSAGE_BYTES,
+            });
         }
         Ok(Self { role, content })
     }
@@ -86,6 +106,22 @@ impl AgentHarnessRequest {
         let memory_context = memory_context.into().trim().to_owned();
         if memory_context.is_empty() {
             return Err(AgentHarnessError::EmptyMemoryContext);
+        }
+        if memory_context.len() > MAX_AGENT_MEMORY_CONTEXT_BYTES {
+            return Err(AgentHarnessError::MemoryContextTooLarge {
+                max_bytes: MAX_AGENT_MEMORY_CONTEXT_BYTES,
+            });
+        }
+        if history.len() > MAX_AGENT_HISTORY_MESSAGES {
+            return Err(AgentHarnessError::HistoryTooLarge {
+                max_messages: MAX_AGENT_HISTORY_MESSAGES,
+            });
+        }
+        if max_tool_rounds > MAX_AGENT_TOOL_ROUNDS {
+            return Err(AgentHarnessError::MaxToolRoundsTooLarge {
+                max_tool_rounds,
+                hard_max: MAX_AGENT_TOOL_ROUNDS,
+            });
         }
         Ok(Self {
             model,
@@ -210,6 +246,17 @@ pub enum AgentHarnessError {
     EmptyMemoryContext,
     #[error("agent history content must not be empty")]
     EmptyHistoryMessage,
+    #[error("agent history message exceeds {max_bytes} bytes")]
+    HistoryMessageTooLarge { max_bytes: usize },
+    #[error("agent memory context exceeds {max_bytes} bytes")]
+    MemoryContextTooLarge { max_bytes: usize },
+    #[error("agent history exceeds {max_messages} messages")]
+    HistoryTooLarge { max_messages: usize },
+    #[error("agent max_tool_rounds {max_tool_rounds} exceeds hard maximum {hard_max}")]
+    MaxToolRoundsTooLarge {
+        max_tool_rounds: usize,
+        hard_max: usize,
+    },
     #[error("{0}")]
     Transport(#[source] LlmTransportError),
     #[error("agent response had unexpected status: {status}")]
@@ -232,6 +279,13 @@ pub enum AgentHarnessError {
     InvalidToolCall { message: String },
     #[error("agent exceeded the maximum of {max_tool_rounds} tool round(s)")]
     MaxToolRoundsExceeded { max_tool_rounds: usize },
+    #[error("agent response requested {requested} tool call(s), maximum is {max_allowed}")]
+    TooManyToolCalls {
+        requested: usize,
+        max_allowed: usize,
+    },
+    #[error("agent response contained duplicate tool call id: {call_id}")]
+    DuplicateToolCallId { call_id: String },
 }
 
 /// Transport-independent Agent Harness with a bounded, allow-listed tool loop.
@@ -294,6 +348,20 @@ impl<T: StructuredOutputTransport> AgentHarness<T> {
                         return Err(AgentHarnessError::MaxToolRoundsExceeded {
                             max_tool_rounds: request.max_tool_rounds(),
                         });
+                    }
+                    if calls.len() > MAX_AGENT_TOOL_CALLS_PER_ROUND {
+                        return Err(AgentHarnessError::TooManyToolCalls {
+                            requested: calls.len(),
+                            max_allowed: MAX_AGENT_TOOL_CALLS_PER_ROUND,
+                        });
+                    }
+                    let mut call_ids = std::collections::HashSet::new();
+                    for call in &calls {
+                        if !call_ids.insert(call.call_id().to_owned()) {
+                            return Err(AgentHarnessError::DuplicateToolCallId {
+                                call_id: call.call_id().to_owned(),
+                            });
+                        }
                     }
                     let executions = calls
                         .iter()
@@ -477,6 +545,17 @@ fn execute_tool<E: AgentToolExecutor>(
     call: &AgentToolCall,
     executor: &mut E,
 ) -> AgentToolExecution {
+    if call.arguments().len() > MAX_AGENT_TOOL_ARGUMENT_BYTES {
+        return AgentToolExecution {
+            call_id: call.call_id().to_owned(),
+            name: call.name().to_owned(),
+            arguments: Value::String(call.arguments().to_owned()),
+            output: tool_error(format!(
+                "tool arguments exceed {} bytes",
+                MAX_AGENT_TOOL_ARGUMENT_BYTES
+            )),
+        };
+    }
     let (arguments, output) = match serde_json::from_str::<Value>(call.arguments()) {
         Ok(arguments) => match AgentToolArguments::from_value(call.name(), arguments.clone()) {
             Ok(validated) => match executor.execute(validated) {
@@ -489,6 +568,17 @@ fn execute_tool<E: AgentToolExecutor>(
             Value::String(call.arguments().to_owned()),
             tool_error(format!("tool arguments were not valid JSON: {error}")),
         ),
+    };
+    let output = if serde_json::to_vec(&output)
+        .map(|value| value.len() > MAX_AGENT_TOOL_OUTPUT_BYTES)
+        .unwrap_or(true)
+    {
+        tool_error(format!(
+            "tool output exceeds {} bytes",
+            MAX_AGENT_TOOL_OUTPUT_BYTES
+        ))
+    } else {
+        output
     };
     AgentToolExecution {
         call_id: call.call_id().to_owned(),

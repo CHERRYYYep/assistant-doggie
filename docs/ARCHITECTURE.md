@@ -1,6 +1,6 @@
 # 系统架构设计
 
-> Rust 迁移状态（2026-08-06）：当前应用运行时尚未完成 cutover，Python 仍是 legacy Python SQLite 的唯一生产写入者；Rust canonical schema、强类型读写服务、一次性 `import-legacy` 语义导入和 `inspect-rust` 验证边界已实现。canonical SQLite 由 7 张业务表和 2 张 Rust schema 元数据表组成；它不是 Python 九表的兼容别名。导入时 source 只读、target 必须是新建/空的 Rust 数据库，切换后 Rust runtime/service/store 才成为 canonical DB 的唯一生产写入者。R4a/R4b 已完成，R4c Agent Harness boundary 已提交；这些能力尚未全部接入 `work-memory-service`、API、UI 或生产数据库。渐进切换边界、风险和阶段计划见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
+> Rust 迁移状态（2026-08-06）：Rust canonical schema、强类型读写服务、一次性 `import-legacy` 语义导入、`CanonicalRuntime` 和 `work-memory-server` 已形成新的目标生产入口。Python 应用和 legacy Rust service/store 仍保留用于兼容回归、旧 UI 维护和一次性语义导入，但不属于 Rust canonical SQLite 的长期生产写路径。canonical SQLite 由 7 张业务表和 2 张 Rust schema 元数据表组成；它不是 Python 九表的兼容别名。导入时 source 只读、target 必须是新建/空的 Rust 数据库；完成核验和 operational cutover 后，Rust runtime/service/store 才是 canonical DB 的唯一生产写入者。渐进切换边界、风险和阶段计划见 [`RUST_MIGRATION.md`](./RUST_MIGRATION.md)，数据库运维边界见 [`SQLITE_MIGRATIONS.md`](./SQLITE_MIGRATIONS.md)。
 
 ## 1. 总体架构
 
@@ -52,7 +52,23 @@ Agent/API/UI
     └─ 对话 ────────→ chat persistence ──→ conversation_messages
 ```
 
-所有业务读写都应从 Rust service/store 的强类型 API 进入；运行时不直接执行任意 SQL，也不把 legacy 表当作 canonical 表读取。归档、纠错和单条消息保存的事务边界由 Store 负责；完整 Agent turn 的跨消息事务仍由后续 runtime 编排决定。
+所有业务读写都应从 Rust service/store 的强类型 API 进入；运行时不直接执行任意 SQL，也不把 legacy 表当作 canonical 表读取。当前 `CanonicalRuntime` 已负责完整 turn 的编排：先读取旧 history，再提交当前 user message，加载活跃 Bucket context，运行有界 Agent Harness，随后持久化 tool messages，并只在 Harness 成功时持久化 assistant message。归档、纠错和单条消息保存的业务事务边界仍由 Store 负责；完整 `/api/chat` turn 不是一个覆盖所有步骤的原子事务，Agent 在工具副作用后失败时不会伪造成功的 assistant 消息。
+
+### 1.1.1 Rust canonical application entry
+
+新的 canonical 部署入口由 `work-memory-server` 提供，依赖关系固定为：
+
+```text
+HTTP/Web UI
+    └─ work-memory-server
+         └─ CanonicalRuntime
+              ├─ StructuredMemoryModel + StructuredOutputAdapter
+              ├─ AgentHarness + CanonicalAgentToolExecutor
+              └─ CanonicalService
+                   └─ RustStore -> Rust canonical SQLite
+```
+
+server 是标准库实现的单用户 MVP：默认监听 `127.0.0.1:8787`，每个连接只处理一个请求，没有认证、授权、用户/租户隔离、TLS、CSRF/origin 保护、限流、并发写入协调或 retry idempotency。`confirmation_granted=true` 只是请求字段，不是安全控制；任何能访问监听地址的调用方都可以读取记忆、移动 Entry、修改 Bucket 状态并请求确认写入。对外部署必须在前置认证/TLS 代理后运行，并补齐限流、请求幂等和可观测性。支持的 API 与环境变量见 [`README.md`](../README.md) 的 Rust canonical server 小节。
 
 ### 1.2 Source/target ownership 与导入边界
 
@@ -99,7 +115,7 @@ archive_attempts, corrections, conversation_messages
 
 普通 Python 函数足以表达当前流程，比提前引入复杂 Agent 框架更容易调试、测试和回滚。只有出现多角色协作、长流程状态机或复杂工具审批后，才需要考虑进一步编排。
 
-当前的 `agent_service` 是一个单 Agent、显式工具注册的轻量 Harness，而不是多 Agent 框架。它持久化唯一对话的消息，每轮自动加载最多 8 个活跃 Bucket 的摘要概览，再把最近对话交给模型，并执行 `list/search/get/archive/confirmed save` 等受控工具。模型没有任意本机代码执行权限。
+legacy Python `agent_service` 仍是旧 UI 的兼容实现；canonical Rust 路径使用 `AgentHarness` 与 `CanonicalAgentToolExecutor`。它持久化唯一对话的消息，每轮加载有界的历史和最多 20 个活跃 Bucket 摘要概览，并执行 `list/search/get/archive/confirmed save` 等六个受控工具。模型没有任意本机代码执行权限；确认追加和确认新建必须由请求显式设置 `confirmation_granted=true`。
 
 ## 2. 对话与默认记忆流程
 
@@ -154,23 +170,23 @@ Streamlit 不再维护第二套手工归档输入状态。归档需要确认时�
 
 `work-memory-agent` 的 R4a core 不读取密钥，也不直接联网。`LlmEndpointConfig` 解析 official/custom site、Base URL 与 `responses`/`chat_completions` 模式；`StructuredOutputContract` 为分类、提取和 Bucket 摘要暴露与当前 Python OpenAI SDK 一致的 strict JSON Schema。adapter 分别构造 Responses `text.format` 和 Chat Completions `response_format.json_schema` 请求，通过可注入的 `StructuredOutputTransport` 接收 JSON 响应，再统一处理 output text、拒绝、截断、content filter、非法 JSON 与契约错误。网络错误、408/409/429、5xx 及可恢复的输出错误允许有限重试；拒绝、content filter 和其他 4xx 不重试。
 
-R4b 增加基于社区 `ureq` `3.3.0` 的同步真实 HTTP transport：复用 crate 提供的 JSON POST、rustls、timeout、环境 proxy、`NO_PROXY` 和 SOCKS 支持，发送 Bearer API Key，并将状态码、网络、timeout 和非法 JSON 映射到现有 transport error。API Key 只存在 transport 私有字段，`Debug` 与错误信息均脱敏。该 transport 已在 loopback mock server 验证，但 Agent 调用接线仍留给后续阶段。
+R4b 增加基于社区 `ureq` `3.3.0` 的同步真实 HTTP transport：复用 crate 提供的 JSON POST、rustls、timeout、环境 proxy、`NO_PROXY` 和 SOCKS 支持，发送 Bearer API Key，并将状态码、网络、timeout 和非法 JSON 映射到现有 transport error。API Key 只存在 transport 私有字段，`Debug` 与错误信息均脱敏。该 transport 已由 `StructuredMemoryModel` 和 `AgentHarness` 通过 `work-memory-server` 接入 canonical runtime；普通测试仍使用 fake transport。
 
 ### `bucket_service`
 
-负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。Rust R3a-R3b `BucketQueryService` 已在只读临时数据库复现活跃 Bucket 列表、精确 Bucket 查询、完整详情聚合和关键词搜索；R3e `MemoryMutationService` 在隔离可写数据库接入独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除；R3f `BucketSummaryService` 接入独立滚动摘要更新与基于 Entry 的摘要重建；R3g `ExtractionPersistenceService` 接入四类结构化记录、Entry summary、Bucket 标签和滚动摘要的独立原子保存，并继续由 Store 保持事务与 Python 兼容去重语义。生产 Agent 与 UI 仍调用 Python。
+负责 Bucket/Entry CRUD、结构化记录入库、精确去重、滚动摘要和详情查询。摘要可由 Entry 重新构建，不能代替原始事实。Rust R3a-R3b `BucketQueryService` 已在只读临时数据库复现活跃 Bucket 列表、精确 Bucket 查询、完整详情聚合和关键词搜索；R3e `MemoryMutationService` 在隔离可写数据库接入独立 Bucket 创建、Entry 追加、Entry 删除和 Bucket 聚合删除；R3f `BucketSummaryService` 接入独立滚动摘要更新与基于 Entry 的摘要重建；R3g `ExtractionPersistenceService` 接入四类结构化记录、Entry summary、Bucket 标签和滚动摘要的独立原子保存，并继续由 Store 保持事务与 Python 兼容去重语义。canonical runtime 通过 `CanonicalService` 使用这些 Rust-owned 能力；旧 Streamlit 仍可调用 Python legacy service。
 
 ### `archive_service`
 
-Python 仍负责生产分类、提取、确认和 Session 生命周期。Rust R3c `ArchiveService` 已建立受控可写服务边界：裁剪并拒绝空输入，要求 append/create 携带 `ExtractionResult`，禁止 ask_user 携带提取结果，构造确认追加/确认新建分类审计，并把 `WritableSqliteStore::persist_archive_attempt` 的事务结果投影为核心 `ArchiveResult`。Bucket 标题和类型由同一写事务返回，避免服务层用未验证的调用方元数据伪造结果。当前 Rust 服务只在系统临时目录的隔离数据库运行；R4a-R4b 已提供 Structured Outputs core 和真实 HTTP transport，但还未把候选加载、分类、风险门控、提取和写服务接成完整 `archive_user_input`。
+Rust R3c `ArchiveService` 已建立受控可写服务边界：裁剪并拒绝空输入，要求 append/create 携带 `ExtractionResult`，禁止 ask_user 携带提取结果，构造确认追加/确认新建分类审计，并把事务结果投影为核心 `ArchiveResult`。`CanonicalArchiveCoordinator` 负责候选加载、分类、服务端 Bucket ID/置信度门控、提取和 canonical archive transaction；`CanonicalAgentToolExecutor` 负责把自动归档、确认追加和确认新建暴露给 Harness。Bucket 标题和类型由同一写事务返回，避免服务层用未验证的调用方元数据伪造结果。Python `archive_service` 仅保留 legacy UI/回归边界。
 
 ### `correction_service`
 
-支持移动指定或最近 Entry，并同步移动其派生记录；写入 Correction 前后快照，重建两个 Bucket 的摘要，并把关联分类审计标记为已纠错。Rust R3d `CorrectionService` 持有经验证的 `WritableSqliteStore`：`move_entry` 接收显式 Entry/Bucket ID，`move_latest_entry` 在同一 `BEGIN IMMEDIATE` 事务中选择最新 Entry，并从显式 Bucket ID 或 Python MVP 支持的最终“移到/放到”命令片段解析目标。标题查询保持 SQLAlchemy `contains(..., autoescape=True)` 的字面匹配、精确标题优先和唯一模糊候选规则；空命令、无法识别、无匹配、多匹配、同 Bucket 和缺失记录均拒绝且不留下部分写入。当前 Agent 和 UI 仍调用 Python 服务。
+支持移动指定或最近 Entry，并同步移动其派生记录；写入 Correction 前后快照，重建两个 Bucket 的摘要，并把关联分类审计标记为已纠错。Rust R3d `CorrectionService` 持有经验证的 canonical store：`move_entry` 接收显式 Entry/Bucket ID，并在同一事务内完成移动、摘要和 correction audit。`work-memory-server` 的 `/api/corrections/move` 暴露显式移动入口；旧 Streamlit 的自然语言纠错仍属于 Python legacy service。
 
 ### `agent_service` 的聊天持久化边界
 
-Python 当前仍通过 `add_chat_message` 分别提交 user、tool 和 assistant 消息。Rust R3i `ChatMessagePersistenceService` 持有经验证的 `WritableSqliteStore`，直接接收 `ChatRole`、内容、可选工具元数据和 details，在内部构造 `ChatMessageWriteRequest` 并独立提交单条消息。Store 精确保留工具元数据，稳定 `ChatMessageSaveResult` 则与 Python `ChatMessageView` 一样裁剪返回字符串；内容校验、JSON null 规范化、UUID 和严格递增时间顺序仍由 Store 负责。该服务尚未接入 Agent Harness，也不提供完整 turn 的跨消息事务。
+Python legacy UI 仍通过 `add_chat_message` 分别提交 user、tool 和 assistant 消息。Rust canonical runtime 通过 `CanonicalService` 使用 `ChatMessagePersistenceService`：`CanonicalRuntime::run_turn` 先读取旧 history，再追加当前 user message，运行 Harness，随后保存 tool messages，并且只在 Harness 成功时保存 assistant message。Store 精确保留工具元数据，内容校验、JSON null 规范化、UUID 和严格递增时间顺序仍由 Store 负责；Agent/tool 副作用与聊天消息并非跨所有步骤的单一事务。
 
 ### `search_service` 与 `view_service`
 
@@ -178,7 +194,7 @@ Python 当前仍通过 `add_chat_message` 分别提交 user、tool 和 assistant
 
 ## 5. 当前焦点与候选范围
 
-当前焦点来自统一 UI 侧边栏选中的 Bucket，并随每轮对话传给 Harness。Agent 默认上下文加载最多 8 个活跃 Bucket；真正进入归档分类时，分类服务仍使用当前焦点和最近活跃的有限候选，默认上限为 20。这样既减少 Token 消耗，也避免把完整历史暴露给每次调用；更旧内容通过搜索按需找回。
+当前焦点来自 UI 选中的 Bucket，并随每轮对话传给 Harness。Rust canonical runtime 默认上下文和分类候选均最多加载 20 个活跃 Bucket；Agent history 默认最多读取 40 条消息，Harness 还限制最大工具轮数、每轮工具调用数、参数/输出/上下文大小。这样既减少 Token 消耗，也避免把完整历史暴露给每次调用；更旧内容通过搜索按需找回。旧 Python UI 的默认上下文上限仍以 Python 配置为准。
 
 ## 6. 风险门控
 
@@ -189,14 +205,15 @@ confidence < 0.55               → 用户确认
 多个相似候选                    → 用户确认
 ```
 
-阈值来自 `.env`，只是保守初值。`confidence` 是模型主观信号，不是正确概率；必须用固定标注集、实际纠错和高错误代价案例持续校准。低置信度输入可写分类审计，但不得在确认前污染正式 Bucket。
+Python legacy 应用的阈值来自 `.env`；当前 Rust server 使用内置默认值 `auto_archive=0.85`、`confirm=0.55`，尚未从环境变量读取。两者都只是保守初值。`confidence` 是模型主观信号，不是正确概率；必须用固定标注集、实际纠错和高错误代价案例持续校准。低置信度输入可写分类审计，但不得在确认前污染正式 Bucket。
 
 ## 7. 事务与错误处理
 
 - OpenAI 配置或调用失败：明确报错，不伪造归档结果。
 - 输出不符合 Schema：有限重试后失败。
 - Bucket ID 无效：降级为确认，不进入持久化流程。
-- 数据库任一步失败：自动归档事务整体回滚。
+- 单次 canonical 归档、纠错和其他 Store 写操作使用各自的事务；自动归档事务失败时整体回滚。
+- `/api/chat` 的完整 turn 不使用一个覆盖所有步骤的外层事务：user message 可能已提交，工具副作用可能在后续模型失败前提交，tool messages 单独保存，assistant message 只在 Harness 成功后保存；失败请求没有 turn-level idempotency key，调用方不得盲目重试。
 - 用户确认后：通过独立确认入口重新提取并保存。
 - Rust R2h `delete_bucket` 仅在隔离数据库提供模型级 Bucket 聚合删除：依赖现有外键删除 Bucket 自有聚合、清空跨 Bucket 子记录和分类审计的 Entry 外键，并在任一步失败时整体回滚；当前产品没有对应的 Python 删除服务，生产路径尚未调用该 API。
 - Rust R2i `delete_entry` 同样只在隔离数据库提供模型级独立 Entry 删除：Bucket、结构化记录和审计记录保留，所有相关 `entry_id` 清空，Todo 刷新 `updated_at`，Bucket 摘要与活跃时间不自动重建；该行为匹配直接 SQLAlchemy 模型删除，而非尚不存在的产品服务。
@@ -207,17 +224,17 @@ confidence < 0.55               → 用户确认
 - Rust R2n `save_extraction` 在隔离数据库提供产品级独立提取保存：先按精确 ID 验证 Bucket 与 Entry 归属，再原子写入按调用前已有记录去重的四类结构化记录、Entry summary、合并标签和 1200 字符滚动摘要；不刷新 Bucket `last_active_at`，并与归档聚合写路径共用子记录和缓存更新实现。
 - Rust R2o `save_classification_record` 在隔离数据库提供产品级独立分类审计保存：只裁剪原始输入首尾空白，按“服务端候选在前、模型候选在后”做大小写敏感的精确保序去重，并保留已解析的焦点、Prompt 与模型元数据；单事务只新增一条 `classification_records`，不校验审计中的 Bucket ID 是否存在，也不修改 Bucket、Entry 或其他业务表。
 - Rust R3a `BucketQueryService` 在 `work-memory-service` 提供首个产品级只读编排：复用受 Schema 校验和 query-only 保护的 `SqliteStore`，保持活跃列表排序/limit、精确主键查询和 Entry/Todo/Evidence/Timeline/Decision 详情关系顺序；缺失 Bucket 返回 `None`。
-- Rust R3b 在同一服务增加 `search_buckets`：保持查询 trim/空值校验、正数 limit、`max(limit * 5, 50)` SQL 候选窗口、LIKE 通配符字面转义、Unicode casefold 评分、最多十条匹配 Entry 加分、稳定降序排序和紧凑结果投影；当前同样尚未接入生产调用链。
-- Rust R3c `ArchiveService` 持有经验证的 `WritableSqliteStore`，不暴露可写连接或任意事务闭包；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、`classification-v2` 和结果字段语义。ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。R4a-R4b 已完成模型边界 core 和真实 HTTP transport；分类/提取调用仍未接入该服务，生产路径也未切换。
-- Rust R3d `CorrectionService` 同样不暴露可写连接；显式 Entry 移动和“移动最近 Entry”都投影为稳定的 `CorrectionResult`。最近 Entry 选择、可选标题解析、聚合移动、摘要重建、审计修正和 Correction 快照写入在同一 Store 事务内完成，避免“最近一条”在读写间发生漂移；目前仍未接入 Agent/UI。
-- Rust R3e `MemoryMutationService` 把 R2h-R2k 的独立 Bucket/Entry 基础写能力组合为稳定服务边界；服务直接接收产品参数并在内部构造强类型 Store request，返回权威 `StoredBucket`、`StoredEntry` 或删除影响 ID，不暴露 `WritableSqliteStore`、SQL 或事务闭包。创建/追加保持 Python 文本、标签、可选字段和置信度语义，删除保持外键级联/SET NULL 与 Todo 时间更新语义；缺失或非法请求不留下部分修改，目前仍未接入 Agent/UI。
-- Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改，目前仍未接入 Agent/UI。
-- Rust R3g `ExtractionPersistenceService` 把 R2n 的独立提取保存提升为稳定服务边界；服务接收精确 Bucket/Entry ID 和已验证 `ExtractionResult`，不暴露 Store request、连接或事务闭包，并返回包含四类新建记录 ID 的 `ExtractionSaveResult`。目标验证、子记录去重、Entry/Bucket 缓存更新和失败回滚继续由单一 Store 事务负责，目前仍未接入提取模型、Agent/UI 或生产数据库。
-- Rust R3h `ClassificationAuditService` 把 R2o 的独立分类审计保存提升为稳定服务边界；服务接收已验证 `ClassificationResult` 及服务端候选、焦点、Prompt 和模型元数据，不暴露 Store request/outcome、连接或事务闭包，并返回新审计 UUID 的 `ClassificationAuditSaveResult`。原始输入 trim、空审计文本、精确元数据、候选合并、三类 action 和失败回滚继续由 Store 保持 Python 语义；分类与风险门控、Prompt 选择和模型名解析仍在服务外，目前未接入 Agent/UI 或生产数据库。
-- Rust R3i `ChatMessagePersistenceService` 把 R2g 单条 ChatMessage 追加提升为稳定服务边界；服务直接接收强类型角色、内容、可选工具元数据和 object/array/null details，不暴露 Store request、连接或事务闭包，并返回与 Python `ChatMessageView` 字符串规范化一致的 `ChatMessageSaveResult`。数据库仍精确保留工具元数据，每次调用独立提交一条 UUID v4 消息并维持严格递增时间顺序；非法输入或插入失败不修改九表，目前未接入 Agent/UI 或生产数据库，也不构造完整 turn 事务。
+- Rust R3b 在同一服务增加 `search_buckets`：保持查询 trim/空值校验、正数 limit、`max(limit * 5, 50)` SQL 候选窗口、LIKE 通配符字面转义、Unicode casefold 评分、最多十条匹配 Entry 加分、稳定降序排序和紧凑结果投影；canonical `CanonicalService` 与 server read route 使用等价的 Rust-owned 搜索投影，legacy service 仍保留隔离回归。
+- Rust R3c `ArchiveService` 持有经验证的写边界；`archive_classified_input` 对已验证分类/提取结果执行 action/extraction 一致性校验，确认追加与确认新建入口复现 Python 的候选、焦点、审计和结果字段语义。canonical `CanonicalArchiveCoordinator` 进一步负责候选加载、分类、风险门控、提取和 Rust canonical archive transaction；ask_user 只提交分类审计，缺失 Bucket 或晚期数据库错误由 Store 事务整体回滚。
+- Rust R3d `CorrectionService` 同样不暴露可写连接；显式 Entry 移动和“移动最近 Entry”都投影为稳定的 `CorrectionResult`。最近 Entry 选择、可选标题解析、聚合移动、摘要重建、审计修正和 Correction 快照写入在同一 Store 事务内完成；canonical server 暴露显式 Entry move route，legacy 自然语言纠错仍由 Python service 处理。
+- Rust R3e `MemoryMutationService` 把 R2h-R2k 的独立 Bucket/Entry 基础写能力组合为稳定服务边界；服务直接接收产品参数并在内部构造强类型 Store request，返回权威 `StoredBucket`、`StoredEntry` 或删除影响 ID，不暴露 `WritableSqliteStore`、SQL 或事务闭包。创建/追加保持 Python 文本、标签、可选字段和置信度语义，删除保持外键级联/SET NULL 与 Todo 时间更新语义；canonical runtime 通过 `CanonicalService` 使用归档所需的受控写能力。
+- Rust R3f `BucketSummaryService` 把 R2l-R2m 的独立摘要缓存写能力组合为稳定服务边界；默认入口保持 1200 字符和八条 Entry 的 Python 默认值，显式入口保留自定义限制，服务内部构造强类型 request 并只返回提交后的摘要文本。更新/重建都只修改 Bucket `summary` 与 `updated_at`，不刷新 `last_active_at`，非法限制、空片段或缺失 Bucket 不留下部分修改。
+- Rust R3g `ExtractionPersistenceService` 把 R2n 的独立提取保存提升为稳定服务边界；服务接收精确 Bucket/Entry ID 和已验证 `ExtractionResult`，不暴露 Store request、连接或事务闭包，并返回包含四类新建记录 ID 的 `ExtractionSaveResult`。目标验证、子记录去重、Entry/Bucket 缓存更新和失败回滚继续由单一 Store 事务负责；canonical model/runtime 已接入归档提取。
+- Rust R3h `ClassificationAuditService` 把 R2o 的独立分类审计保存提升为稳定服务边界；服务接收已验证 `ClassificationResult` 及服务端候选、焦点、Prompt 和模型元数据，不暴露 Store request/outcome、连接或事务闭包，并返回新审计 UUID 的 `ClassificationAuditSaveResult`。分类与风险门控由 runtime 执行，审计由 canonical service 保存。
+- Rust R3i `ChatMessagePersistenceService` 把 R2g 单条 ChatMessage 追加提升为稳定服务边界；canonical runtime 通过 `CanonicalService` 保存 user/tool/assistant 顺序和工具 metadata。每次 Store 调用仍独立提交一条 UUID v4 消息并维持严格递增时间顺序；跨工具副作用、工具消息和 assistant 消息不构成单一全步骤事务。
 - Rust R4a `StructuredOutputAdapter` 只依赖可注入 transport，构造官方 Responses 或兼容 Chat Completions 的 strict JSON Schema 请求，并把响应解析为现有 Rust contract。模型名会 trim，Prompt 保留调用方原文；请求前拒绝空模型/Prompt。网络错误、408/409/429、5xx、非 content-filter incomplete、缺失输出、非法 JSON 和契约错误可在上限内重试，其他 4xx、refusal 与 content filter 立即停止。
-- Rust R4b `UreqStructuredOutputTransport` 复用 `ureq` `3.3.0` 的同步 Agent、rustls、JSON、timeout 和环境 proxy；`LlmHttpTransportConfig` 管理非密钥 timeout/proxy mode，API Key 只保存在私有字段并在 `Debug`/错误中脱敏。loopback mock server 覆盖 POST body、Bearer header、200、401、429、500、非法 JSON 和 timeout；该 transport 仍未接入生产 Agent、UI 或 SQLite。
-- Rust R4c `AgentHarness` 是 transport-independent 的工作区草稿：复用 `async-openai` wire 类型和现有严格工具契约，提供 Responses/Chat 两种六工具 allow-list 循环、工具错误回传、memory context 分层和最大工具轮数。它仍使用注入式 `AgentToolExecutor`，不负责 service/store 接线、完整 turn 事务或审计；生产前还需补齐 redirect、资源上限、幂等、wire 状态和 tool metadata 单一来源。
+- Rust R4b `UreqStructuredOutputTransport` 复用 `ureq` `3.3.0` 的同步 Agent、rustls、JSON、timeout 和环境 proxy；`LlmHttpTransportConfig` 管理非密钥 timeout/proxy mode，API Key 只保存在私有字段并在 `Debug`/错误中脱敏。loopback mock server 覆盖 POST body、Bearer header、200、401、429、500、非法 JSON 和 timeout；server `main.rs` 从环境变量构造真实 transport。
+- Rust R4c `AgentHarness` 是 transport-independent 的有界工具循环：复用 `async-openai` wire 类型和现有严格工具契约，提供 Responses/Chat 两种六工具 allow-list 循环、工具错误回传、memory context 分层、轮数/调用数/参数/输出/历史大小上限和重复 call ID 拒绝。`CanonicalAgentToolExecutor` 已接入 `CanonicalService`，`CanonicalRuntime` 负责 turn 级聊天持久化；正式对外部署仍需补齐 redirect、请求幂等和工具副作用失败恢复。
 
 MVP 不自动创建 `inbox` 兜底，因为它会把“不确定”误解为“已归档”。
 

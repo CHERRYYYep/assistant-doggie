@@ -14,6 +14,14 @@ pub const ARCHIVE_MEMORY_TOOL: &str = "archive_memory";
 pub const SAVE_TO_EXISTING_BUCKET_TOOL: &str = "save_to_existing_bucket";
 pub const CREATE_BUCKET_AND_SAVE_TOOL: &str = "create_bucket_and_save";
 
+/// Input bounds applied before a model-generated tool call reaches a service.
+/// The service layer still validates its own domain limits; these bounds keep
+/// malformed model output from consuming unbounded memory or SQLite work.
+pub const MAX_AGENT_QUERY_CHARS: usize = 500;
+pub const MAX_AGENT_BUCKET_ID_CHARS: usize = 200;
+pub const MAX_AGENT_TEXT_CHARS: usize = 16_000;
+pub const MAX_AGENT_TITLE_CHARS: usize = 200;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentToolParameterKind {
     String,
@@ -239,34 +247,69 @@ impl AgentToolArguments {
             SEARCH_MEMORY_TOOL => {
                 let input: QueryArguments = serde_json::from_value(value)?;
                 Ok(Self::SearchMemory {
-                    query: trim(input.query),
+                    query: required_tool_text(
+                        SEARCH_MEMORY_TOOL,
+                        "query",
+                        input.query,
+                        MAX_AGENT_QUERY_CHARS,
+                    )?,
                 })
             }
             GET_BUCKET_DETAIL_TOOL => {
                 let input: BucketIdArguments = serde_json::from_value(value)?;
                 Ok(Self::GetBucketDetail {
-                    bucket_id: trim(input.bucket_id),
+                    bucket_id: required_tool_text(
+                        GET_BUCKET_DETAIL_TOOL,
+                        "bucket_id",
+                        input.bucket_id,
+                        MAX_AGENT_BUCKET_ID_CHARS,
+                    )?,
                 })
             }
             ARCHIVE_MEMORY_TOOL => {
                 let input: TextArguments = serde_json::from_value(value)?;
                 Ok(Self::ArchiveMemory {
-                    text: trim(input.text),
+                    text: required_tool_text(
+                        ARCHIVE_MEMORY_TOOL,
+                        "text",
+                        input.text,
+                        MAX_AGENT_TEXT_CHARS,
+                    )?,
                 })
             }
             SAVE_TO_EXISTING_BUCKET_TOOL => {
                 let input: ExistingBucketArguments = serde_json::from_value(value)?;
                 Ok(Self::SaveToExistingBucket {
-                    bucket_id: trim(input.bucket_id),
-                    text: trim(input.text),
+                    bucket_id: required_tool_text(
+                        SAVE_TO_EXISTING_BUCKET_TOOL,
+                        "bucket_id",
+                        input.bucket_id,
+                        MAX_AGENT_BUCKET_ID_CHARS,
+                    )?,
+                    text: required_tool_text(
+                        SAVE_TO_EXISTING_BUCKET_TOOL,
+                        "text",
+                        input.text,
+                        MAX_AGENT_TEXT_CHARS,
+                    )?,
                 })
             }
             CREATE_BUCKET_AND_SAVE_TOOL => {
                 let input: NewBucketArguments = serde_json::from_value(value)?;
                 Ok(Self::CreateBucketAndSave {
-                    title: trim(input.title),
+                    title: required_tool_text(
+                        CREATE_BUCKET_AND_SAVE_TOOL,
+                        "title",
+                        input.title,
+                        MAX_AGENT_TITLE_CHARS,
+                    )?,
                     bucket_type: bucket_type(&input.bucket_type)?,
-                    text: trim(input.text),
+                    text: required_tool_text(
+                        CREATE_BUCKET_AND_SAVE_TOOL,
+                        "text",
+                        input.text,
+                        MAX_AGENT_TEXT_CHARS,
+                    )?,
                 })
             }
             name => Err(ContractError::UnknownTool(name.to_owned())),
@@ -306,6 +349,30 @@ impl AgentToolArguments {
             }),
         }
     }
+}
+
+fn required_tool_text(
+    tool: &'static str,
+    field: &'static str,
+    value: String,
+    max_chars: usize,
+) -> Result<String, ContractError> {
+    let value = trim(value);
+    if value.is_empty() {
+        return Err(ContractError::InvalidToolArgument {
+            tool,
+            field,
+            reason: "must not be empty after trimming",
+        });
+    }
+    if value.chars().count() > max_chars {
+        return Err(ContractError::InvalidToolArgument {
+            tool,
+            field,
+            reason: "exceeds the maximum length",
+        });
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

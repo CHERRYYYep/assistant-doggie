@@ -17,4 +17,10 @@ pub enum ContractError {
     InvalidDetails,
     #[error("unknown tool: {0}")]
     UnknownTool(String),
+    #[error("invalid argument for {tool}.{field}: {reason}")]
+    InvalidToolArgument {
+        tool: &'static str,
+        field: &'static str,
+        reason: &'static str,
+    },
 }

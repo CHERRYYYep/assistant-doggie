@@ -1820,6 +1820,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "work-memory-runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "work-memory-agent",
+ "work-memory-contracts",
+ "work-memory-core",
+ "work-memory-service",
+ "work-memory-store",
+]
+
+[[package]]
+name = "work-memory-server"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "work-memory-agent",
+ "work-memory-core",
+ "work-memory-runtime",
+ "work-memory-service",
+ "work-memory-store",
+]
+
+[[package]]
 name = "work-memory-service"
 version = "0.1.0"
 dependencies = [

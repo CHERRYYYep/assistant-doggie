@@ -1,7 +1,7 @@
 # SQLite 迁移、备份与恢复
 
 > 状态日期：2026-08-06
-> 当前实现：旧 Python Schema 兼容管理与 Rust canonical SQLite 一次性语义导入均已实现；应用运行时尚未完成 Rust cutover。
+> 当前实现：旧 Python Schema 兼容管理、Rust canonical SQLite 一次性语义导入、CanonicalRuntime 和 work-memory-server 均已实现；现有部署仍需完成 operational cutover。
 
 ## 1. 两条不同的存储路径
 
@@ -190,4 +190,4 @@ Rust 测试在系统临时目录覆盖：
 - Python fixture 的完整语义导入、固定 ID/count、四类 legacy memory 映射、Timeline 时间表达式、审计/聊天 JSON、非空 target 拒绝和导入失败回滚；
 - legacy `inspect`/`migrate`/`restore` 的 Schema、备份、外键、WAL、未来版本和失败恢复边界。
 
-普通测试不调用真实 LLM，也不读取仓库根目录的 `work_memory.db`。canonical import 完成后仍需要后续阶段把 Rust Agent、service、UI 接到 canonical DB；在那之前，生产运行路径和写入所有权的切换仍是独立的 cutover 任务。
+普通测试不调用真实 LLM，也不读取仓库根目录的 `work_memory.db`。Rust Agent、service、UI 已接到 Rust canonical DB；现有 Python 部署仍需完成 source 备份/冻结、`import-legacy`、counts/内容核验、配置切换和健康检查，生产运行路径与写入所有权的切换仍是独立的 operational cutover 任务。

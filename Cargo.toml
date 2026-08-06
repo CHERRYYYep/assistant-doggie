@@ -5,6 +5,8 @@ members = [
     "rust/work-memory-store",
     "rust/work-memory-service",
     "rust/work-memory-agent",
+    "rust/work-memory-runtime",
+    "rust/work-memory-server",
 ]
 resolver = "3"
 
