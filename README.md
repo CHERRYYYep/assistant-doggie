@@ -27,11 +27,10 @@
 ```bash
 cp .env.example .env
 # 编辑 .env，至少填写 OPENAI_API_KEY 和 OPENAI_MODEL
-set -a; source .env; set +a
 cargo run -p work-memory-server
 ```
 
-服务启动后打开 `http://127.0.0.1:8787/`。`.env` 不会被程序自动加载；也可以直接在 shell 中导出变量。
+服务启动后打开 `http://127.0.0.1:8787/`。程序会自动读取当前工作目录下的 `.env`；如果同时设置了 shell 环境变量，shell 环境变量优先。
 
 检查代码与测试：
 

@@ -1,4 +1,8 @@
+use std::collections::BTreeMap;
 use std::env;
+use std::fs;
+use std::io;
+use std::path::Path;
 use std::time::Duration;
 
 use work_memory_agent::{
@@ -14,23 +18,24 @@ use work_memory_server::{DEFAULT_BIND_ADDRESS, Server, serve};
 use work_memory_service::CanonicalService;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let database =
-        env::var("RUST_DATABASE_PATH").unwrap_or_else(|_| "rust-work-memory.db".to_owned());
-    let address =
-        env::var("RUST_SERVER_ADDRESS").unwrap_or_else(|_| DEFAULT_BIND_ADDRESS.to_owned());
-    let model_name = env::var("OPENAI_MODEL").map_err(|_| "OPENAI_MODEL is not configured")?;
-    let site = env::var("OPENAI_SITE").ok();
-    let base_url = env::var("OPENAI_BASE_URL").ok();
-    let api_mode = env::var("OPENAI_API_MODE").ok();
+    let dotenv = load_dotenv(".env")?;
+    let database = optional_config("RUST_DATABASE_PATH", &dotenv)
+        .unwrap_or_else(|| "rust-work-memory.db".to_owned());
+    let address = optional_config("RUST_SERVER_ADDRESS", &dotenv)
+        .unwrap_or_else(|| DEFAULT_BIND_ADDRESS.to_owned());
+    let model_name = required_config("OPENAI_MODEL", &dotenv)?;
+    let site = optional_config("OPENAI_SITE", &dotenv);
+    let base_url = optional_config("OPENAI_BASE_URL", &dotenv);
+    let api_mode = optional_config("OPENAI_API_MODE", &dotenv);
     let endpoint =
         LlmEndpointConfig::resolve(site.as_deref(), base_url.as_deref(), api_mode.as_deref())?;
     let transport_config = LlmHttpTransportConfig::new(Duration::from_secs(
-        env::var("OPENAI_TIMEOUT_SECONDS")
-            .ok()
+        optional_config("OPENAI_TIMEOUT_SECONDS", &dotenv)
             .and_then(|value| value.parse().ok())
             .unwrap_or(30),
     ))?;
-    let model_transport = UreqStructuredOutputTransport::from_env(transport_config)?;
+    let api_key = required_config("OPENAI_API_KEY", &dotenv)?;
+    let model_transport = UreqStructuredOutputTransport::new(api_key, transport_config)?;
     let model = StructuredMemoryModel::new(
         StructuredOutputAdapter::new(endpoint, model_transport),
         &model_name,
@@ -49,4 +54,91 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("work-memory-server listening on {address}");
     serve(address, server)?;
     Ok(())
+}
+
+fn required_config(key: &str, dotenv: &BTreeMap<String, String>) -> Result<String, io::Error> {
+    optional_config(key, dotenv).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{key} is not configured; set it in the environment or .env"),
+        )
+    })
+}
+
+fn optional_config(key: &str, dotenv: &BTreeMap<String, String>) -> Option<String> {
+    env::var(key)
+        .ok()
+        .or_else(|| dotenv.get(key).cloned())
+        .and_then(|value| {
+            let value = value.trim();
+            (!value.is_empty()).then(|| value.to_owned())
+        })
+}
+
+fn load_dotenv(path: impl AsRef<Path>) -> Result<BTreeMap<String, String>, io::Error> {
+    let path = path.as_ref();
+    let contents = match fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
+        Err(error) => return Err(error),
+    };
+    parse_dotenv(&contents, path.display().to_string())
+}
+
+fn parse_dotenv(contents: &str, source: String) -> Result<BTreeMap<String, String>, io::Error> {
+    let mut values = BTreeMap::new();
+    for (line_number, raw_line) in contents.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((raw_key, raw_value)) = line.split_once('=') else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{source}:{} must use KEY=VALUE syntax", line_number + 1),
+            ));
+        };
+        let key = raw_key.trim();
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{source}:{} has an invalid variable name", line_number + 1),
+            ));
+        }
+        values.insert(key.to_owned(), parse_dotenv_value(raw_value.trim()));
+    }
+    Ok(values)
+}
+
+fn parse_dotenv_value(value: &str) -> String {
+    if value.len() >= 2 {
+        let first = value.as_bytes()[0];
+        let last = value.as_bytes()[value.len() - 1];
+        if (first == b'\'' && last == b'\'') || (first == b'"' && last == b'"') {
+            return value[1..value.len() - 1].to_owned();
+        }
+    }
+    value.to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_dotenv;
+
+    #[test]
+    fn dotenv_parser_supports_comments_exports_and_quotes() {
+        let values = parse_dotenv(
+            "# comment\nexport OPENAI_MODEL=smoke-model\nOPENAI_API_KEY='secret'\n",
+            ".env".to_owned(),
+        )
+        .expect("dotenv values");
+
+        assert_eq!(values["OPENAI_MODEL"], "smoke-model");
+        assert_eq!(values["OPENAI_API_KEY"], "secret");
+    }
 }
