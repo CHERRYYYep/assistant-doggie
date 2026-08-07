@@ -4,7 +4,8 @@ use serde_json::json;
 use support::TemporaryPath;
 use work_memory_contracts::ChatRole;
 use work_memory_core::{
-    BucketStatus, BucketType, ClassificationResult, ExtractionResult, TimelineEventExtract,
+    BucketStatus, BucketType, ClassificationAction, ClassificationResult, ExtractionResult,
+    TimelineEventExtract,
 };
 use work_memory_store::{MemoryKind, RustArchiveAudit, RustStore, StoreError};
 
@@ -315,4 +316,128 @@ fn canonical_archive_supports_append_confirmation_chat_and_move_correction() {
         == Some(original_entry_id.as_str())
         && attempt.corrected
         && attempt.archive_state == "corrected"));
+}
+
+#[test]
+fn moving_only_entry_out_of_auto_created_bucket_removes_empty_source_bucket() {
+    let database = TemporaryPath::new("canonical-move-removes-empty-source");
+    let mut store = RustStore::initialize(database.path()).expect("canonical schema");
+    let audit = RustArchiveAudit::new(vec![], None, "rust-v1", "test-model").expect("audit");
+
+    let intended = store
+        .archive(
+            "Bucket 1 seed note.",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "bucket1",
+                0.99,
+                "seed bucket",
+                vec![],
+            )
+            .expect("classification"),
+            Some(ExtractionResult::minimal("Bucket 1 summary").expect("extraction")),
+            audit.clone(),
+        )
+        .expect("intended archive");
+    let intended_bucket_id = intended.bucket_id.expect("intended bucket");
+
+    let misplaced = store
+        .archive(
+            "This entry should have gone to bucket1.",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "bucket2",
+                0.99,
+                "mistaken new bucket",
+                vec![],
+            )
+            .expect("classification"),
+            Some(
+                ExtractionResult::new(
+                    "Misplaced summary",
+                    vec!["Move this follow-up to bucket1.".to_owned()],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec!["bucket1".to_owned()],
+                )
+                .expect("extraction"),
+            ),
+            audit,
+        )
+        .expect("misplaced archive");
+    let mistaken_bucket_id = misplaced.bucket_id.expect("mistaken bucket");
+    let misplaced_entry_id = misplaced.entry_id.expect("misplaced entry");
+    assert!(
+        store
+            .get_bucket(&mistaken_bucket_id)
+            .expect("bucket2 lookup")
+            .is_some()
+    );
+
+    let moved = store
+        .move_entry(
+            &misplaced_entry_id,
+            &intended_bucket_id,
+            "Move entry to bucket1.",
+        )
+        .expect("move misplaced entry");
+    assert_eq!(moved.bucket_id, intended_bucket_id);
+    assert_eq!(
+        moved.moved_from_bucket_id.as_deref(),
+        Some(mistaken_bucket_id.as_str())
+    );
+
+    assert!(
+        store
+            .get_bucket(&mistaken_bucket_id)
+            .expect("mistaken bucket lookup")
+            .is_none(),
+        "the auto-created empty source bucket should be removed after correction"
+    );
+    let intended_detail = store
+        .bucket_detail(&intended_bucket_id)
+        .expect("intended detail")
+        .expect("intended bucket remains");
+    assert_eq!(intended_detail.entries.len(), 2);
+    assert!(
+        intended_detail
+            .entries
+            .iter()
+            .any(|entry| entry.id == misplaced_entry_id)
+    );
+    assert!(
+        intended_detail
+            .memories
+            .iter()
+            .any(|item| item.entry_id.as_deref() == Some(misplaced_entry_id.as_str()))
+    );
+    let active_bucket_ids = store
+        .list_active_buckets(10)
+        .expect("active buckets")
+        .into_iter()
+        .map(|bucket| bucket.id)
+        .collect::<Vec<_>>();
+    assert_eq!(active_bucket_ids, vec![intended_bucket_id.clone()]);
+
+    let attempts = store.list_archive_attempts(10).expect("archive attempts");
+    let corrected_misplaced_attempt = attempts
+        .iter()
+        .find(|attempt| {
+            attempt.entry_id.as_deref() == Some(misplaced_entry_id.as_str())
+                && attempt.action == ClassificationAction::CreateNew
+        })
+        .expect("misplaced create attempt");
+    assert!(corrected_misplaced_attempt.corrected);
+    assert_eq!(corrected_misplaced_attempt.archive_state, "corrected");
+    assert!(
+        corrected_misplaced_attempt.bucket_id.is_none(),
+        "deleting the mistaken bucket should clear the attempt's foreign-key bucket link"
+    );
+
+    let counts = store.counts().expect("counts");
+    assert_eq!(counts.buckets, 1);
+    assert_eq!(counts.entries, 2);
 }

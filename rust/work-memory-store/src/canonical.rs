@@ -766,15 +766,24 @@ impl RustStore {
         )?;
         transaction.execute(
             "UPDATE buckets SET updated_at = ?1, last_active_at = ?1
-             WHERE id IN (?2, ?3)",
-            params![timestamp, old_bucket_id, target_bucket_id],
+             WHERE id = ?2",
+            params![timestamp, target_bucket_id],
         )?;
-        rebuild_bucket_summary(
-            &transaction,
-            &old_bucket_id,
-            DEFAULT_REBUILD_ENTRY_LIMIT,
-            DEFAULT_BUCKET_SUMMARY_LIMIT as i64,
-        )?;
+        if source_bucket_should_be_removed_after_move(&transaction, &old_bucket_id, entry_id)? {
+            delete_empty_source_bucket(&transaction, &old_bucket_id)?;
+        } else {
+            transaction.execute(
+                "UPDATE buckets SET updated_at = ?1, last_active_at = ?1
+                 WHERE id = ?2",
+                params![timestamp, old_bucket_id],
+            )?;
+            rebuild_bucket_summary(
+                &transaction,
+                &old_bucket_id,
+                DEFAULT_REBUILD_ENTRY_LIMIT,
+                DEFAULT_BUCKET_SUMMARY_LIMIT as i64,
+            )?;
+        }
         rebuild_bucket_summary(
             &transaction,
             target_bucket_id,
@@ -1229,6 +1238,50 @@ fn ensure_bucket(transaction: &Transaction<'_>, bucket_id: &str) -> Result<(), S
         Err(StoreError::MissingRecord {
             table: "buckets",
             id: bucket_id.to_owned(),
+        })
+    }
+}
+
+fn source_bucket_should_be_removed_after_move(
+    transaction: &Transaction<'_>,
+    source_bucket_id: &str,
+    moved_entry_id: &str,
+) -> Result<bool, StoreError> {
+    let source_was_created_for_entry: bool = transaction.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM archive_attempts
+             WHERE action = 'create_new'
+               AND bucket_id = ?1
+               AND entry_id = ?2
+         )",
+        params![source_bucket_id, moved_entry_id],
+        |row| row.get(0),
+    )?;
+    if !source_was_created_for_entry {
+        return Ok(false);
+    }
+
+    let remaining_bucket_records: i64 = transaction.query_row(
+        "SELECT
+             (SELECT COUNT(*) FROM entries WHERE bucket_id = ?1)
+           + (SELECT COUNT(*) FROM memory_items WHERE bucket_id = ?1)",
+        [source_bucket_id],
+        |row| row.get(0),
+    )?;
+    Ok(remaining_bucket_records == 0)
+}
+
+fn delete_empty_source_bucket(
+    transaction: &Transaction<'_>,
+    source_bucket_id: &str,
+) -> Result<(), StoreError> {
+    let deleted = transaction.execute("DELETE FROM buckets WHERE id = ?1", [source_bucket_id])?;
+    if deleted == 1 {
+        Ok(())
+    } else {
+        Err(StoreError::MissingRecord {
+            table: "buckets",
+            id: source_bucket_id.to_owned(),
         })
     }
 }
