@@ -1,4 +1,4 @@
-//! SQLite compatibility, inspection, and offline migration safety for the Python-owned schema.
+//! SQLite compatibility, inspection, and offline migration safety for the legacy-owned schema.
 
 use std::path::PathBuf;
 use thiserror::Error;

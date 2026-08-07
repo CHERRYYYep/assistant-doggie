@@ -19,7 +19,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Inspect the legacy Python-compatible database.
+    /// Inspect the legacy-compatible database.
     Inspect {
         database: PathBuf,
     },
@@ -27,9 +27,9 @@ enum Command {
     Init {
         rust_db: PathBuf,
     },
-    /// Import semantic memory from a legacy Python database into a new Rust database.
+    /// Import semantic memory from a legacy database into a new Rust database.
     ImportLegacy {
-        python_db: PathBuf,
+        legacy_db: PathBuf,
         rust_db: PathBuf,
     },
     /// Validate and inspect a Rust-owned canonical database.
@@ -75,11 +75,11 @@ fn run(command: Command) -> Result<(), AdminError> {
             let _store = RustStore::initialize(&rust_db)?;
             println!("initialized Rust canonical database: {}", rust_db.display());
         }
-        Command::ImportLegacy { python_db, rust_db } => {
-            let report = RustStore::import_legacy_database(&python_db, &rust_db)?;
+        Command::ImportLegacy { legacy_db, rust_db } => {
+            let report = RustStore::import_legacy_database(&legacy_db, &rust_db)?;
             println!(
                 "imported legacy database {} -> {}: buckets={} entries={} memory_items={} archive_attempts={} corrections={} chat_messages={}",
-                python_db.display(),
+                legacy_db.display(),
                 rust_db.display(),
                 report.buckets,
                 report.entries,
@@ -148,7 +148,7 @@ fn print_schema_info(info: &SchemaInfo) {
 
 fn state_label(state: SchemaState) -> String {
     match state {
-        SchemaState::LegacyPython => "legacy-python".to_owned(),
+        SchemaState::Legacy => "legacy".to_owned(),
         SchemaState::Versioned(version) => format!("version-{version}"),
     }
 }

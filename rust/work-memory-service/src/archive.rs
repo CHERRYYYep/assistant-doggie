@@ -8,7 +8,7 @@ use work_memory_store::{ArchiveWriteRequest, ClassificationAuditContext, Writabl
 
 use crate::ServiceError;
 
-/// Classification Prompt version currently persisted by the Python archive service.
+/// Classification Prompt version currently persisted by the legacy archive service.
 pub const CLASSIFICATION_PROMPT_VERSION: &str = "classification-v2";
 
 /// Product-level archive orchestration backed by one validated writable store.
@@ -22,7 +22,7 @@ pub struct ArchiveService {
 }
 
 impl ArchiveService {
-    /// Open an existing Python-compatible database for isolated Rust writes.
+    /// Open an existing legacy-compatible database for isolated Rust writes.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: WritableSqliteStore::open_existing(path)?,
@@ -68,7 +68,7 @@ impl ArchiveService {
 
     /// Persist an input after explicit confirmation of an existing Bucket.
     ///
-    /// As in Python, the confirmed target is also the sole server candidate and
+    /// As in legacy, the confirmed target is also the sole server candidate and
     /// current-focus Bucket in the classification audit. The extraction is
     /// supplied by the caller until the Rust LLM adapter is introduced.
     #[allow(clippy::too_many_arguments)]
@@ -100,7 +100,7 @@ impl ArchiveService {
 
     /// Create and archive into a new Bucket after explicit user confirmation.
     ///
-    /// The audit has no candidate or current-focus Bucket, matching the Python
+    /// The audit has no candidate or current-focus Bucket, matching the legacy
     /// confirmed-new entry point.
     #[allow(clippy::too_many_arguments)]
     pub fn archive_confirmed_new_input(

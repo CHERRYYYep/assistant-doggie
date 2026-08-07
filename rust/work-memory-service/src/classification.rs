@@ -35,7 +35,7 @@ pub struct ClassificationAuditService {
 }
 
 impl ClassificationAuditService {
-    /// Open an existing Python-compatible database for isolated Rust writes.
+    /// Open an existing legacy-compatible database for isolated Rust writes.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: WritableSqliteStore::open_existing(path)?,

@@ -10,7 +10,7 @@ use crate::ServiceError;
 
 /// Product-level standalone Bucket and Entry mutations.
 ///
-/// This service exposes the Python-compatible CRUD boundary without leaking the
+/// This service exposes the legacy-compatible CRUD boundary without leaking the
 /// writable SQLite store or its request types. Archive and correction remain
 /// separate orchestrators because they own larger aggregate transactions.
 pub struct MemoryMutationService {
@@ -18,7 +18,7 @@ pub struct MemoryMutationService {
 }
 
 impl MemoryMutationService {
-    /// Open an existing Python-compatible database for isolated Rust writes.
+    /// Open an existing legacy-compatible database for isolated Rust writes.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: WritableSqliteStore::open_existing(path)?,

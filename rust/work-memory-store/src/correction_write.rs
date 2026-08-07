@@ -70,7 +70,7 @@ impl MoveLatestEntryRequest {
 
     /// Select the latest Entry and resolve its target by a title fragment.
     ///
-    /// Resolution preserves Python's literal `contains(..., autoescape=True)`
+    /// Resolution preserves legacy's literal `contains(..., autoescape=True)`
     /// query followed by exact-title preference and unique fuzzy fallback.
     pub fn for_bucket_title_contains(
         target_title: impl Into<String>,

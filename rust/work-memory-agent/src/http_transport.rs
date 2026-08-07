@@ -169,7 +169,7 @@ fn map_ureq_error(error: ureq::Error) -> LlmTransportError {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn ureq_handles_python_socks_alias_without_environment_mutation() {
+    fn ureq_handles_legacy_socks_alias_without_environment_mutation() {
         let proxy = ureq::Proxy::new("socks://127.0.0.1:1080").expect("valid SOCKS proxy");
         assert_eq!(proxy.protocol(), ureq::ProxyProtocol::Socks5);
     }

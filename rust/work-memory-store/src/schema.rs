@@ -260,7 +260,7 @@ const CLASSIFICATION_RECORD_FOREIGN_KEYS: &[ForeignKeySpec] = &[ForeignKeySpec {
     on_delete: "SET NULL",
 }];
 
-const PYTHON_TABLES: &[TableSpec] = &[
+const LEGACY_TABLES: &[TableSpec] = &[
     TableSpec {
         name: "buckets",
         columns: REQUIRED_BUCKET_COLUMNS,
@@ -360,14 +360,14 @@ pub(crate) fn validate_table_columns(
 }
 
 pub(crate) fn validate_repository_schema(connection: &Connection) -> Result<(), StoreError> {
-    for table in PYTHON_TABLES {
+    for table in LEGACY_TABLES {
         validate_table_columns(connection, table.name, table.columns)?;
     }
     Ok(())
 }
 
-pub(crate) fn validate_full_python_schema(connection: &Connection) -> Result<(), StoreError> {
-    for table in PYTHON_TABLES {
+pub(crate) fn validate_full_legacy_schema(connection: &Connection) -> Result<(), StoreError> {
+    for table in LEGACY_TABLES {
         validate_table_columns(connection, table.name, table.columns)?;
         validate_primary_key(connection, table)?;
         for index in table.indexes {

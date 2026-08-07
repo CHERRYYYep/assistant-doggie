@@ -1,16 +1,3 @@
-# Python bytecode and caches
-__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Virtual environments
-.venv/
-venv/
-my_own_agent/
-
 # Environment and secrets
 .env
 .env.*
@@ -22,22 +9,14 @@ my_own_agent/
 *.sqlite3
 work_memory.db
 
-# Tests and coverage
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
+# Rust build output
+/target/
 
-# Build and packaging
-build/
-dist/
-*.egg-info/
-
-# Application runtime
+# Application runtime output
 *.log
-.streamlit/secrets.toml
-classification-live-report.json
-extraction-live-report.json
+
+# Coverage and reports
+coverage/
 
 # OS and editors
 .DS_Store
@@ -45,5 +24,9 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Rust build output
-/target/
+# Python tooling/cache kept out of the Rust-only branch
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/

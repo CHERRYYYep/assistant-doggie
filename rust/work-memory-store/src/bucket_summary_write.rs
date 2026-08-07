@@ -9,7 +9,7 @@ use crate::{StoreError, WritableSqliteStore};
 
 pub(crate) const DEFAULT_REBUILD_ENTRY_LIMIT: i64 = 8;
 
-/// A validated request for the standalone Python-compatible Bucket summary update path.
+/// A validated request for the standalone legacy-compatible Bucket summary update path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpdateBucketSummaryRequest {
     bucket_id: String,
@@ -17,7 +17,7 @@ pub struct UpdateBucketSummaryRequest {
     max_chars: usize,
 }
 
-/// A validated request for the standalone Python-compatible Bucket summary rebuild path.
+/// A validated request for the standalone legacy-compatible Bucket summary rebuild path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RebuildBucketSummaryRequest {
     bucket_id: String,
@@ -26,7 +26,7 @@ pub struct RebuildBucketSummaryRequest {
 }
 
 impl RebuildBucketSummaryRequest {
-    /// Build a request using Python's defaults of eight Entries and 1,200 characters.
+    /// Build a request using legacy's defaults of eight Entries and 1,200 characters.
     pub fn new(bucket_id: impl Into<String>) -> Result<Self, StoreError> {
         Self::with_limits(
             bucket_id,
@@ -35,7 +35,7 @@ impl RebuildBucketSummaryRequest {
         )
     }
 
-    /// Build a request with explicit Python-compatible Entry and character limits.
+    /// Build a request with explicit legacy-compatible Entry and character limits.
     pub fn with_limits(
         bucket_id: impl Into<String>,
         max_entries: i64,
@@ -69,7 +69,7 @@ impl RebuildBucketSummaryRequest {
 }
 
 impl UpdateBucketSummaryRequest {
-    /// Build a request using Python's default 1,200-character summary bound.
+    /// Build a request using legacy's default 1,200-character summary bound.
     pub fn new(
         bucket_id: impl Into<String>,
         entry_summary: impl Into<String>,
@@ -77,7 +77,7 @@ impl UpdateBucketSummaryRequest {
         Self::with_max_chars(bucket_id, entry_summary, DEFAULT_BUCKET_SUMMARY_LIMIT)
     }
 
-    /// Build a request with an explicit Python-compatible summary bound.
+    /// Build a request with an explicit legacy-compatible summary bound.
     pub fn with_max_chars(
         bucket_id: impl Into<String>,
         entry_summary: impl Into<String>,
@@ -125,7 +125,7 @@ impl WritableSqliteStore {
 
     /// Rebuild the Bucket summary cache from its newest surviving Entry summaries.
     ///
-    /// Selection, cleaning, exact deduplication, ordering, and Python slicing
+    /// Selection, cleaning, exact deduplication, ordering, and legacy slicing
     /// behavior match `rebuild_bucket_summary`; only `summary` and `updated_at`
     /// are changed.
     pub fn rebuild_bucket_summary(
@@ -225,11 +225,11 @@ pub(crate) fn truncate_summary(summary: String, max_chars: i64) -> String {
         return summary;
     }
 
-    let python_stop = max_chars.saturating_sub(1);
-    let retained = if python_stop >= 0 {
-        python_stop.min(character_count)
+    let slice_stop = max_chars.saturating_sub(1);
+    let retained = if slice_stop >= 0 {
+        slice_stop.min(character_count)
     } else {
-        character_count.saturating_add(python_stop).max(0)
+        character_count.saturating_add(slice_stop).max(0)
     };
     let mut truncated = summary
         .chars()

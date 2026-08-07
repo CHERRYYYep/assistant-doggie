@@ -707,7 +707,7 @@ mod tests {
     }
 
     #[test]
-    fn normalization_matches_python_casefold_and_whitespace_rules() {
+    fn normalization_matches_legacy_casefold_and_whitespace_rules() {
         assert_eq!(normalized_key("  Straße\tSTATUS  "), "strasse status");
         assert_eq!(normalized_key("ΟΣ  ος"), "οσ οσ");
         assert_eq!(

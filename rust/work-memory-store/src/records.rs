@@ -24,7 +24,7 @@ impl StoredTimestamp {
     /// Return the timestamp normalized to a timezone-free UTC value.
     ///
     /// SQLAlchemy's SQLite adapter omits the UTC offset. Such values are treated
-    /// as UTC because the Python application writes them with `utc_now()`.
+    /// as UTC because the legacy application writes them with `utc_now()`.
     pub const fn utc_naive(&self) -> &NaiveDateTime {
         &self.utc_naive
     }
@@ -58,7 +58,7 @@ impl Display for StoredTimestamp {
     }
 }
 
-/// Todo lifecycle values persisted by the Python implementation.
+/// Todo lifecycle values persisted by the legacy implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TodoStatus {
     Open,
@@ -82,7 +82,7 @@ impl Display for TodoStatus {
     }
 }
 
-/// A Bucket row decoded from the current Python-managed SQLite schema.
+/// A Bucket row decoded from the current legacy-managed SQLite schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredBucket {
     pub id: String,
@@ -96,7 +96,7 @@ pub struct StoredBucket {
     pub last_active_at: StoredTimestamp,
 }
 
-/// An immutable Entry row decoded from the current Python-managed schema.
+/// An immutable Entry row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredEntry {
     pub id: String,
@@ -110,7 +110,7 @@ pub struct StoredEntry {
     pub moved_from_bucket_id: Option<String>,
 }
 
-/// A Todo row decoded from the current Python-managed schema.
+/// A Todo row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredTodo {
     pub id: String,
@@ -123,7 +123,7 @@ pub struct StoredTodo {
     pub updated_at: StoredTimestamp,
 }
 
-/// An Evidence row decoded from the current Python-managed schema.
+/// An Evidence row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredEvidence {
     pub id: String,
@@ -134,7 +134,7 @@ pub struct StoredEvidence {
     pub created_at: StoredTimestamp,
 }
 
-/// A TimelineEvent row decoded from the current Python-managed schema.
+/// A TimelineEvent row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredTimelineEvent {
     pub id: String,
@@ -145,7 +145,7 @@ pub struct StoredTimelineEvent {
     pub created_at: StoredTimestamp,
 }
 
-/// A Decision row decoded from the current Python-managed schema.
+/// A Decision row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredDecision {
     pub id: String,
@@ -156,7 +156,7 @@ pub struct StoredDecision {
     pub created_at: StoredTimestamp,
 }
 
-/// A ClassificationRecord row decoded from the current Python-managed schema.
+/// A ClassificationRecord row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredClassificationRecord {
     pub id: String,
@@ -174,7 +174,7 @@ pub struct StoredClassificationRecord {
     pub created_at: StoredTimestamp,
 }
 
-/// A Correction audit row decoded from the current Python-managed schema.
+/// A Correction audit row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredCorrection {
     pub id: String,
@@ -187,7 +187,7 @@ pub struct StoredCorrection {
     pub created_at: StoredTimestamp,
 }
 
-/// A ChatMessage row decoded from the current Python-managed schema.
+/// A ChatMessage row decoded from the current legacy-managed schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoredChatMessage {
     pub id: String,

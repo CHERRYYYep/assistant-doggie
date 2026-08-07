@@ -124,7 +124,7 @@ impl DeleteEntryOutcome {
 }
 
 impl WritableSqliteStore {
-    /// Delete one Bucket aggregate through the Python-managed foreign-key rules.
+    /// Delete one Bucket aggregate through the legacy-managed foreign-key rules.
     ///
     /// Entries and Bucket-owned extracted rows cascade away, while linked
     /// ClassificationRecord `entry_id` values are set to null. Cross-Bucket

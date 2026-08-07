@@ -82,7 +82,7 @@ pub struct CorrectionService {
 }
 
 impl CorrectionService {
-    /// Open an existing Python-compatible database for isolated Rust writes.
+    /// Open an existing legacy-compatible database for isolated Rust writes.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: WritableSqliteStore::open_existing(path)?,
@@ -109,7 +109,7 @@ impl CorrectionService {
 
     /// Move the latest Entry, resolving the destination from an explicit ID or command text.
     ///
-    /// When no target ID is supplied, this preserves the Python MVP's supported
+    /// When no target ID is supplied, this preserves the legacy MVP's supported
     /// Chinese command form and uses the final `移到`/`放到` destination. Latest
     /// Entry selection, title resolution, and the aggregate write remain in one
     /// store transaction.

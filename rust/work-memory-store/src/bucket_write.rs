@@ -5,7 +5,7 @@ use crate::archive_write::{current_timestamp, new_uuid_v4, required_text, serial
 use crate::records::decode_bucket;
 use crate::{StoreError, StoredBucket, WritableSqliteStore};
 
-/// A validated request for the standalone Python-compatible Bucket create path.
+/// A validated request for the standalone legacy-compatible Bucket create path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateBucketRequest {
     title: String,
@@ -49,7 +49,7 @@ impl CreateBucketRequest {
 impl WritableSqliteStore {
     /// Create one active Bucket without adding Entries or audit rows.
     ///
-    /// Text and tag normalization matches Python `create_bucket`, while ID and
+    /// Text and tag normalization matches legacy `create_bucket`, while ID and
     /// timestamps are generated inside the existing isolated write transaction.
     pub fn create_bucket(
         &mut self,

@@ -9,8 +9,7 @@ use work_memory_contracts::{
 };
 
 fn fixture() -> Value {
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/contract_cases.json");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/contract_cases.json");
     let json = fs::read_to_string(path).expect("shared contract fixture should be readable");
     serde_json::from_str(&json).expect("shared contract fixture should be valid JSON")
 }
@@ -55,7 +54,7 @@ fn normalized(contract: &str, case: &Value) -> Result<Value, String> {
 }
 
 #[test]
-fn valid_cases_match_python_normalization() {
+fn valid_cases_match_contract_normalization() {
     let fixture = fixture();
     let suites = fixture
         .as_object()

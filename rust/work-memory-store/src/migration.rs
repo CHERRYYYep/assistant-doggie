@@ -5,19 +5,19 @@ use std::time::Duration;
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
-use crate::schema::{self, validate_full_python_schema, validate_integrity};
+use crate::schema::{self, validate_full_legacy_schema, validate_integrity};
 use crate::{StoreError, StoredTimestamp};
 
 pub const LATEST_SCHEMA_VERSION: u32 = 1;
 const MIGRATION_TABLE: &str = "schema_migrations";
 const MIGRATION_COLUMNS: &[&str] = &["version", "name", "applied_at"];
-const BASELINE_MIGRATION_NAME: &str = "adopt_python_schema_v1";
+const BASELINE_MIGRATION_NAME: &str = "adopt_python_schema_v1"; // Historical migration identifier retained for legacy database compatibility.
 
 /// The recognized persistence state of a database.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SchemaState {
-    /// The nine-table Python SQLAlchemy schema without migration history.
-    LegacyPython,
+    /// The nine-table legacy SQLAlchemy schema without migration history.
+    Legacy,
     /// A Rust-versioned schema at the recorded migration version.
     Versioned(u32),
 }
@@ -58,7 +58,7 @@ pub struct RestoreOutcome {
     pub safety_backup_path: PathBuf,
 }
 
-/// Inspect the full Python-compatible schema and any Rust migration history.
+/// Inspect the full legacy-compatible schema and any Rust migration history.
 pub fn inspect_database(path: impl AsRef<Path>) -> Result<SchemaInfo, StoreError> {
     let connection = open_read_only(path.as_ref())?;
     inspect_connection(&connection)
@@ -66,7 +66,7 @@ pub fn inspect_database(path: impl AsRef<Path>) -> Result<SchemaInfo, StoreError
 
 /// Apply all known migrations after making a consistent SQLite backup.
 ///
-/// A legacy Python database is adopted as version 1. Already-current databases
+/// A legacy database is adopted as version 1. Already-current databases
 /// are not changed and do not create a backup file.
 pub fn migrate_database(
     database_path: impl AsRef<Path>,
@@ -200,14 +200,14 @@ pub(crate) fn ensure_supported_history_if_present(
 
 fn inspect_connection(connection: &Connection) -> Result<SchemaInfo, StoreError> {
     let info = read_schema_info(connection)?;
-    validate_full_python_schema(connection)?;
+    validate_full_legacy_schema(connection)?;
     Ok(info)
 }
 
 fn read_schema_info(connection: &Connection) -> Result<SchemaInfo, StoreError> {
     if !schema::table_exists(connection, MIGRATION_TABLE)? {
         return Ok(SchemaInfo {
-            state: SchemaState::LegacyPython,
+            state: SchemaState::Legacy,
             migrations: Vec::new(),
         });
     }

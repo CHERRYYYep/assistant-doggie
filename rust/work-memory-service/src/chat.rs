@@ -9,7 +9,7 @@ use crate::ServiceError;
 
 /// Stable product projection for one committed ChatMessage.
 ///
-/// Python persists optional tool metadata exactly, then its `ChatMessageView`
+/// legacy persists optional tool metadata exactly, then its `ChatMessageView`
 /// trims string fields. This projection preserves that return-value behavior
 /// without changing the exact database values owned by the Store.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +76,7 @@ pub struct ChatMessagePersistenceService {
 }
 
 impl ChatMessagePersistenceService {
-    /// Open an existing Python-compatible database for isolated Rust writes.
+    /// Open an existing legacy-compatible database for isolated Rust writes.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: WritableSqliteStore::open_existing(path)?,

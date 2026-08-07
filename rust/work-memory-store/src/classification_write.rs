@@ -19,7 +19,7 @@ pub struct SaveClassificationRecordRequest {
 impl SaveClassificationRecordRequest {
     /// Build a standalone classification-audit write.
     ///
-    /// As in Python, only the raw input is trimmed here. Candidate IDs and
+    /// As in legacy, only the raw input is trimmed here. Candidate IDs and
     /// resolved server metadata are otherwise preserved exactly; callers own
     /// prompt/model resolution before crossing the store boundary.
     pub fn new(

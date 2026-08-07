@@ -12,7 +12,7 @@ use crate::{
     schema,
 };
 
-/// Read-only SQLite repository for the Python-managed business schema.
+/// Read-only SQLite repository for the legacy-managed business schema.
 pub struct SqliteStore {
     connection: Connection,
 }
@@ -44,7 +44,7 @@ impl SqliteStore {
         Ok(opened_read_only && query_only == 1)
     }
 
-    /// Return active Buckets using the same ordering and limit rules as Python.
+    /// Return active Buckets using the same ordering and limit rules as legacy.
     pub fn list_active_buckets(&self, limit: usize) -> Result<Vec<StoredBucket>, StoreError> {
         let sql_limit = checked_limit(limit)?;
         let mut statement = self.connection.prepare(
@@ -58,7 +58,7 @@ impl SqliteStore {
         collect_rows(&mut rows, decode_bucket)
     }
 
-    /// Return the bounded Bucket candidate set used by Python keyword search.
+    /// Return the bounded Bucket candidate set used by legacy keyword search.
     ///
     /// The caller owns query trimming and final relevance ranking. This method
     /// preserves SQLAlchemy's literal `contains(..., autoescape=True)` behavior
@@ -98,7 +98,7 @@ impl SqliteStore {
         decode_optional(&mut rows, decode_bucket)
     }
 
-    /// Return a Bucket's immutable Entries in the Python relationship order.
+    /// Return a Bucket's immutable Entries in the legacy relationship order.
     pub fn list_bucket_entries(&self, bucket_id: &str) -> Result<Vec<StoredEntry>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT id, bucket_id, raw_text, summary, content_type,
@@ -123,7 +123,7 @@ impl SqliteStore {
         decode_optional(&mut rows, decode_todo)
     }
 
-    /// Return a Bucket's Todos in the Python relationship order.
+    /// Return a Bucket's Todos in the legacy relationship order.
     pub fn list_bucket_todos(&self, bucket_id: &str) -> Result<Vec<StoredTodo>, StoreError> {
         let mut statement = self.connection.prepare(
             "SELECT id, bucket_id, entry_id, text, status, due_date, created_at, updated_at
@@ -146,7 +146,7 @@ impl SqliteStore {
         decode_optional(&mut rows, decode_evidence)
     }
 
-    /// Return a Bucket's Evidence rows in the Python relationship order.
+    /// Return a Bucket's Evidence rows in the legacy relationship order.
     pub fn list_bucket_evidences(
         &self,
         bucket_id: &str,
@@ -175,7 +175,7 @@ impl SqliteStore {
         decode_optional(&mut rows, decode_timeline_event)
     }
 
-    /// Return a Bucket's TimelineEvent rows in the Python relationship order.
+    /// Return a Bucket's TimelineEvent rows in the legacy relationship order.
     pub fn list_bucket_timeline_events(
         &self,
         bucket_id: &str,
@@ -201,7 +201,7 @@ impl SqliteStore {
         decode_optional(&mut rows, decode_decision)
     }
 
-    /// Return a Bucket's Decision rows in the Python relationship order.
+    /// Return a Bucket's Decision rows in the legacy relationship order.
     pub fn list_bucket_decisions(
         &self,
         bucket_id: &str,
@@ -297,7 +297,7 @@ impl SqliteStore {
 
     /// Return the newest bounded chat window in chronological display order.
     ///
-    /// This is equivalent to Python's descending query followed by reversing the
+    /// This is equivalent to legacy's descending query followed by reversing the
     /// bounded result, including its `created_at DESC, id DESC` tie-break rule.
     pub fn list_chat_messages(&self, limit: usize) -> Result<Vec<StoredChatMessage>, StoreError> {
         let sql_limit = checked_limit(limit)?;

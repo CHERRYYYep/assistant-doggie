@@ -1,7 +1,7 @@
 //! Strict JSON boundary contracts for the Work Memory Agent.
 //!
 //! The domain crate stays independent from serialization. This crate owns the
-//! migration boundary between JSON produced by Python/OpenAI and validated Rust
+//! migration boundary between JSON produced by legacy/OpenAI and validated Rust
 //! types, including unknown-field rejection and Pydantic-compatible trimming.
 
 mod agent;

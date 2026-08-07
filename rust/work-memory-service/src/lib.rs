@@ -32,7 +32,7 @@ pub use query::{
 };
 pub use summary::BucketSummaryService;
 
-/// A Bucket and all product-visible child records loaded by the Python detail service.
+/// A Bucket and all product-visible child records loaded by the legacy detail service.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BucketDetail {
     pub bucket: StoredBucket,
@@ -112,7 +112,7 @@ pub struct BucketQueryService {
 }
 
 impl BucketQueryService {
-    /// Open the existing Python-compatible database with read-only protection.
+    /// Open the existing legacy-compatible database with read-only protection.
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, ServiceError> {
         Ok(Self {
             store: SqliteStore::open_read_only(path)?,
@@ -124,7 +124,7 @@ impl BucketQueryService {
         Self { store }
     }
 
-    /// Return active Buckets using the Python service's ordering and limit rules.
+    /// Return active Buckets using the legacy service's ordering and limit rules.
     pub fn list_active_buckets(&self, limit: usize) -> Result<Vec<StoredBucket>, ServiceError> {
         Ok(self.store.list_active_buckets(limit)?)
     }
@@ -136,7 +136,7 @@ impl BucketQueryService {
 
     /// Search Bucket title, summary, serialized tags, and Entry raw text.
     ///
-    /// This preserves the Python service's trim/validation rules, bounded SQL
+    /// This preserves the legacy service's trim/validation rules, bounded SQL
     /// candidate window, Unicode case-folded scoring, stable relevance order,
     /// matched Entry count, and final result limit.
     pub fn search_buckets(
@@ -216,7 +216,7 @@ impl BucketQueryService {
 
     /// Load one Bucket and every product-visible child collection.
     ///
-    /// Child records retain the relationship ordering used by Python. A missing
+    /// Child records retain the relationship ordering used by legacy. A missing
     /// Bucket returns `None` without synthesizing an empty aggregate.
     pub fn get_bucket_detail(&self, bucket_id: &str) -> Result<Option<BucketDetail>, ServiceError> {
         let Some(bucket) = self.store.get_bucket(bucket_id)? else {

@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::CoreError;
 
-/// Long-lived work context categories, matching the current Python contract.
+/// Long-lived work context categories, matching the current legacy contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BucketType {
     Idea,
@@ -49,7 +49,7 @@ impl Display for BucketType {
     }
 }
 
-/// Bucket lifecycle values currently persisted by the Python implementation.
+/// Bucket lifecycle values currently persisted by the legacy implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BucketStatus {
     Active,

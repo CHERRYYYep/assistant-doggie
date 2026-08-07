@@ -1,6 +1,6 @@
 //! Canonical Rust-owned service facade.
 //!
-//! This module intentionally sits beside the legacy Python-schema services. It
+//! This module intentionally sits beside the legacy-schema services. It
 //! owns a [`RustStore`] and exposes the product read/write operations needed by
 //! the canonical runtime without changing the legacy service boundaries.
 

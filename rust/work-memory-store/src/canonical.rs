@@ -17,13 +17,13 @@ use crate::canonical_schema;
 use crate::{StoreError, StoredTimestamp};
 
 /// The Rust-owned persistence layer. It deliberately does not expose the
-/// Python SQLAlchemy schema as a writable compatibility target.
+/// legacy SQLAlchemy schema as a writable compatibility target.
 #[derive(Debug)]
 pub struct RustStore {
     connection: Connection,
 }
 
-/// Canonical structured-memory kinds. One table replaces Python's four child
+/// Canonical structured-memory kinds. One table replaces legacy's four child
 /// tables and also stores the additional extraction facts Rust supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryKind {
@@ -169,7 +169,7 @@ pub struct RustBucketDetail {
     pub memories: Vec<RustMemoryItem>,
 }
 
-/// Search projection. Rust owns the score and does not promise Python's exact
+/// Search projection. Rust owns the score and does not promise legacy's exact
 /// ranking or string-boundary behavior.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RustSearchHit {
@@ -352,7 +352,7 @@ impl RustStore {
         })
     }
 
-    /// Import the old Python database into a newly initialized Rust database.
+    /// Import the old legacy database into a newly initialized Rust database.
     /// The source is read-only and the target is the only file modified.
     pub fn import_legacy_database(
         source_path: impl AsRef<Path>,
@@ -605,7 +605,7 @@ impl RustStore {
 
     /// Persist an automatic archive or a confirmation-required attempt in one
     /// transaction. This is the canonical Rust behavior; it intentionally does
-    /// not mimic Python's table-by-table write sequence.
+    /// not mimic legacy's table-by-table write sequence.
     pub fn archive(
         &mut self,
         raw_text: impl Into<String>,

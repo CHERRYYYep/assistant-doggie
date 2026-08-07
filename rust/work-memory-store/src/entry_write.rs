@@ -4,7 +4,7 @@ use crate::archive_write::{current_timestamp, new_uuid_v4, required_text};
 use crate::records::decode_entry;
 use crate::{StoreError, StoredEntry, WritableSqliteStore};
 
-/// A validated request for the standalone Python-compatible Entry append path.
+/// A validated request for the standalone legacy-compatible Entry append path.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppendEntryRequest {
     bucket_id: String,
@@ -35,10 +35,10 @@ impl AppendEntryRequest {
         Ok(Self {
             bucket_id: bucket_id.into(),
             raw_text: required_text(raw_text.into(), "raw_text")?,
-            summary: python_optional_trim(summary),
+            summary: optional_trim(summary),
             content_type: required_text(content_type.into(), "content_type")?,
             classification_confidence,
-            classification_reason: python_optional_trim(classification_reason),
+            classification_reason: optional_trim(classification_reason),
         })
     }
 
@@ -70,7 +70,7 @@ impl AppendEntryRequest {
 impl WritableSqliteStore {
     /// Append one immutable Entry and refresh only its Bucket activity timestamps.
     ///
-    /// The Bucket identifier remains exact, request fields follow Python
+    /// The Bucket identifier remains exact, request fields follow legacy
     /// `append_entry` normalization, and no extraction or audit rows are added.
     pub fn append_entry(
         &mut self,
@@ -145,6 +145,6 @@ fn append_entry(
         })
 }
 
-fn python_optional_trim(value: Option<String>) -> Option<String> {
+fn optional_trim(value: Option<String>) -> Option<String> {
     value.and_then(|item| (!item.is_empty()).then(|| item.trim().to_owned()))
 }

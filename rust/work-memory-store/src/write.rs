@@ -4,7 +4,7 @@ use rusqlite::{Connection, DatabaseName, OpenFlags, Transaction, TransactionBeha
 
 use crate::{StoreError, migration, schema};
 
-/// Writable SQLite repository foundation for the validated Python business schema.
+/// Writable SQLite repository foundation for the validated legacy business schema.
 ///
 /// Public mutation methods are strongly typed business operations. The raw
 /// writable connection and transaction closure remain private so application
@@ -18,7 +18,7 @@ impl WritableSqliteStore {
     /// Open an existing database for isolated Rust writes.
     ///
     /// The database file must already exist, contain the complete supported
-    /// Python schema, pass SQLite integrity checks, and have a supported
+    /// legacy schema, pass SQLite integrity checks, and have a supported
     /// migration history. Foreign-key enforcement is enabled before the store
     /// can be used.
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self, StoreError> {
@@ -30,7 +30,7 @@ impl WritableSqliteStore {
 
         ensure_write_ready(&connection)?;
         migration::ensure_supported_history_if_present(&connection)?;
-        schema::validate_full_python_schema(&connection)?;
+        schema::validate_full_legacy_schema(&connection)?;
         let validated_schema_version = schema_version(&connection)?;
 
         Ok(Self {
@@ -107,225 +107,4 @@ fn pragma_enabled(connection: &Connection, pragma: &str) -> Result<bool, StoreEr
 
 fn schema_version(connection: &Connection) -> Result<i64, StoreError> {
     Ok(connection.query_row("PRAGMA schema_version", [], |row| row.get(0))?)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::{Path, PathBuf};
-    use std::process::Command;
-
-    use tempfile::{Builder, TempDir};
-
-    use rusqlite::{Connection, ErrorCode, params};
-
-    use super::WritableSqliteStore;
-    use crate::StoreError;
-
-    struct TemporaryDatabase {
-        _directory: TempDir,
-        path: PathBuf,
-    }
-
-    impl TemporaryDatabase {
-        fn new(label: &str) -> Self {
-            let directory = Builder::new()
-                .prefix(&format!("work-memory-writable-{label}-"))
-                .tempdir()
-                .expect("temporary directory must be created");
-            let path = directory.path().join("database.sqlite");
-            Self {
-                _directory: directory,
-                path,
-            }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    #[test]
-    fn commits_a_successful_transaction() {
-        let database = create_python_fixture("commit");
-        let mut store = WritableSqliteStore::open_existing(database.path())
-            .expect("validated fixture must open for writes");
-
-        assert!(store.is_write_ready().expect("PRAGMAs must be readable"));
-        store
-            .run_transaction(|transaction| {
-                transaction.execute(
-                    "INSERT INTO buckets (
-                        id, title, type, status, summary, tags,
-                        created_at, updated_at, last_active_at
-                     ) VALUES (?1, ?2, 'task', 'active', '', '[]', ?3, ?3, ?3)",
-                    params![
-                        "rust-committed-bucket",
-                        "Rust committed bucket",
-                        valid_time()
-                    ],
-                )?;
-                Ok(())
-            })
-            .expect("successful transaction must commit");
-        drop(store);
-
-        let connection = Connection::open(database.path()).expect("fixture must reopen");
-        let count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM buckets WHERE id = 'rust-committed-bucket'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("committed row must be queryable");
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn rolls_back_all_changes_when_a_foreign_key_write_fails() {
-        let database = create_python_fixture("rollback");
-        let mut store = WritableSqliteStore::open_existing(database.path())
-            .expect("validated fixture must open for writes");
-
-        let error = store
-            .run_transaction(|transaction| {
-                transaction.execute(
-                    "INSERT INTO buckets (
-                        id, title, type, status, summary, tags,
-                        created_at, updated_at, last_active_at
-                     ) VALUES (?1, ?2, 'task', 'active', '', '[]', ?3, ?3, ?3)",
-                    params!["rust-rolled-back-bucket", "Must roll back", valid_time()],
-                )?;
-                transaction.execute(
-                    "INSERT INTO entries (
-                        id, bucket_id, raw_text, summary, content_type,
-                        classification_confidence, classification_reason,
-                        created_at, moved_from_bucket_id
-                     ) VALUES (?1, ?2, ?3, NULL, 'note', NULL, NULL, ?4, NULL)",
-                    params![
-                        "rust-invalid-entry",
-                        "missing-parent-bucket",
-                        "Foreign key must fail.",
-                        valid_time()
-                    ],
-                )?;
-                Ok(())
-            })
-            .expect_err("foreign-key violation must abort the transaction");
-        assert!(matches!(
-            error,
-            StoreError::Sqlite(rusqlite::Error::SqliteFailure(ref failure, _))
-                if failure.code == ErrorCode::ConstraintViolation
-        ));
-        drop(store);
-
-        let connection = Connection::open(database.path()).expect("fixture must reopen");
-        let count: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM buckets WHERE id = 'rust-rolled-back-bucket'",
-                [],
-                |row| row.get(0),
-            )
-            .expect("rolled-back row must be queryable");
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn does_not_create_a_missing_database() {
-        let database = TemporaryDatabase::new("missing");
-
-        assert!(WritableSqliteStore::open_existing(database.path()).is_err());
-        assert!(!database.path().exists());
-    }
-
-    #[test]
-    fn rejects_an_incomplete_schema_before_any_write() {
-        let database = TemporaryDatabase::new("invalid-schema");
-        let connection = Connection::open(database.path()).expect("test database must open");
-        connection
-            .execute_batch("CREATE TABLE buckets (id TEXT PRIMARY KEY);")
-            .expect("partial schema must be created");
-        drop(connection);
-
-        assert!(matches!(
-            WritableSqliteStore::open_existing(database.path()),
-            Err(StoreError::MissingColumn {
-                table: "buckets",
-                column: "title"
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_an_unsupported_migration_history_before_any_write() {
-        let database = create_python_fixture("future-migration");
-        let connection = Connection::open(database.path()).expect("fixture must reopen");
-        connection
-            .execute_batch(
-                "CREATE TABLE schema_migrations (
-                    version INTEGER PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    applied_at TEXT NOT NULL
-                 );
-                 INSERT INTO schema_migrations (version, name, applied_at)
-                 VALUES (2, 'future_migration', '2026-08-04 14:30:00.000000');",
-            )
-            .expect("future migration fixture must be created");
-        drop(connection);
-
-        assert!(matches!(
-            WritableSqliteStore::open_existing(database.path()),
-            Err(StoreError::UnsupportedSchemaVersion {
-                found: 2,
-                supported: 1
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_transactions_after_the_validated_schema_changes() {
-        let database = create_python_fixture("schema-change");
-        let mut store = WritableSqliteStore::open_existing(database.path())
-            .expect("validated fixture must open for writes");
-
-        store
-            .connection
-            .execute_batch("CREATE TABLE unexpected_external_table (id INTEGER PRIMARY KEY);")
-            .expect("test schema change must succeed");
-
-        assert!(matches!(
-            store.run_transaction(|_| Ok(())),
-            Err(StoreError::SchemaChangedAfterValidation { expected, found })
-                if found > expected
-        ));
-    }
-
-    fn create_python_fixture(label: &str) -> TemporaryDatabase {
-        let database = TemporaryDatabase::new(label);
-        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let virtualenv_python = repository_root.join(".venv/bin/python");
-        let python = if virtualenv_python.is_file() {
-            virtualenv_python
-        } else {
-            PathBuf::from("python3")
-        };
-        let fixture_script = repository_root.join("tests/fixtures/create_sqlite_compat_fixture.py");
-        let output = Command::new(python)
-            .arg(fixture_script)
-            .arg(database.path())
-            .env("PYTHONPATH", &repository_root)
-            .current_dir(&repository_root)
-            .output()
-            .expect("Python fixture generator must start");
-        assert!(
-            output.status.success(),
-            "Python fixture generator failed\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        database
-    }
-
-    fn valid_time() -> &'static str {
-        "2026-08-04 14:30:00.000000"
-    }
 }

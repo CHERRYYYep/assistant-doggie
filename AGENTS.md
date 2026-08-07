@@ -1,50 +1,82 @@
-# Repository Guidelines（仓库贡献指南）
+# AGENTS.md instructions for /home/cherry/assistant-doggie
 
-## 项目结构与模块组织
+## 仓库指南
 
-本仓库是一个 Python 个人工作记忆 Agent 的 MVP 骨架。业务代码放在 `app/`：数据库配置位于 `app/db.py`，数据模型与 Schema 分别位于 `app/models.py` 和 `app/schemas.py`，Prompt 放在 `app/prompts.py`，分类、提取、归档、搜索等流程拆分到 `app/services/`。Streamlit 界面位于 `ui/streamlit_app.py`。自动化测试放在 `tests/`，可复用的手工测试输入放在 `tests/fixtures/`。需求、架构、数据模型和测试方案保存在 `docs/`；行为或接口变化时，应同步更新相关文档。
+本仓库是一个 Rust 个人工作记忆 Agent。所有产品运行、测试和开发路径都位于 Rust workspace：
 
-`my_own_agent/`、`__pycache__/`、本地数据库和 `.env` 均属于本地或生成内容，不应提交。
+- `rust/work-memory-core/`：领域值、Bucket/Entry 模型、分类安全门控和确定性文本规则。
+- `rust/work-memory-contracts/`：模型结构化输出契约、JSON Schema 和边界校验。
+- `rust/work-memory-agent/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport 和受控工具 Harness。
+- `rust/work-memory-store/`：Rust canonical SQLite schema、事务、查询、归档写入和只读历史库导入工具。
+- `rust/work-memory-service/`：归档、自然语言记忆查询、纠错、状态和对话持久化服务。
+- `rust/work-memory-runtime/`：模型、服务和安全门控的组合运行时。
+- `rust/work-memory-server/`：本地 HTTP API、ChatGPT 风格内嵌 Web UI 和应用入口。
+- `docs/`：当前架构、数据模型、API 行为、迁移边界和测试方案。
+
+旧版运行时、旧测试和旧界面不属于本分支。历史数据库兼容能力只允许以 Rust 实现保留，不得重新引入其他语言的生产路径或测试依赖。
 
 ## 构建、测试与本地开发
 
-首次开发时创建独立环境：
+需要 Rust 1.85 或更新版本：
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env，填写模型端点和 OPENAI_API_KEY
+cargo run -p work-memory-server
 ```
 
-常用命令：
+常用检查命令：
 
-- `python -m app.main`：运行当前应用入口。
-- `streamlit run ui/streamlit_app.py`：启动本地 UI。
-- `pytest`：运行全部测试。
-- `pytest tests/test_bucket_service.py -q`：仅运行指定模块测试。
+```bash
+cargo fmt --all -- --check
+cargo check --workspace --offline
+cargo clippy --workspace --all-targets --offline -- -D warnings
+cargo test --workspace --offline
+```
 
-当前项目无单独构建步骤。
+如需在线解析新依赖，可去掉 `--offline`。本地数据库、`.env`、`target/` 和日志均不应提交。
 
 ## 编码风格与命名规范
 
-遵循 PEP 8，使用四空格缩进，并为公共函数添加类型注解。模块、函数和变量使用 `snake_case`，Pydantic Schema 与 SQLAlchemy Model 使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。服务应职责单一，避免把业务逻辑直接写进 Streamlit 回调。Docstring 应简短说明用途和行为。项目暂未配置格式化或 lint 工具，提交前需主动整理导入、删除无用代码并保持一致风格。
+遵循 rustfmt、Clippy 和 Rust 2024 edition 约定。公共 API 使用明确的类型和错误类型，模块、函数和变量使用 `snake_case`，类型和 trait 使用 `PascalCase`，常量使用 `UPPER_SNAKE_CASE`。服务层保持职责单一，不把业务逻辑塞进 HTTP/UI 字符串模板。跨层变化应优先更新领域契约和服务接口，再更新 route projection。
+
+对用户可见的归档流程必须保留：
+
+- `ask_user` 安全门控；
+- 推荐 Bucket、备选 Bucket、判断理由、创建新 Bucket 和不保存选项；
+- 归档后的 Bucket 修改入口；
+- Entry 原文、结构化 memory、审计记录和可重放的确认绑定。
+
+低信息输入宁愿多询问一次，也不能静默写入不确定的 Bucket。
 
 ## 测试要求
 
-使用 Pytest。测试文件命名为 `test_<模块>.py`，测试函数命名为 `test_<行为>()`。重点覆盖数据库 CRUD、服务规则、Schema 校验和完整归档流程。普通测试必须 mock LLM 返回，不应调用真实 API；真实模型仅用于明确的手工验证。修改 Prompt 或分类逻辑后，按照 `docs/TEST_PLAN.md` 和 `tests/fixtures/` 执行回归检查。
+使用 Cargo workspace 测试。普通测试必须使用 fake model/transport 和临时 SQLite 文件，不调用真实模型或真实用户数据库。重点覆盖：
+
+- core 的分类、低信息门控和查询计划解析；
+- contracts 的严格字段和边界校验；
+- store/service 的事务回滚、重开数据库、搜索、筛选、结果聚合和纠错；
+- runtime/server 的自动归档、确认分支、聊天历史和 HTTP 错误映射。
+
+修改 archive、confirmation、query 或 schema 后，按照 `docs/TEST_PLAN.md` 做对应回归。不要通过删除失败测试来绕过行为回归；如果删除过时测试，需在变更说明中写明它原来依赖的旧运行时已经从本分支移除。
 
 ## Agent 协作与执行规范
 
 - **有求有应**：先确认任务目标和约束；存在关键歧义时说明假设，不擅自扩大范围。
-- **有据可查**：修改前先阅读相关代码和文档，结论应基于仓库现状，不虚构命令、接口或测试结果。
-- **有行有果**：实施修改后运行与改动直接相关的检查；不能运行时，明确说明原因和影响。
-- **有错必报**：遇到失败、风险或兼容性问题应如实报告，不隐藏错误，不以绕过测试代替修复。
+- **有据可查**：修改前先阅读相关代码和文档，结论基于仓库现状，不虚构命令、接口或测试结果。
+- **有行有果**：实施修改后运行与改动直接相关的检查；不能运行时明确说明原因和影响。
+- **有错必报**：遇到失败、风险或兼容性问题如实报告，不隐藏错误，不以绕过测试代替修复。
 - **有始有终**：最终说明修改了哪些文件、实现了什么、执行了哪些验证，以及仍存在的风险或后续事项。
-- **最小改动**：只修改完成任务所需内容，保留用户已有改动，不提交密钥，不执行未经要求的破坏性操作。
+- **最小改动**：只修改完成任务所需内容，保留用户已有改动，不提交密钥、本地数据库或构建产物。
+- **阶段提交**：完成一个小的阶段性任务后主动创建 Git 提交；提交信息使用简短、祈使句式，例如 `Remove legacy runtime`。
 
-## 提交与 Pull Request 规范
+## Multi-agent workflow
 
-当前检出内容不包含可用的 Git 历史，因此采用简短、祈使句式的提交信息，例如 `Add bucket creation service` 或 `Test correction routing`。每个提交只处理一个逻辑变更。Pull Request 应说明用户可见的变化、列出已执行的测试、关联相关 Issue 或设计文档；UI 变化需附截图。严禁提交 API Key、`.env`、本地数据库或虚拟环境。
+For large read-heavy tasks, use subagents in parallel.
 
-在完成一个小的阶段性任务后需要主动进行git的提交
+- Use an explorer for codebase mapping.
+- Use a reviewer for correctness and security checks.
+- Use a test analyst for test coverage and failure analysis.
+- Keep concurrent code edits to a minimum.
+- Prefer one worker to modify files after the investigation is complete.
+- The main thread must reconcile conflicting findings before implementation.

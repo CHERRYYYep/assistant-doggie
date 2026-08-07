@@ -46,7 +46,7 @@ pub struct LlmEndpointConfig {
 }
 
 impl LlmEndpointConfig {
-    /// Resolve explicit settings with the same defaults as the Python runtime.
+    /// Resolve explicit settings with the same defaults as the legacy runtime.
     pub fn resolve(
         site: Option<&str>,
         base_url: Option<&str>,

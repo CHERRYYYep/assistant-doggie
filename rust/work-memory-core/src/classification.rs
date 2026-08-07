@@ -120,7 +120,7 @@ pub fn build_bucket_candidates(
         return Err(CoreError::CandidateLimitTooSmall);
     }
 
-    // Match Python dict-comprehension behavior: the last duplicate value wins,
+    // Match legacy dict-comprehension behavior: the last duplicate value wins,
     // while the first insertion position remains the stable tie-break position.
     let mut positions = HashMap::<String, usize>::new();
     let mut deduplicated = Vec::new();

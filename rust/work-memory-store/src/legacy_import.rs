@@ -1,4 +1,4 @@
-//! One-time semantic importer from the Python-owned SQLite schema.
+//! One-time semantic importer from the legacy-owned SQLite schema.
 //!
 //! The importer deliberately reads the legacy tables directly and writes only
 //! to a fresh Rust-owned database.  It is not a compatibility writer and does
@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use crate::canonical_schema;
 use crate::{ImportReport, StoreError, StoredTimestamp, migration, schema};
 
-/// Import the complete semantic contents of a Python database into a new Rust
+/// Import the complete semantic contents of a legacy database into a new Rust
 /// canonical database.  Source IDs are retained so correction/audit links and
 /// forensic references remain useful after the import.
 pub fn import_legacy_database(
@@ -49,7 +49,7 @@ pub fn import_legacy_database(
     }
 
     let source_snapshot = source.transaction_with_behavior(TransactionBehavior::Deferred)?;
-    schema::validate_full_python_schema(&source_snapshot)?;
+    schema::validate_full_legacy_schema(&source_snapshot)?;
     migration::ensure_supported_history_if_present(&source_snapshot)?;
     validate_legacy_memory_id_namespace(&source_snapshot)?;
 
@@ -118,12 +118,12 @@ fn import_buckets(
                 updated_at,
                 last_active_at,
                 archived_at,
-                json!({"imported_from": "python", "legacy_tags_json": tags_raw}).to_string(),
+                json!({"imported_from": "legacy", "legacy_tags_json": tags_raw}).to_string(),
             ],
         )?;
 
         for (position, tag) in tags.into_iter().enumerate() {
-            // The Python writer normally de-duplicates tags.  Keep the first
+            // The legacy writer normally de-duplicates tags.  Keep the first
             // occurrence if an old hand-edited database contains duplicates;
             // the original JSON remains in bucket metadata_json above.
             target.execute(
@@ -177,7 +177,7 @@ fn import_entries(
                 row.get::<_, Option<String>>(6)?,
                 created_at,
                 row.get::<_, Option<String>>(8)?,
-                json!({"imported_from": "python"}).to_string(),
+                json!({"imported_from": "legacy"}).to_string(),
             ],
         )?;
         report.entries += 1;
@@ -380,7 +380,7 @@ fn insert_memory_item(
             reason,
             created_at,
             updated_at,
-            json!({"imported_from": "python", "legacy_table": legacy_table}).to_string(),
+            json!({"imported_from": "legacy", "legacy_table": legacy_table}).to_string(),
         ],
     )?;
     Ok(())
@@ -430,7 +430,7 @@ fn import_archive_attempts(
             "audit_only"
         };
         let bucket_id: Option<String> = row.get(3)?;
-        // The Python schema does not enforce classification bucket_id as a
+        // The legacy schema does not enforce classification bucket_id as a
         // foreign key.  Keep it when it resolves in the canonical target and
         // otherwise preserve the candidate/raw audit data without violating
         // the Rust FK.
