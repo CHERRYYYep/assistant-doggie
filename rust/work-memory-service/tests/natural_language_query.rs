@@ -166,6 +166,19 @@ fn returns_multiple_entries_and_buckets_with_deduplicated_evidence() {
         1
     );
     assert!(response.answer.contains("3 条相关 Entry"));
+    for marker in [
+        "接口 A 压测",
+        "接口 A 回归",
+        "P99 为 120ms",
+        "P99 为 110ms",
+        "无错误",
+    ] {
+        assert!(
+            response.answer.contains(marker),
+            "answer should synthesize marker: {marker}; answer was: {}",
+            response.answer
+        );
+    }
 }
 
 #[test]

@@ -15,8 +15,8 @@ use work_memory_core::{
 };
 use work_memory_store::{
     ChatRole, RustArchiveAttempt, RustArchiveAudit, RustArchiveOutcome, RustBucket,
-    RustBucketDetail, RustChatMessage, RustCorrection, RustEntry, RustSearchHit, RustStore,
-    RustStoreCounts, StoreError,
+    RustBucketDetail, RustChatMessage, RustCorrection, RustDeleteBucketOutcome, RustEntry,
+    RustSearchHit, RustStore, RustStoreCounts, StoreError,
 };
 
 /// Errors at the canonical Rust-owned service boundary.
@@ -106,38 +106,31 @@ impl CanonicalService {
         Ok(self.store.get_bucket(bucket_id)?)
     }
 
-    /// Build bounded classifier context from active Buckets, putting the focus
-    /// Bucket first while preserving the core candidate-limit rules.
+    /// Build bounded classifier context from automatic recent and popular
+    /// active Buckets. The optional focus ID is retained for compatibility and
+    /// audit callers, but it does not manually promote a UI-selected Bucket.
     pub fn active_bucket_views(
         &self,
         limit: usize,
-        current_focus_bucket_id: Option<&str>,
+        _current_focus_bucket_id: Option<&str>,
     ) -> Result<Vec<BucketView>, CanonicalServiceError> {
-        let buckets = self
-            .store
-            .list_active_buckets(limit.max(1))?
+        let candidate_limit = limit.max(1);
+        let recent = self.store.list_active_buckets(candidate_limit)?;
+        let popular = self.store.list_popular_active_buckets(candidate_limit)?;
+        let mut buckets = Vec::with_capacity(recent.len() + popular.len());
+        for index in 0..recent.len().max(popular.len()) {
+            if let Some(bucket) = recent.get(index) {
+                buckets.push(bucket.clone());
+            }
+            if let Some(bucket) = popular.get(index) {
+                buckets.push(bucket.clone());
+            }
+        }
+        let buckets = buckets
             .into_iter()
-            .map(|bucket| {
-                BucketView::new(
-                    bucket.id,
-                    bucket.title,
-                    bucket.bucket_type,
-                    bucket.status,
-                    bucket.summary,
-                    bucket.tags,
-                    bucket
-                        .last_active_at
-                        .utc_naive()
-                        .and_utc()
-                        .timestamp_millis(),
-                )
-            })
+            .map(bucket_to_view)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(build_bucket_candidates(
-            buckets,
-            current_focus_bucket_id,
-            limit,
-        )?)
+        Ok(build_bucket_candidates(buckets, None, limit)?)
     }
 
     /// Apply the deterministic core gates to a classifier result using the
@@ -272,6 +265,15 @@ impl CanonicalService {
             .move_entry(entry_id, target_bucket_id, command_text)?)
     }
 
+    /// Hard-delete a canonical Bucket and return the deletion audit outcome.
+    pub fn delete_bucket(
+        &mut self,
+        bucket_id: &str,
+        command_text: impl Into<String>,
+    ) -> Result<RustDeleteBucketOutcome, CanonicalServiceError> {
+        Ok(self.store.delete_bucket(bucket_id, command_text)?)
+    }
+
     /// Set a canonical Bucket lifecycle status and return the updated Bucket.
     pub fn set_bucket_status(
         &mut self,
@@ -342,4 +344,20 @@ impl CanonicalService {
     ) -> Result<Vec<RustCorrection>, CanonicalServiceError> {
         Ok(self.store.list_corrections(target_type, target_id, limit)?)
     }
+}
+
+fn bucket_to_view(bucket: RustBucket) -> Result<BucketView, CoreError> {
+    BucketView::new(
+        bucket.id,
+        bucket.title,
+        bucket.bucket_type,
+        bucket.status,
+        bucket.summary,
+        bucket.tags,
+        bucket
+            .last_active_at
+            .utc_naive()
+            .and_utc()
+            .timestamp_millis(),
+    )
 }

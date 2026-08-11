@@ -135,7 +135,7 @@ where
 /// Structured-output prompt boundary. The persisted audit stores only the
 /// stable version string, not these full prompts.
 const CLASSIFICATION_SYSTEM_PROMPT: &str = r#"你是工作记忆分类器。只返回符合 ClassificationResult schema 的 JSON。
-候选 Bucket 是服务端提供的唯一有效 ID。优先使用唯一且明确匹配的候选；无法安全判断时使用 ask_user。
+候选 Bucket 是服务端根据最近活跃和热门程度自动提供的唯一有效 ID，不代表用户手动选择。优先使用唯一且明确匹配的候选；无法安全判断时使用 ask_user。
 如果输入只有“那个/这个/它/上次/相关”等模糊指代，或只有“继续/更新了/完成了/好了/正常了/记一下”等低信息状态动作，且没有数字、指标、错误、日志、决定、原因或其他可核验事实，必须使用 ask_user，即使你很确定最像哪个 Bucket。不要臆造 Bucket ID。"#;
 const EXTRACTION_SYSTEM_PROMPT: &str = r#"你是工作记忆提取器。只返回符合 ExtractionResult schema 的 JSON。
 完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。"#;
@@ -197,10 +197,9 @@ impl<'a, M: MemoryModel> CanonicalArchiveCoordinator<'a, M> {
     pub fn archive(&mut self, text: &str) -> Result<ArchiveExecution, RuntimeError> {
         let text = required_text(text, "text")?;
         let buckets = self.service.list_active_buckets(self.active_bucket_limit)?;
-        let candidates = self.service.active_bucket_views(
-            self.active_bucket_limit,
-            self.current_focus_bucket_id.as_deref(),
-        )?;
+        let candidates = self
+            .service
+            .active_bucket_views(self.active_bucket_limit, None)?;
         let raw_classification = self
             .model
             .classify(&text, &candidates)

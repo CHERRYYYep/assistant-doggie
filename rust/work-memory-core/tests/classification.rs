@@ -88,13 +88,13 @@ fn bucket_view_normalizes_fields() {
 }
 
 #[test]
-fn candidates_put_focus_first_then_sort_by_recency_and_deduplicate() {
+fn candidates_preserve_service_order_ignore_focus_and_deduplicate() {
     let candidates = build_bucket_candidates(
         vec![
-            bucket("older", "旧事务", 100),
-            bucket("focus", "焦点旧标题", 50),
-            bucket("newer", "最新事务", 300),
-            bucket("focus", "焦点新标题", 200),
+            bucket("service-first", "服务排序第一旧标题", 100),
+            bucket("focus", "手动焦点", 300),
+            bucket("popular", "热门事务", 200),
+            bucket("service-first", "服务排序第一新标题", 50),
         ],
         Some("focus"),
         2,
@@ -103,9 +103,9 @@ fn candidates_put_focus_first_then_sort_by_recency_and_deduplicate() {
 
     assert_eq!(
         candidates.iter().map(BucketView::id).collect::<Vec<_>>(),
-        vec!["focus", "newer"]
+        vec!["service-first", "focus"]
     );
-    assert_eq!(candidates[0].title(), "焦点新标题");
+    assert_eq!(candidates[0].title(), "服务排序第一新标题");
 }
 
 #[test]

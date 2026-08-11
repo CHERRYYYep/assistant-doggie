@@ -26,8 +26,8 @@ pub use bucket_summary_write::{RebuildBucketSummaryRequest, UpdateBucketSummaryR
 pub use bucket_write::CreateBucketRequest;
 pub use canonical::{
     ImportReport, MemoryKind, RustArchiveAttempt, RustArchiveAudit, RustArchiveOutcome, RustBucket,
-    RustBucketDetail, RustChatMessage, RustCorrection, RustEntry, RustMemoryItem, RustSearchHit,
-    RustStore, RustStoreCounts,
+    RustBucketDetail, RustChatMessage, RustCorrection, RustDeleteBucketOutcome, RustEntry,
+    RustMemoryItem, RustSearchHit, RustStore, RustStoreCounts,
 };
 pub use chat_write::ChatMessageWriteRequest;
 pub use classification_write::{SaveClassificationRecordOutcome, SaveClassificationRecordRequest};

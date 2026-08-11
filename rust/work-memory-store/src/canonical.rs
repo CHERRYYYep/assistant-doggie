@@ -262,6 +262,16 @@ pub struct RustArchiveOutcome {
     pub memory_item_ids: Vec<String>,
 }
 
+/// Result of a user-requested canonical Bucket deletion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustDeleteBucketOutcome {
+    pub bucket_id: String,
+    pub deleted_entry_ids: Vec<String>,
+    pub deleted_memory_item_ids: Vec<String>,
+    pub updated_archive_attempt_ids: Vec<String>,
+    pub correction_id: String,
+}
+
 impl RustStore {
     /// Create a fresh Rust-owned database. An existing legacy database is
     /// rejected instead of being altered in place.
@@ -389,6 +399,40 @@ impl RustStore {
              FROM buckets
              WHERE lifecycle = 'active'
              ORDER BY last_active_at DESC, updated_at DESC, id ASC
+             LIMIT ?1",
+        )?;
+        let rows = statement
+            .query_map([limit], decode_bucket_base)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|bucket| self.attach_tags(bucket))
+            .collect()
+    }
+
+    /// Return active Buckets ranked by persisted usage volume. This is a
+    /// candidate-context helper, separate from the UI-facing recency list.
+    pub fn list_popular_active_buckets(&self, limit: usize) -> Result<Vec<RustBucket>, StoreError> {
+        let limit = checked_limit(limit)?;
+        let mut statement = self.connection.prepare(
+            "SELECT b.id, b.title, b.kind, b.lifecycle, b.summary, b.created_at, b.updated_at,
+                    b.last_active_at, b.archived_at
+             FROM buckets b
+             LEFT JOIN (
+                 SELECT bucket_id, COUNT(*) AS entry_count
+                 FROM entries
+                 GROUP BY bucket_id
+             ) entry_stats ON entry_stats.bucket_id = b.id
+             LEFT JOIN (
+                 SELECT bucket_id, COUNT(*) AS memory_count
+                 FROM memory_items
+                 GROUP BY bucket_id
+             ) memory_stats ON memory_stats.bucket_id = b.id
+             WHERE b.lifecycle = 'active'
+             ORDER BY COALESCE(entry_stats.entry_count, 0) DESC,
+                      COALESCE(memory_stats.memory_count, 0) DESC,
+                      b.last_active_at DESC,
+                      b.updated_at DESC,
+                      b.id ASC
              LIMIT ?1",
         )?;
         let rows = statement
@@ -821,6 +865,104 @@ impl RustStore {
                 decode_entry,
             )
             .map_err(StoreError::from)
+    }
+
+    /// Hard-delete a canonical Bucket and its dependent Entry, tag, and memory
+    /// rows while retaining a durable correction audit. Archive attempt rows
+    /// are retained by the schema and have their Bucket/Entry foreign-key links
+    /// cleared by SQLite.
+    pub fn delete_bucket(
+        &mut self,
+        bucket_id: &str,
+        command_text: impl Into<String>,
+    ) -> Result<RustDeleteBucketOutcome, StoreError> {
+        let bucket_id = non_empty(bucket_id.to_owned(), "bucket_id")?;
+        let command_text = non_empty(command_text.into(), "command_text")?;
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut bucket = transaction
+            .query_row(
+                "SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+                        last_active_at, archived_at
+                 FROM buckets WHERE id = ?1",
+                [&bucket_id],
+                decode_bucket_base,
+            )
+            .optional()?
+            .ok_or_else(|| StoreError::MissingRecord {
+                table: "buckets",
+                id: bucket_id.clone(),
+            })?;
+        let mut tag_statement = transaction
+            .prepare("SELECT tag FROM bucket_tags WHERE bucket_id = ?1 ORDER BY position ASC")?;
+        bucket.tags = tag_statement
+            .query_map([&bucket_id], |row| row.get(0))?
+            .collect::<Result<Vec<String>, _>>()?;
+        drop(tag_statement);
+
+        let deleted_entry_ids = collect_string_column(
+            &transaction,
+            "SELECT id FROM entries WHERE bucket_id = ?1 ORDER BY created_at ASC, id ASC",
+            &bucket_id,
+        )?;
+        let deleted_memory_item_ids = collect_string_column(
+            &transaction,
+            "SELECT id FROM memory_items WHERE bucket_id = ?1 ORDER BY created_at ASC, id ASC",
+            &bucket_id,
+        )?;
+        let updated_archive_attempt_ids = collect_string_column(
+            &transaction,
+            "SELECT id FROM archive_attempts
+             WHERE bucket_id = ?1
+                OR entry_id IN (SELECT id FROM entries WHERE bucket_id = ?1)
+             ORDER BY created_at ASC, id ASC",
+            &bucket_id,
+        )?;
+
+        let timestamp = current_timestamp(&transaction)?;
+        let deleted = transaction.execute("DELETE FROM buckets WHERE id = ?1", [&bucket_id])?;
+        if deleted != 1 {
+            return Err(StoreError::MissingRecord {
+                table: "buckets",
+                id: bucket_id,
+            });
+        }
+
+        let correction_id = new_id();
+        let before_json = json!({
+            "bucket": bucket_to_snapshot(&bucket),
+            "deleted_entry_ids": &deleted_entry_ids,
+            "deleted_memory_item_ids": &deleted_memory_item_ids,
+            "updated_archive_attempt_ids": &updated_archive_attempt_ids,
+            "entry_count": deleted_entry_ids.len(),
+            "memory_item_count": deleted_memory_item_ids.len(),
+            "archive_attempt_count": updated_archive_attempt_ids.len(),
+        })
+        .to_string();
+        let after_json = json!({"deleted": true}).to_string();
+        transaction.execute(
+            "INSERT INTO corrections
+                (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+             VALUES (?1, ?2, 'delete_bucket', 'bucket', ?3, ?4, ?5, ?6)",
+            params![
+                &correction_id,
+                &command_text,
+                &bucket_id,
+                &before_json,
+                &after_json,
+                &timestamp,
+            ],
+        )?;
+        transaction.commit()?;
+
+        Ok(RustDeleteBucketOutcome {
+            bucket_id,
+            deleted_entry_ids,
+            deleted_memory_item_ids,
+            updated_archive_attempt_ids,
+            correction_id,
+        })
     }
 
     /// Change Bucket lifecycle without exposing SQL. This is the MVP's explicit
@@ -1556,6 +1698,33 @@ fn normalize_details(details: Option<Value>) -> Result<Option<Value>, StoreError
             found: "scalar",
         }),
     }
+}
+
+fn collect_string_column(
+    transaction: &Transaction<'_>,
+    sql: &str,
+    value: &str,
+) -> Result<Vec<String>, StoreError> {
+    let mut statement = transaction.prepare(sql)?;
+    statement
+        .query_map([value], |row| row.get(0))?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(StoreError::from)
+}
+
+fn bucket_to_snapshot(bucket: &RustBucket) -> Value {
+    json!({
+        "id": &bucket.id,
+        "title": &bucket.title,
+        "type": bucket.bucket_type.as_str(),
+        "status": bucket.status.as_str(),
+        "summary": &bucket.summary,
+        "tags": &bucket.tags,
+        "created_at": bucket.created_at.raw(),
+        "updated_at": bucket.updated_at.raw(),
+        "last_active_at": bucket.last_active_at.raw(),
+        "archived_at": bucket.archived_at.as_ref().map(|value| value.raw()),
+    })
 }
 
 fn checked_limit(limit: usize) -> Result<i64, StoreError> {

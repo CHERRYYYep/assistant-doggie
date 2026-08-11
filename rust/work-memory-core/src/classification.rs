@@ -110,10 +110,15 @@ impl Default for ConfidencePolicy {
     }
 }
 
-/// De-duplicate and order candidates with the current focus first, then by recency.
+/// De-duplicate candidates while preserving the service-provided order.
+///
+/// Bucket ranking is owned by the service/store layer so archive candidates can
+/// combine recent and popular active Buckets without allowing a UI-selected
+/// Bucket to override that automatic ordering. The optional focus argument is
+/// kept for API compatibility and audit callers, but does not influence order.
 pub fn build_bucket_candidates(
     buckets: Vec<BucketView>,
-    current_focus_bucket_id: Option<&str>,
+    _current_focus_bucket_id: Option<&str>,
     limit: usize,
 ) -> Result<Vec<BucketView>, CoreError> {
     if limit < 1 {
@@ -133,15 +138,6 @@ pub fn build_bucket_candidates(
         }
     }
 
-    deduplicated.sort_by(|left, right| {
-        let left_is_focus = Some(left.id()) == current_focus_bucket_id;
-        let right_is_focus = Some(right.id()) == current_focus_bucket_id;
-        right_is_focus.cmp(&left_is_focus).then_with(|| {
-            right
-                .last_active_at_unix_ms()
-                .cmp(&left.last_active_at_unix_ms())
-        })
-    });
     deduplicated.truncate(limit);
     Ok(deduplicated)
 }

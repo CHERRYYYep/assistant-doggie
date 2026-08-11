@@ -189,3 +189,122 @@ fn canonical_facade_covers_archive_chat_history_and_correction() {
         Err(CanonicalServiceError::MissingExtraction { .. })
     ));
 }
+
+#[test]
+fn active_bucket_views_interleave_recent_and_popular_and_ignore_focus() {
+    let database = TemporaryPath::new("canonical-service-candidates");
+    let mut service = CanonicalService::initialize(database.path()).expect("canonical database");
+
+    let popular = service
+        .archive(
+            "热门上下文第一条事实。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "热门上下文",
+                0.99,
+                "popular",
+                vec![],
+            )
+            .expect("classification"),
+            Some(extraction("popular 1")),
+            audit(),
+        )
+        .expect("popular create");
+    let popular_bucket_id = popular.bucket_id.expect("popular bucket");
+    for index in 2..=3 {
+        service
+            .archive(
+                format!("热门上下文第 {index} 条事实。"),
+                ClassificationResult::append_existing(
+                    popular_bucket_id.clone(),
+                    Some(BucketType::Task),
+                    0.99,
+                    "popular append",
+                    vec![popular_bucket_id.clone()],
+                )
+                .expect("classification"),
+                Some(extraction(&format!("popular {index}"))),
+                audit(),
+            )
+            .expect("popular append");
+    }
+    let recent = service
+        .archive(
+            "最近上下文的一条事实。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "最近上下文",
+                0.99,
+                "recent",
+                vec![],
+            )
+            .expect("classification"),
+            Some(extraction("recent")),
+            audit(),
+        )
+        .expect("recent create");
+    let recent_bucket_id = recent.bucket_id.expect("recent bucket");
+
+    let candidates = service
+        .active_bucket_views(2, Some(popular_bucket_id.as_str()))
+        .expect("candidate views");
+    assert_eq!(
+        candidates
+            .iter()
+            .map(work_memory_core::BucketView::id)
+            .collect::<Vec<_>>(),
+        vec![recent_bucket_id.as_str(), popular_bucket_id.as_str()],
+        "manual focus must not replace the automatic recent + popular ordering"
+    );
+}
+
+#[test]
+fn delete_bucket_facade_removes_active_bucket_and_history_entries() {
+    let database = TemporaryPath::new("canonical-service-delete");
+    let mut service = CanonicalService::initialize(database.path()).expect("canonical database");
+    let created = service
+        .archive(
+            "待删除 Bucket 的事实。",
+            ClassificationResult::create_new(BucketType::Task, "待删除", 0.99, "delete", vec![])
+                .expect("classification"),
+            Some(extraction("delete summary")),
+            audit(),
+        )
+        .expect("archive");
+    let bucket_id = created.bucket_id.expect("bucket id");
+    let entry_id = created.entry_id.expect("entry id");
+
+    let outcome = service
+        .delete_bucket(&bucket_id, "用户删除 Bucket。")
+        .expect("delete bucket");
+    assert_eq!(outcome.bucket_id, bucket_id);
+    assert_eq!(outcome.deleted_entry_ids, [entry_id]);
+    assert!(
+        service
+            .get_bucket(&bucket_id)
+            .expect("bucket lookup")
+            .is_none()
+    );
+    assert!(
+        service
+            .bucket_detail(&bucket_id)
+            .expect("detail lookup")
+            .is_none()
+    );
+    assert!(
+        service
+            .list_active_buckets(10)
+            .expect("active buckets")
+            .into_iter()
+            .all(|bucket| bucket.id != bucket_id)
+    );
+    assert!(matches!(
+        service.delete_bucket(&bucket_id, "重复删除。"),
+        Err(CanonicalServiceError::Store(
+            work_memory_store::StoreError::MissingRecord {
+                table: "buckets",
+                ..
+            }
+        ))
+    ));
+}

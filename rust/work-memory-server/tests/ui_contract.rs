@@ -49,3 +49,22 @@ fn embedded_ui_keeps_markdown_inputs_and_links_escaped() {
     assert!(INDEX_HTML.contains("rel=\"noreferrer noopener\""));
     assert!(!INDEX_HTML.contains("href=\"${link[2]}\""));
 }
+
+#[test]
+fn embedded_ui_exposes_auto_bucket_association_and_delete_controls() {
+    for marker in [
+        "自动关联最近和热门 Bucket",
+        "删除 Bucket",
+        "data-action=\"delete-bucket\"",
+        "async function deleteBucket",
+        "method:'DELETE'",
+        "'/api/buckets/'+encodeURIComponent(bucketId)",
+        "body:JSON.stringify({message:text})",
+    ] {
+        assert!(
+            INDEX_HTML.contains(marker),
+            "missing bucket delete/auto-association marker: {marker}"
+        );
+    }
+    assert!(!INDEX_HTML.contains("focus_bucket_id:selectedBucketId"));
+}

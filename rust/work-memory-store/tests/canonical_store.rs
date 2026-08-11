@@ -441,3 +441,250 @@ fn moving_only_entry_out_of_auto_created_bucket_removes_empty_source_bucket() {
     assert_eq!(counts.buckets, 1);
     assert_eq!(counts.entries, 2);
 }
+
+#[test]
+fn delete_bucket_cascades_dependents_and_records_correction() {
+    let database = TemporaryPath::new("canonical-delete-bucket");
+    let mut store = RustStore::initialize(database.path()).expect("canonical schema");
+    let audit = RustArchiveAudit::new(vec![], None, "rust-v1", "test-model").expect("audit");
+
+    let created = store
+        .archive(
+            "接口 A 压测首轮完成，P99 为 120ms。",
+            ClassificationResult::create_new(
+                BucketType::Experiment,
+                "接口 A 压测",
+                0.99,
+                "new experiment",
+                vec![],
+            )
+            .expect("classification"),
+            Some(
+                ExtractionResult::new(
+                    "首轮压测摘要",
+                    vec![],
+                    vec!["P99 为 120ms".to_owned()],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec!["压测".to_owned()],
+                )
+                .expect("extraction"),
+            ),
+            audit.clone(),
+        )
+        .expect("create archive");
+    let bucket_id = created.bucket_id.clone().expect("bucket id");
+    let first_entry_id = created.entry_id.clone().expect("first entry id");
+
+    let appended = store
+        .archive(
+            "接口 A 压测复测完成，P99 为 110ms。",
+            ClassificationResult::append_existing(
+                bucket_id.clone(),
+                Some(BucketType::Experiment),
+                0.98,
+                "append experiment",
+                vec![bucket_id.clone()],
+            )
+            .expect("classification"),
+            Some(
+                ExtractionResult::new(
+                    "复测摘要",
+                    vec![],
+                    vec!["P99 为 110ms".to_owned()],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec![],
+                    vec!["压测".to_owned()],
+                )
+                .expect("extraction"),
+            ),
+            audit.clone(),
+        )
+        .expect("append archive");
+    let second_entry_id = appended.entry_id.clone().expect("second entry id");
+    let pending = store
+        .archive(
+            "还需要确认的压测备注。",
+            ClassificationResult::ask_user(
+                Some(BucketType::Experiment),
+                None,
+                0.50,
+                "ambiguous",
+                "请选择归档目标。",
+                vec![bucket_id.clone()],
+            )
+            .expect("ask classification"),
+            None,
+            audit,
+        )
+        .expect("pending archive");
+    assert_eq!(store.counts().expect("counts before").entries, 2);
+
+    let outcome = store
+        .delete_bucket(&bucket_id, "用户删除压测 Bucket。")
+        .expect("delete bucket");
+    assert_eq!(outcome.bucket_id, bucket_id);
+    assert_eq!(outcome.deleted_entry_ids, [first_entry_id, second_entry_id]);
+    assert_eq!(outcome.deleted_memory_item_ids.len(), 4);
+    assert_eq!(outcome.updated_archive_attempt_ids.len(), 2);
+
+    assert!(
+        store
+            .get_bucket(&bucket_id)
+            .expect("bucket lookup")
+            .is_none()
+    );
+    assert!(
+        store
+            .bucket_detail(&bucket_id)
+            .expect("detail lookup")
+            .is_none()
+    );
+    assert!(store.list_entries(&bucket_id).expect("entries").is_empty());
+    assert!(
+        store
+            .list_memory_items(&bucket_id)
+            .expect("memories")
+            .is_empty()
+    );
+    assert!(
+        store
+            .list_active_buckets(10)
+            .expect("active buckets")
+            .into_iter()
+            .all(|bucket| bucket.id != bucket_id)
+    );
+
+    let attempts = store.list_archive_attempts(10).expect("attempts");
+    assert_eq!(attempts.len(), 3);
+    for attempt_id in &outcome.updated_archive_attempt_ids {
+        let attempt = attempts
+            .iter()
+            .find(|attempt| &attempt.id == attempt_id)
+            .expect("attempt retained");
+        assert!(attempt.bucket_id.is_none());
+        assert!(attempt.entry_id.is_none());
+    }
+    let pending_attempt = attempts
+        .iter()
+        .find(|attempt| attempt.id == pending.attempt_id)
+        .expect("pending candidate-only attempt retained");
+    assert_eq!(pending_attempt.archive_state, "needs_confirmation");
+    assert!(pending_attempt.bucket_id.is_none());
+    assert!(pending_attempt.entry_id.is_none());
+    assert_eq!(pending_attempt.candidate_bucket_ids.len(), 1);
+    assert_eq!(pending_attempt.candidate_bucket_ids[0], bucket_id);
+
+    let corrections = store
+        .list_corrections(Some("bucket"), Some(&bucket_id), 10)
+        .expect("corrections");
+    assert_eq!(corrections.len(), 1);
+    assert_eq!(corrections[0].id, outcome.correction_id);
+    assert_eq!(corrections[0].action, "delete_bucket");
+    assert_eq!(
+        corrections[0].before.as_ref().unwrap()["bucket"]["id"],
+        bucket_id
+    );
+    assert_eq!(
+        corrections[0].before.as_ref().unwrap()["deleted_entry_ids"],
+        json!(outcome.deleted_entry_ids)
+    );
+    assert_eq!(corrections[0].after, Some(json!({"deleted": true})));
+
+    let counts = store.counts().expect("counts after delete");
+    assert_eq!(counts.buckets, 0);
+    assert_eq!(counts.entries, 0);
+    assert_eq!(counts.memory_items, 0);
+    assert_eq!(counts.archive_attempts, 3);
+    assert_eq!(counts.corrections, 1);
+
+    assert!(matches!(
+        store.delete_bucket(&bucket_id, "重复删除。"),
+        Err(StoreError::MissingRecord {
+            table: "buckets",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn popular_active_buckets_rank_by_entry_and_memory_volume() {
+    let database = TemporaryPath::new("canonical-popular-buckets");
+    let mut store = RustStore::initialize(database.path()).expect("canonical schema");
+    let audit = RustArchiveAudit::new(vec![], None, "rust-v1", "test-model").expect("audit");
+
+    let popular = store
+        .archive(
+            "热门 Bucket 第一次记录。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "热门 Bucket",
+                0.99,
+                "popular",
+                vec![],
+            )
+            .expect("classification"),
+            Some(ExtractionResult::minimal("热门 1").expect("extraction")),
+            audit.clone(),
+        )
+        .expect("popular create");
+    let popular_bucket_id = popular.bucket_id.expect("popular bucket");
+    for index in 2..=3 {
+        store
+            .archive(
+                format!("热门 Bucket 第 {index} 次记录。"),
+                ClassificationResult::append_existing(
+                    popular_bucket_id.clone(),
+                    Some(BucketType::Task),
+                    0.99,
+                    "popular append",
+                    vec![popular_bucket_id.clone()],
+                )
+                .expect("classification"),
+                Some(ExtractionResult::minimal(format!("热门 {index}")).expect("extraction")),
+                audit.clone(),
+            )
+            .expect("popular append");
+    }
+    let recent = store
+        .archive(
+            "最近但低频 Bucket。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "最近 Bucket",
+                0.99,
+                "recent",
+                vec![],
+            )
+            .expect("classification"),
+            Some(ExtractionResult::minimal("最近").expect("extraction")),
+            audit,
+        )
+        .expect("recent create");
+    let recent_bucket_id = recent.bucket_id.expect("recent bucket");
+
+    let popular_ids = store
+        .list_popular_active_buckets(10)
+        .expect("popular buckets")
+        .into_iter()
+        .map(|bucket| bucket.id)
+        .collect::<Vec<_>>();
+    assert_eq!(popular_ids[0], popular_bucket_id);
+    assert!(popular_ids.contains(&recent_bucket_id));
+
+    store
+        .set_bucket_status(&popular_bucket_id, BucketStatus::Paused)
+        .expect("pause popular");
+    let active_popular_ids = store
+        .list_popular_active_buckets(10)
+        .expect("popular after pause")
+        .into_iter()
+        .map(|bucket| bucket.id)
+        .collect::<Vec<_>>();
+    assert!(!active_popular_ids.contains(&popular_bucket_id));
+    assert!(active_popular_ids.contains(&recent_bucket_id));
+}
