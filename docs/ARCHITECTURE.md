@@ -32,7 +32,7 @@ crate 职责：
 ## 2. 自动归档流程
 
 1. Server 校验非空用户文本并保存当前 user 消息。
-2. Runtime 读取活跃 Bucket，并把当前焦点 Bucket 放到候选前部。
+2. Runtime 读取活跃 Bucket，并由 service 按最近活跃和热门活跃自动生成候选；旧的当前焦点字段只保留为兼容/审计信息，不再手动提升 UI 选中的 Bucket。
 3. `MemoryModel` 只输出结构化分类结果；服务端重新校验 action、Bucket ID、候选和置信度。
 4. 低信息规则优先于模型 confidence。只有候选唯一、信息充分且达到门槛时才自动写入。
 5. 自动写入前执行结构化提取，在一个事务中写入 Bucket、Entry、memory item、摘要和审计。

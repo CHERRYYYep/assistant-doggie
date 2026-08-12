@@ -18,7 +18,7 @@
 - 枚举字段使用有限取值，未知字段拒绝解析，避免下游静默接受拼写错误。
 - `confidence` 必须位于 0 到 1；`reason` 和 `summary` 必须有实际内容。
 - 跨字段必须一致：追加必须给出 `bucket_id`，新建必须给出 `bucket_type` 和 `title`，询问必须给出 `question`。
-- Pydantic 默认值用于本地调用的安全兜底；调用 Structured Outputs 时，仍要求模型返回完整字段。
+- Rust contract 和服务端校验用于本地调用的安全兜底；调用 Structured Outputs 时，仍要求模型返回完整字段。
 
 保持 MVP Schema 扁平。只有当产品确实需要截止时间、证据来源或决策原因时，再把字符串升级为嵌套对象，避免过早增加 Prompt 和校验复杂度。确认响应由服务端投影已有 Bucket 元数据：`recommended_bucket`、`recommended_bucket_id`、`candidate_buckets`、`candidate_bucket_ids`、`reason` 和 `question`；`bucket_title` / `bucket_type` 仅作为新 Bucket 建议。
 
@@ -38,8 +38,7 @@ Bucket 不是普通文件夹，而是一个持续存在的工作对象，包含�
 
 你需要综合判断：
 - 用户输入内容
-- 当前焦点 bucket
-- 最近活跃 buckets
+- 服务端按最近活跃和热门程度自动提供的候选 buckets
 - bucket 类型、标题、摘要和状态
 - 用户是否使用“刚才”“继续”“这个问题”等指代
 - 用户是否明确说“新开一个”“单独记”“另一个问题”
@@ -63,11 +62,8 @@ Bucket 不是普通文件夹，而是一个持续存在的工作对象，包含�
 用户输入：
 {user_input}
 
-当前焦点 bucket：
-{current_focus_bucket_json_or_null}
-
-活跃 buckets：
-{active_buckets_json}
+候选 buckets（服务端按最近活跃和热门程度自动提供，不代表用户手动选择）：
+{candidate_buckets_json}
 ```
 
 ### 输出 schema

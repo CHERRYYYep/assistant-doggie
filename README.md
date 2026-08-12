@@ -77,7 +77,8 @@ cargo test --workspace --offline
 | `GET` | `/api/memory/query?q=接口%20A%20最近两周的压测结果&limit=20` | 自然语言查询记忆 |
 | `POST` | `/api/memory/query` | 使用查询文本和显式筛选条件查询 |
 | `GET` | `/api/buckets/:id` | 查看 Bucket、Entry 和 memory 详情 |
-| `POST` | `/api/buckets/status` | 设置 `active`、`paused` 或 `archived` |
+| `DELETE` | `/api/buckets/:id` | 删除 Bucket 及其 Entry/memory/tag，并记录纠错审计 |
+| `POST` | `/api/buckets/status` | 设置 `active`、`paused`、`done` 或 `archived` |
 | `POST` | `/api/corrections/move` | 移动 Entry 并记录纠错审计 |
 | `GET` | `/health` | 健康检查 |
 
@@ -121,6 +122,7 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 
 更多说明见：
 
+- [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)：当前项目详解、关键流程和后续提升指南
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)
 - [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md)
