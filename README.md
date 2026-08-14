@@ -126,6 +126,7 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 
 更多说明见：
 
+- [`docs/CODE_READING_GUIDE.md`](docs/CODE_READING_GUIDE.md)：当前架构下的代码阅读路径和模块索引
 - [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)：当前项目详解、关键流程和后续提升指南
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)

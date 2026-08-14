@@ -91,12 +91,13 @@ Cargo workspace 只包含当前 canonical 路径：
 推荐阅读顺序：
 
 1. `README.md`：快速了解能力、运行方式和 API。
-2. 本文档：理解当前模块和关键流程。
-3. `docs/ARCHITECTURE.md`、`docs/DATA_MODEL.md`、`docs/AGENT_HARNESS.md`：了解设计边界。
-4. `crates/doggie-engine/src/lib.rs`：看完整归档编排。
-5. `crates/doggie-application/src/canonical.rs` 和 `crates/doggie-application/src/query.rs`：看业务服务和查询聚合。
-6. `crates/doggie-storage-sqlite/src/canonical.rs`、`canonical_schema.rs`：看真实持久化模型。
-7. `apps/doggie-local-web/src/lib.rs`：看 HTTP route 和 projection；`apps/doggie-local-web/frontend/`：看本地 Web UI。
+2. `docs/CODE_READING_GUIDE.md`：按当前架构走读全部生产代码、前端代码和测试入口。
+3. 本文档：理解当前模块和关键流程。
+4. `docs/ARCHITECTURE.md`、`docs/DATA_MODEL.md`、`docs/AGENT_HARNESS.md`：了解设计边界。
+5. `crates/doggie-engine/src/lib.rs`：看完整归档编排。
+6. `crates/doggie-application/src/canonical.rs` 和 `crates/doggie-application/src/query.rs`：看业务服务和查询聚合。
+7. `crates/doggie-storage-sqlite/src/canonical.rs`、`canonical_schema.rs`：看真实持久化模型。
+8. `apps/doggie-local-web/src/lib.rs`：看 HTTP route 和 projection；`apps/doggie-local-web/frontend/`：看本地 Web UI。
 
 ## 4. `doggie-domain`：领域模型与确定性安全门控
 
