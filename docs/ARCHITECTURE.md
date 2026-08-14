@@ -7,7 +7,7 @@
       │ HTTP + JSON
       ▼
 doggie-local-web
-      │ 参数、传输、确认卡片、内嵌 UI
+      │ 参数、传输、确认卡片、静态前端资源
       ▼
 doggie-engine / CanonicalRuntime<M>
       ├── MemoryModel / doggie-llm Structured Output Adapter
@@ -29,7 +29,7 @@ crate 职责：
 - `doggie-storage-sqlite`：Doggie canonical schema、事务、查询、审计和历史数据库导入。
 - `doggie-application`：稳定的领域服务 facade。
 - `doggie-engine`：把模型、服务和安全策略组合成归档/查询运行时。
-- `doggie-local-web`：HTTP listener、JSON projection 和单页 Web UI。
+- `doggie-local-web`：HTTP listener、JSON projection 和静态单页 Web UI 资源托管。
 
 ## 2. 自动归档流程
 

@@ -3,7 +3,7 @@ name = "doggie-local-web"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Local HTTP API and embedded Web UI for Doggie"
+description = "Local HTTP API and static Web UI for Doggie"
 
 [dependencies]
 serde_json = "1"

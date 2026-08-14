@@ -11,7 +11,7 @@
   → 返回可解释的归档结果
 ```
 
-`doggie-local-web` 是唯一应用入口，提供本地 HTTP API 和内嵌 Web UI。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
+`doggie-local-web` 是唯一应用入口，提供本地 HTTP API，并同源托管独立静态 Web UI 资源。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
 
 ## 当前能力
 
@@ -35,6 +35,8 @@ cargo run -p doggie-local-web
 ```
 
 服务启动后打开 `http://127.0.0.1:8787/`。程序会自动读取当前工作目录的 `.env`；shell 环境变量优先。
+
+本地 Web UI 源文件位于 `apps/doggie-local-web/frontend/`，由 `doggie-local-web` 同源提供 `/`、`/assets/styles.css` 和 `/assets/app.js`；当前不需要 Node/npm 构建步骤。
 
 检查代码与测试：
 
@@ -120,7 +122,7 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 | `doggie-storage-sqlite` | canonical SQLite、事务、查询和历史导入 |
 | `doggie-application` | 归档、查询、纠错、状态和对话服务 |
 | `doggie-engine` | 组合模型与服务，生成产品投影 |
-| `doggie-local-web` | HTTP 路由、内嵌 UI 和进程入口 |
+| `doggie-local-web` | HTTP 路由、静态前端资源托管和进程入口 |
 
 更多说明见：
 

@@ -86,7 +86,7 @@ Cargo workspace 只包含当前 canonical 路径：
 | `doggie-llm` | `crates/doggie-llm/src/` | 模型 endpoint 配置、Responses/Chat Completions 适配、HTTP transport 和 response 归一化 |
 | `doggie-agent-runtime` | `crates/doggie-agent-runtime/src/` | 受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装 |
 | `doggie-engine` | `crates/doggie-engine/src/lib.rs` | 组合模型、服务和安全策略，执行归档和读 projection |
-| `doggie-local-web` | `apps/doggie-local-web/src/` | 本地 HTTP API、ChatGPT 风格内嵌 Web UI、应用入口 |
+| `doggie-local-web` | `apps/doggie-local-web/` | 本地 HTTP API、ChatGPT 风格静态 Web UI 资源、应用入口 |
 
 推荐阅读顺序：
 
@@ -96,7 +96,7 @@ Cargo workspace 只包含当前 canonical 路径：
 4. `crates/doggie-engine/src/lib.rs`：看完整归档编排。
 5. `crates/doggie-application/src/canonical.rs` 和 `crates/doggie-application/src/query.rs`：看业务服务和查询聚合。
 6. `crates/doggie-storage-sqlite/src/canonical.rs`、`canonical_schema.rs`：看真实持久化模型。
-7. `apps/doggie-local-web/src/lib.rs`：看 HTTP route、projection 和 UI。
+7. `apps/doggie-local-web/src/lib.rs`：看 HTTP route 和 projection；`apps/doggie-local-web/frontend/`：看本地 Web UI。
 
 ## 4. `doggie-domain`：领域模型与确定性安全门控
 
@@ -496,13 +496,16 @@ service 会把两组结果交错合并，再交给 core 去重截断。
 
 这使 UI 能完整展示推荐 Bucket、备选 Bucket、创建新 Bucket、不保存、归档后修改 Bucket 等入口。
 
-## 10. `doggie-local-web`：HTTP API 与内嵌 Web UI
+## 10. `doggie-local-web`：HTTP API 与静态 Web UI
 
 ### 10.1 HTTP route 总览
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `GET` | `/` | 返回内嵌 Web UI |
+| `GET` | `/` | 返回静态 Web UI 入口 HTML |
+| `GET` | `/index.html` | 返回同一入口 HTML |
+| `GET` | `/assets/styles.css` | 返回前端样式 |
+| `GET` | `/assets/app.js` | 返回前端脚本 |
 | `GET` | `/health` | 健康检查 |
 | `GET` | `/api/buckets/active?limit=20` | 读取活跃 Bucket |
 | `GET` | `/api/buckets/search?q=...&limit=20` | legacy Bucket 级搜索 |
@@ -561,7 +564,15 @@ append 还需要 `bucket_id`；create 还需要 `title` 和 `bucket_type`。服�
 
 ### 10.5 Web UI 当前状态
 
-UI 是嵌在 `apps/doggie-local-web/src/lib.rs` 中的单页 HTML/CSS/JS：
+UI 已从 Rust raw string 拆成 `apps/doggie-local-web/frontend/` 下的独立静态前端资源：
+
+- `index.html`：页面结构和静态挂载点。
+- `assets/styles.css`：页面样式。
+- `assets/app.js`：前端状态、API 请求、Markdown 安全渲染和事件绑定。
+
+`apps/doggie-local-web/src/frontend.rs` 通过 `include_str!` 编译期嵌入这些静态资源，保持 `doggie-local-web` 二进制自包含；`GET /` 与 `GET /index.html` 返回入口 HTML，`GET /assets/styles.css` 和 `GET /assets/app.js` 返回对应资源。当前阶段不引入 npm/Vite 等前端构建链。
+
+前端行为约束：
 
 - 左侧显示活跃 Bucket。
 - 中间是长期对话。
@@ -572,7 +583,7 @@ UI 是嵌在 `apps/doggie-local-web/src/lib.rs` 中的单页 HTML/CSS/JS：
 - 归档结果展示状态、推荐 Bucket、候选 Bucket、确认操作和修改入口。
 - Bucket 详情页支持删除 Bucket。
 
-后续如果 UI 继续增长，建议从嵌入字符串拆成独立前端资源或模板，以降低 server 文件复杂度。
+后续如果 UI 继续增长，可以在保持 `/api` 同源契约的前提下，再引入前端构建或模板边界。
 
 ## 11. 关键业务流程详解
 
@@ -858,7 +869,7 @@ git diff --check
 
 可提升：
 
-- 将内嵌 HTML/JS 拆出，建立前端构建或模板边界。
+- 视 UI 复杂度引入前端构建或模板边界。
 - 确认卡片增强：搜索其他 Bucket、显示更多候选、批量处理 pending。
 - Bucket 详情分页、筛选、按 memory kind 展示。
 - 查询结果展示 query plan、evidence、命中字段和可复制摘要。

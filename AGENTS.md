@@ -11,7 +11,7 @@
 - `crates/doggie-llm/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport 和 response 归一化。
 - `crates/doggie-agent-runtime/`：受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装。
 - `crates/doggie-engine/`：稳定 facade，组装模型、应用服务和安全门控。
-- `apps/doggie-local-web/`：当前唯一入口；本地 HTTP API、ChatGPT 风格内嵌 Web UI 和进程入口。
+- `apps/doggie-local-web/`：当前唯一入口；本地 HTTP API、ChatGPT 风格静态 Web UI 资源和进程入口。
 - `docs/`：当前架构、数据模型、API 行为、迁移边界和测试方案。
 
 旧版运行时、旧测试和旧界面不属于本分支。历史数据库兼容能力只允许以 Rust 实现保留，不得重新引入其他语言的生产路径或测试依赖。

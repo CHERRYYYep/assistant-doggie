@@ -26,6 +26,9 @@ use doggie_protocol::{
 use doggie_storage_sqlite::{ChatRole, DoggieChatMessage, StoreError};
 use serde_json::{Value, json};
 
+mod frontend;
+pub use frontend::{APP_JS, INDEX_HTML, STYLES_CSS};
+
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8787";
 const DEFAULT_LIST_LIMIT: usize = 20;
 const MAX_LIST_LIMIT: usize = 100;
@@ -216,11 +219,11 @@ impl HttpResponse {
         }
     }
 
-    fn html(body: &'static str) -> Self {
+    fn static_asset(asset: frontend::FrontendAsset) -> Self {
         Self {
             status: 200,
-            content_type: "text/html; charset=utf-8",
-            body: body.to_owned(),
+            content_type: asset.content_type,
+            body: asset.body.to_owned(),
         }
     }
 
@@ -283,8 +286,13 @@ where
     /// Dispatch one request without performing network I/O.
     pub fn handle_request(&mut self, request: HttpRequest) -> HttpResponse {
         let (path, query) = split_target(&request.target);
-        match (request.method.trim().to_ascii_uppercase().as_str(), path) {
-            ("GET", "/") => HttpResponse::html(INDEX_HTML),
+        let method = request.method.trim().to_ascii_uppercase();
+        if method == "GET" {
+            if let Some(asset) = frontend::asset_for_path(path) {
+                return HttpResponse::static_asset(asset);
+            }
+        }
+        match (method.as_str(), path) {
             ("GET", "/health") => {
                 HttpResponse::json(200, json!({"ok": true, "service": "doggie-local-web"}))
             }
@@ -1653,103 +1661,6 @@ fn status_reason(status: u16) -> &'static str {
     }
 }
 
-/// Small browser UI served from the same origin as the API.
-pub const INDEX_HTML: &str = r##"<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Doggie 工作记忆</title>
-  <style>
-    :root{color-scheme:light;--bg:#f7f7f5;--panel:#fff;--line:#e5e7eb;--text:#1f2937;--muted:#6b7280;--accent:#2563eb;--accent-soft:#eff6ff;--warn:#92400e;--green:#166534;}
-    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-    button,input,select,textarea{font:inherit}button{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:8px;padding:.52rem .78rem;color:var(--text)}button:hover{border-color:#9ca3af;background:#f9fafb}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button.primary:hover{background:#1d4ed8}button:disabled{cursor:wait;opacity:.6}
-    .app-shell{min-height:100vh;display:grid;grid-template-columns:300px minmax(0,1fr)}.sidebar{border-right:1px solid var(--line);background:#fbfbfa;padding:1rem;display:flex;flex-direction:column;gap:1rem;min-height:100vh}.brand{display:flex;align-items:center;justify-content:space-between;gap:.6rem}.brand h1{font-size:1rem;margin:0}.brand small{display:block;color:var(--muted);font-size:.75rem}.sidebar-section{border-top:1px solid var(--line);padding-top:.85rem}.section-heading{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.55rem}.section-heading h2{font-size:.85rem;margin:0}.section-heading button{padding:.25rem .45rem;font-size:.78rem}.bucket-list{max-height:34vh;overflow:auto}.bucket{display:block;width:100%;text-align:left;border:0;border-radius:8px;background:transparent;padding:.55rem;margin:.12rem 0}.bucket:hover,.bucket.selected{background:#eef2ff}.bucket-title{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.bucket-meta,.muted{color:var(--muted);font-size:.82rem}.bucket-summary{color:#4b5563;margin:.18rem 0 0;font-size:.8rem;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-    .detail-panel{background:#fff;border:1px solid var(--line);border-radius:10px;padding:.7rem;max-height:28vh;overflow:auto}.detail-entry{border-top:1px solid var(--line);padding:.55rem 0}.detail-entry:first-child{border-top:0}.query-box input{width:100%;padding:.55rem;border:1px solid #cbd5e1;border-radius:8px}.query-box button{margin-top:.45rem;width:100%}.query-result{margin-top:.65rem;max-height:28vh;overflow:auto;font-size:.82rem}.query-plan{background:var(--accent-soft);border:1px solid #bfdbfe;border-radius:8px;padding:.6rem;margin-bottom:.6rem}.query-bucket{border:1px solid var(--line);border-radius:8px;padding:.55rem;margin-top:.5rem}.query-entry{border-top:1px solid var(--line);padding:.45rem 0}.query-entry:first-child{border-top:0}.query-evidence{margin-top:.6rem}.side-footer{margin-top:auto;color:var(--muted);font-size:.75rem}
-    .chat-panel{min-width:0;display:flex;flex-direction:column;min-height:100vh}.chat-header{height:64px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.86);display:flex;align-items:center;justify-content:space-between;padding:0 1.5rem;position:sticky;top:0;z-index:2;backdrop-filter:blur(12px)}.chat-header h2{font-size:1rem;margin:0}.chat-header span{color:var(--muted);font-size:.82rem}.chat-messages{width:min(900px,100%);margin:0 auto;padding:1.5rem 1rem 8rem;flex:1}.message{display:flex;margin:1.1rem 0;gap:.65rem}.message.user{justify-content:flex-end}.avatar{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;font-size:.76rem;font-weight:700;flex:0 0 auto}.assistant .avatar{background:#111827;color:#fff}.user .avatar{background:#dbeafe;color:#1d4ed8;order:2}.bubble{max-width:min(760px,calc(100% - 42px));border-radius:14px;padding:.8rem 1rem;white-space:normal;overflow-wrap:anywhere}.assistant .bubble{background:#fff;border:1px solid var(--line)}.user .bubble{background:#e8f0fe;color:#172554}.message.pending .bubble{opacity:.65}.message.tool{opacity:.7;font-size:.78rem}.message.tool .bubble{background:#f3f4f6;border:1px dashed #d1d5db}.message-text{white-space:normal}.message-text p{margin:.35rem 0 .7rem}.message-text p:first-child{margin-top:0}.message-text p:last-child{margin-bottom:0}.message-text h1,.message-text h2,.message-text h3,.message-text h4,.message-text h5,.message-text h6{margin:.75rem 0 .4rem;line-height:1.3}.message-text h1{font-size:1.25rem}.message-text h2{font-size:1.15rem}.message-text h3{font-size:1.05rem}.message-text ul,.message-text ol{margin:.35rem 0 .7rem;padding-left:1.4rem}.message-text li+li{margin-top:.2rem}.message-text blockquote{margin:.5rem 0;padding:.35rem .7rem;border-left:3px solid #cbd5e1;background:#f8fafc;color:#4b5563}.message-text hr{border:0;border-top:1px solid var(--line);margin:.75rem 0}.message-text code{padding:.12rem .3rem;border-radius:4px;background:#eef2f7;color:#334155;font:0.9em ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace}.message-text .md-code-block{margin:.7rem 0;border:1px solid #dbe3ec;border-radius:8px;overflow:hidden;background:#111827;color:#f8fafc}.message-text .md-code-header{display:flex;align-items:center;min-height:1.7rem;padding:.25rem .65rem;background:#1f2937;color:#cbd5e1;font-size:.76rem}.message-text .md-code-block pre{margin:0;padding:.7rem;overflow-x:auto;white-space:pre}.message-text .md-code-block pre code{padding:0;background:transparent;color:inherit;font-size:.86rem}.message-text a{color:#1d4ed8;text-decoration:underline;text-underline-offset:2px}.archive-card{margin-top:.9rem;border:1px solid #cbd5e1;border-radius:12px;padding:.8rem;background:#fbfdff}.archive-card.needs-confirmation{border-color:#f0d98c;background:#fffdf4}.archive-card h3,.archive-card h4{margin:.05rem 0 .45rem;font-size:.9rem}.archive-card p{margin:.35rem 0}.archive-reason{background:#f5f7fa;border-radius:8px;padding:.62rem;margin:.55rem 0}.archive-question{background:#fff8e1;border:1px solid #f0d98c;border-radius:8px;padding:.62rem;margin:.55rem 0}.candidate-card{border:1px solid var(--line);border-radius:8px;padding:.55rem;margin:.35rem 0;background:#fff}.candidate-card.recommended{border-color:#93c5fd;background:#eff6ff}.candidate-title{font-weight:650}.candidate-meta{font-size:.78rem;color:var(--muted)}.archive-actions{display:flex;flex-wrap:wrap;gap:.42rem;margin-top:.55rem}.archive-actions button{margin:0}.archive-group{border-top:1px solid var(--line);padding-top:.65rem;margin-top:.65rem}.archive-group:first-of-type{border-top:0}.archive-group select,.archive-group input{width:100%;padding:.48rem;border:1px solid #cbd5e1;border-radius:7px;margin:.28rem 0}.success{color:var(--green)}.warning{color:var(--warn)}.move-entry{border-top:1px solid var(--line);margin-top:.7rem;padding-top:.65rem}.move-entry select{min-width:190px;padding:.42rem;border:1px solid #cbd5e1;border-radius:7px}.composer-wrap{position:fixed;bottom:0;left:300px;right:0;padding:1rem;background:linear-gradient(transparent,var(--bg) 28%);z-index:3}.composer{width:min(900px,100%);margin:0 auto;display:flex;gap:.6rem;align-items:flex-end;background:#fff;border:1px solid #cbd5e1;border-radius:14px;padding:.55rem;box-shadow:0 8px 26px rgba(15,23,42,.08)}#chat-input{resize:none;flex:1;min-height:42px;max-height:180px;border:0;outline:0;padding:.45rem .5rem;background:transparent}#chat-send{min-width:70px}.chat-status{width:min(900px,100%);margin:.3rem auto 0;color:var(--muted);font-size:.78rem;padding:0 .35rem}.empty-chat{text-align:center;color:var(--muted);padding:18vh 1rem}.empty-chat h3{color:var(--text);font-size:1.15rem;font-weight:600}.empty-chat p{margin:.3rem 0}
-    @media(max-width:900px){.app-shell{grid-template-columns:240px minmax(0,1fr)}.composer-wrap{left:240px}}@media(max-width:680px){.app-shell{display:block}.sidebar{min-height:auto;border-right:0;border-bottom:1px solid var(--line)}.bucket-list{max-height:23vh}.detail-panel,.query-result{max-height:20vh}.chat-panel{min-height:70vh}.composer-wrap{left:0}.chat-header{padding:0 1rem}}
-  </style>
-</head>
-<body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand"><div><h1>Doggie 工作记忆</h1><small>Doggie 本地工作记忆 · 类似 ChatGPT 的长期对话</small></div><button id="new-chat" title="清空当前输入">新对话</button></div>
-      <section class="sidebar-section">
-        <div class="section-heading"><h2>活跃 Bucket</h2><button id="refresh-buckets">刷新</button></div>
-        <div id="buckets" class="bucket-list muted">加载中…</div>
-      </section>
-      <section class="sidebar-section">
-        <div class="section-heading"><h2>Bucket 详情</h2></div>
-        <div id="detail" class="detail-panel muted">选择一个 Bucket 查看 Entry 和结构化记忆。</div>
-      </section>
-      <section class="sidebar-section query-box">
-        <div class="section-heading"><h2>语言查询</h2></div>
-        <input id="memory-query" type="text" placeholder="例如：接口 A 最近两周的压测结果">
-        <button id="memory-query-button" class="primary">查询记忆</button>
-        <div id="memory-query-result" class="query-result muted">系统会解析实体、主题、时间范围和状态，并合并多个 Bucket 的证据。</div>
-      </section>
-      <div class="side-footer">自动归档由服务端完成；低信息输入会先询问，不会静默写错。</div>
-    </aside>
-    <main class="chat-panel">
-      <header class="chat-header"><div><h2>长期对话</h2><span>每条用户消息都会先进入归档安全门控</span></div><span id="selected-bucket-label">自动关联最近和热门 Bucket</span></header>
-      <section id="chat-messages" class="chat-messages" aria-live="polite"><div class="empty-chat"><h3>从一条工作事实开始</h3><p>例如：接口 A 最近两周的压测结果有明显回归。</p><p>我会自动归档；如果目标不明确，会展示推荐、备选、创建和不保存选项。</p></div></section>
-      <div class="composer-wrap"><div class="composer"><textarea id="chat-input" rows="1" placeholder="发送消息…（Enter 发送，Shift+Enter 换行）"></textarea><button id="chat-send" class="primary">发送</button></div><div id="chat-status" class="chat-status"></div></div>
-    </main>
-  </div>
-<script>
-const chatMessages=document.querySelector('#chat-messages');
-const chatInput=document.querySelector('#chat-input');
-const chatSend=document.querySelector('#chat-send');
-const chatStatus=document.querySelector('#chat-status');
-const buckets=document.querySelector('#buckets');
-const detail=document.querySelector('#detail');
-const selectedBucketLabel=document.querySelector('#selected-bucket-label');
-const memoryQueryInput=document.querySelector('#memory-query');
-const memoryQueryButton=document.querySelector('#memory-query-button');
-const memoryQueryResult=document.querySelector('#memory-query-result');
-let activeBuckets=[];
-let selectedBucketId=null;
-let history=[];
-const legacyArchiveRoute='/api/archive';
-const legacyConfirmRoutes=['/api/archive/append','/api/archive/create'];
-const correctionRoute='/api/corrections/move';
-
-function escapeHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function safeHref(value){const href=String(value??'').trim();if(/[\u0000-\u001f\u007f]/.test(href))return '';return /^(?:https?:\/\/|mailto:|#|\/(?!\/)|\?)/i.test(href)?href:'';}
-function renderInline(value){const source=String(value??'');let html='',plain='',index=0;const flushPlain=()=>{if(plain){html+=escapeHtml(plain).replace(/\n/g,'<br>');plain='';}};while(index<source.length){if(source[index]==='`'){let run=1;while(source[index+run]==='`')run+=1;const marker=source.slice(index,index+run);const end=source.indexOf(marker,index+run);if(end!==-1){flushPlain();html+=`<code>${escapeHtml(source.slice(index+run,end))}</code>`;index=end+run;continue;}}if(source.startsWith('**',index)||source.startsWith('__',index)){const marker=source.slice(index,index+2);const end=source.indexOf(marker,index+2);if(end>index+2){flushPlain();html+=`<strong>${renderInline(source.slice(index+2,end))}</strong>`;index=end+2;continue;}}if(source[index]==='*'||source[index]==='_'){const marker=source[index];const isWordUnderscore=marker==='_'&&index>0&&/\w/.test(source[index-1]);if(!isWordUnderscore){const end=source.indexOf(marker,index+1);if(end>index+1){flushPlain();html+=`<em>${renderInline(source.slice(index+1,end))}</em>`;index=end+1;continue;}}}if(source[index]==='['){const link=source.slice(index).match(/^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+["']([^"']*)["'])?\)/);if(link){const href=safeHref(link[2]);if(href){flushPlain();const title=link[3]?` title="${escapeHtml(link[3])}"`:'';html+=`<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener"${title}>${renderInline(link[1])}</a>`;index+=link[0].length;continue;}}}plain+=source[index];index+=1;}flushPlain();return html;}
-function codeLanguage(value){const token=String(value??'').trim().split(/\s+/,1)[0]||'';return token.replace(/[^A-Za-z0-9_+#.-]/g,'').slice(0,32);}
-function renderCodeBlock(lines,info){const language=codeLanguage(info);const className=language?` class="language-${escapeHtml(language)}"`:'';return `<div class="md-code-block"><div class="md-code-header">${language?escapeHtml(language):'代码'}</div><pre><code${className}>${escapeHtml(lines.join('\n'))}</code></pre></div>`;}
-function renderMarkdown(value){const lines=String(value??'').replace(/\r\n?/g,'\n').split('\n');let html='',paragraph=[],listType=null,listItems=[],quoteLines=[],fence=null;const flushParagraph=()=>{if(paragraph.length){html+=`<p>${renderInline(paragraph.join('\n'))}</p>`;paragraph=[];}};const flushList=()=>{if(listType){html+=`<${listType}>${listItems.map(item=>`<li>${item}</li>`).join('')}</${listType}>`;listType=null;listItems=[];}};const flushQuote=()=>{if(quoteLines.length){html+=`<blockquote>${renderInline(quoteLines.join('\n'))}</blockquote>`;quoteLines=[];}};const flushBlocks=()=>{flushParagraph();flushList();flushQuote();};for(const line of lines){if(fence){const close=line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);if(close&&close[1][0]===fence.char&&close[1].length>=fence.length){html+=renderCodeBlock(fence.lines,fence.info);fence=null;}else{fence.lines.push(line);}continue;}const opening=line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);if(opening){flushBlocks();fence={char:opening[1][0],length:opening[1].length,info:opening[2],lines:[]};continue;}if(!line.trim()){flushBlocks();continue;}const heading=line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);if(heading){flushBlocks();const level=heading[1].length;html+=`<h${level}>${renderInline(heading[2])}</h${level}>`;continue;}if(/^ {0,3}(?:[-*_]\s*){3,}$/.test(line)){flushBlocks();html+='<hr>';continue;}const quote=line.match(/^ {0,3}>\s?(.*)$/);if(quote){flushParagraph();flushList();quoteLines.push(quote[1]);continue;}if(quoteLines.length)flushQuote();const unordered=line.match(/^ {0,3}[-+*]\s+(.+)$/);if(unordered){flushParagraph();if(listType!=='ul'){flushList();listType='ul';}listItems.push(renderInline(unordered[1]));continue;}const ordered=line.match(/^ {0,3}\d+[.)]\s+(.+)$/);if(ordered){flushParagraph();if(listType!=='ol'){flushList();listType='ol';}listItems.push(renderInline(ordered[1]));continue;}flushList();paragraph.push(line);}if(fence){html+=renderCodeBlock(fence.lines,fence.info);}else{flushBlocks();}return html;}
-async function jsonRequest(url,options){const response=await fetch(url,options);const raw=await response.text();let data={};try{data=raw?JSON.parse(raw):{};}catch(_){data={error:raw||`HTTP ${response.status}`};}if(!response.ok)throw new Error(data.error||`HTTP ${response.status}`);return data;}
-function setStatus(text,kind=''){chatStatus.className=`chat-status ${kind}`;chatStatus.textContent=text||'';}
-function bucketById(id){return activeBuckets.find(bucket=>bucket.id===id);}
-function bucketLabel(bucket){return bucket?`「${escapeHtml(bucket.title||bucket.id)}」`:'未命名 Bucket';}
-function renderBucketSummary(bucket){return `<div class="bucket-title">${bucketLabel(bucket)}</div><div class="bucket-meta">${escapeHtml(bucket.type||'unknown')} · ${escapeHtml(bucket.status||'')}</div><div class="bucket-summary">${escapeHtml(bucket.summary||'暂无摘要')}</div>`;}
-function candidateBuckets(data){const byId=new Map();for(const bucket of (data.candidate_buckets||[])){if(bucket?.id)byId.set(bucket.id,bucket);}for(const id of (data.candidate_bucket_ids||[])){if(!byId.has(id)&&bucketById(id))byId.set(id,bucketById(id));}for(const bucket of activeBuckets){if(!byId.has(bucket.id))byId.set(bucket.id,bucket);}return [...byId.values()];}
-function renderBucketOptions(excludeId,selectedId=''){const options=activeBuckets.filter(bucket=>bucket.id!==excludeId);if(!options.length)return '<option value="">暂无其他活跃 Bucket</option>';return options.map(bucket=>`<option value="${escapeHtml(bucket.id)}"${bucket.id===selectedId?' selected':''}>${escapeHtml(bucket.title||bucket.id)} · ${escapeHtml(bucket.type||'unknown')}</option>`).join('');}
-function renderEmpty(){chatMessages.innerHTML='<div class="empty-chat"><h3>从一条工作事实开始</h3><p>例如：接口 A 最近两周的压测结果有明显回归。</p><p>我会自动归档；如果目标不明确，会展示推荐、备选、创建和不保存选项。</p></div>';}
-async function refreshBuckets(){try{const data=await jsonRequest('/api/buckets/active?limit=100');activeBuckets=data.buckets||[];if(selectedBucketId&&!bucketById(selectedBucketId)){selectedBucketId=null;detail.innerHTML='<span class="muted">选择左侧 Bucket 查看详情。</span>';}selectedBucketLabel.textContent='自动关联最近和热门 Bucket';buckets.innerHTML=activeBuckets.map(bucket=>`<button class="bucket${bucket.id===selectedBucketId?' selected':''}" data-action="show-bucket" data-bucket-id="${escapeHtml(bucket.id)}">${renderBucketSummary(bucket)}</button>`).join('')||'<div class="muted">暂无活跃 Bucket</div>';}catch(error){buckets.innerHTML=`<span class="warning">${escapeHtml(error.message)}</span>`;}}
-async function showBucket(bucketId){selectedBucketId=bucketId;selectedBucketLabel.textContent='自动关联最近和热门 Bucket';document.querySelectorAll('.bucket[data-bucket-id]').forEach(node=>node.classList.toggle('selected',node.dataset.bucketId===bucketId));try{const data=await jsonRequest('/api/buckets/'+encodeURIComponent(bucketId));const bucket=data.detail.bucket;const entries=data.detail.entries||[];detail.innerHTML=renderBucketSummary(bucket)+`<div class="archive-actions" style="margin-top:.55rem"><button data-action="delete-bucket" data-bucket-id="${escapeHtml(bucket.id)}">删除 Bucket</button></div><div class="muted" style="margin-top:.45rem">${entries.length} 条 Entry</div>`+entries.map(entry=>`<div class="detail-entry"><b>Entry</b><br>${renderMarkdown(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary||'')}</span></div>`).join('');}catch(error){detail.innerHTML=`<span class="warning">${escapeHtml(error.message)}</span>`;}}
-function renderQueryPlan(plan){const range=plan.time_range?`${escapeHtml(plan.time_range.label)}（${escapeHtml(plan.time_range.start)} 至 ${escapeHtml(plan.time_range.end)}）`:'未指定';const statuses=(plan.statuses||[]).map(escapeHtml).join('、')||'未指定';const filters=(plan.structured_filters||[]).map(filter=>`${escapeHtml(filter.field)}=${escapeHtml(filter.value)}`).join('；')||'无';return `<div class="query-plan"><b>查询理解</b><br>实体：${(plan.entity_terms||[]).map(escapeHtml).join('、')||'未识别'}<br>主题：${(plan.topic_terms||[]).map(escapeHtml).join('、')||'未识别'}<br>时间范围：${range}<br>状态：${statuses}<br>结构化筛选：${filters}</div>`;}
-function renderMemoryQuery(data){let html=renderQueryPlan(data.query_plan||{});html+=`<div class="query-answer"><b>合并回答：</b>${renderMarkdown(data.answer||'')}</div>`;const results=data.results||[];if(!results.length){memoryQueryResult.innerHTML=html+'<p class="muted">没有匹配的 Entry。</p>';return;}const groups=new Map();for(const hit of results){const id=hit.bucket?.id||'unknown';if(!groups.has(id))groups.set(id,{bucket:hit.bucket,entries:[]});groups.get(id).entries.push(hit);}html+='<h3>按 Bucket 合并的证据</h3>';for(const group of groups.values()){html+=`<div class="query-bucket"><b>${bucketLabel(group.bucket)}</b> <span class="muted">${escapeHtml(group.bucket?.status||'')} · ${group.entries.length} 条 Entry</span>`;for(const hit of group.entries){const entry=hit.entry||{};html+=`<div class="query-entry"><b>Entry</b> · ${escapeHtml(entry.created_at||'')} · score ${escapeHtml(hit.score)}<br>${renderMarkdown(entry.raw_text||'')}<br><span class="muted">${escapeHtml(entry.summary||'')}</span><br><span class="muted">匹配字段：${(hit.matched_fields||[]).map(escapeHtml).join('、')||'关键词/语义匹配'}</span></div>`;}html+='</div>';}const evidence=data.evidence||[];if(evidence.length){html+='<div class="query-evidence"><h3>去重后的证据</h3>'+evidence.map(memory=>`<div class="detail-entry"><b>${escapeHtml(memory.kind||'evidence')}</b>：${escapeHtml(memory.text||'')}</div>`).join('')+'</div>';}memoryQueryResult.innerHTML=html;}
-async function runMemoryQuery(){const query=memoryQueryInput.value.trim();if(!query){memoryQueryResult.textContent='请输入自然语言查询。';return;}memoryQueryResult.textContent='查询中…';try{const data=await jsonRequest('/api/memory/query?q='+encodeURIComponent(query)+'&limit=20');renderMemoryQuery(data);}catch(error){memoryQueryResult.innerHTML=`<span class="warning">${escapeHtml(error.message)}</span>`;}}
-function renderMoveEntryCard(archive){if(!archive.entry_id)return '';const options=renderBucketOptions(archive.bucket_id);const hasTarget=activeBuckets.some(bucket=>bucket.id!==archive.bucket_id);return `<div class="move-entry"><h4>修改 Bucket</h4>${hasTarget?`<select data-role="move-target">${options}</select><button data-action="move-entry" data-entry-id="${escapeHtml(archive.entry_id)}">修改 Bucket</button>`:'<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<div data-role="move-status" class="muted"></div></div>`;}
-function renderArchiveCard(archive,sourceText){if(!archive||!archive.archive_state)return '';const state=archive.archive_state;const cardClass=state==='needs_confirmation'?'archive-card needs-confirmation':'archive-card';let html=`<div class="${cardClass}" data-source-text="${escapeHtml(sourceText||archive.source_text||'')}" data-attempt-id="${escapeHtml(archive.attempt_id||'')}"><h3>${state==='needs_confirmation'?'需要确认归档':'归档结果'}</h3>`;if(archive.reason)html+=`<div class="archive-reason"><b>模型判断理由：</b>${renderMarkdown(archive.reason)}</div>`;if(state==='needs_confirmation'){const candidates=candidateBuckets(archive);const recommendedId=archive.recommended_bucket_id||archive.recommended_bucket?.id||candidates[0]?.id||'';const recommended=archive.recommended_bucket||candidates.find(bucket=>bucket.id===recommendedId)||bucketById(recommendedId);html+=`<div class="archive-question"><b>请选择：</b>${renderMarkdown(archive.question||'信息不够明确，请选择归档方式。')}</div><div class="archive-group"><h4>推荐 Bucket</h4>${recommended?`<div class="candidate-card recommended">${renderBucketSummary(recommended)}</div><div class="archive-actions"><button class="primary" data-action="chat-confirm" data-confirm-action="append" data-bucket-id="${escapeHtml(recommended.id)}">1. 保存到${bucketLabel(recommended)}</button></div>`:'<div class="muted">模型暂未给出可直接保存的推荐 Bucket。</div>'}</div>`;const alternatives=candidates.filter(bucket=>bucket.id!==recommendedId);html+=`<div class="archive-group"><h4>备选 Bucket</h4>${alternatives.length?alternatives.map(bucket=>`<div class="candidate-card">${renderBucketSummary(bucket)}</div>`).join(''):'<div class="muted">没有其他明确候选，仍可从活跃 Bucket 中选择。</div>'}<select data-role="alternative-bucket">${renderBucketOptions(recommendedId)}</select><div class="archive-actions"><button data-action="chat-confirm" data-confirm-action="append-alternative">2. 保存到其他 Bucket</button></div></div>`;const types=['task','incident','experiment','idea','decision','meeting','knowledge','draft'];html+=`<div class="archive-group"><h4>创建新 Bucket</h4><input data-role="create-title" value="${escapeHtml(archive.bucket_title||'')}" placeholder="例如：接口 A 压测"><select data-role="create-type">${types.map(type=>`<option value="${type}"${type===(archive.bucket_type||'task')?' selected':''}>${type}</option>`).join('')}</select><div class="archive-actions"><button data-action="chat-confirm" data-confirm-action="create">3. 创建新的 Bucket</button><button data-action="chat-confirm" data-confirm-action="discard">4. 不保存</button></div></div><p class="muted">如已保存后仍需调整，可使用“修改 Bucket”入口。</p>`;}else if(state==='archived'){const bucket=archive.bucket||bucketById(archive.bucket_id);html+=`<p class="success"><b>已归档到：</b>${bucketLabel(bucket||{id:archive.bucket_id})}</p>`;if(archive.extraction?.summary)html+=`<p><b>摘要：</b>${escapeHtml(archive.extraction.summary)}</p>`;html+=renderMoveEntryCard(archive);}else if(state==='discarded'){html+='<p class="muted">这条内容没有保存为正式 Entry。</p>';}html+='</div>';return html;}
-function renderMessage(message){const role=message.role||'assistant';if(role==='tool')return `<article class="message tool"><div class="avatar">⌁</div><div class="bubble"><div class="message-text">工具：${escapeHtml(message.tool_name||'memory')}（结果已保存）</div></div></article>`;const isUser=role==='user';let html=`<article class="message ${isUser?'user':'assistant'}${message.pending?' pending':''}"><div class="avatar">${isUser?'你':'D'}</div><div class="bubble"><div class="message-text">${renderMarkdown(message.content||'')}</div>`;if(!isUser){const details=message.details||{};if(details.archive)html+=renderArchiveCard(details.archive,details.source_text||'');}html+='</div></article>';return html;}
-function renderHistory(){if(!history.length){renderEmpty();return;}chatMessages.innerHTML=history.map(renderMessage).join('');chatMessages.scrollTop=chatMessages.scrollHeight;}
-async function loadHistory(){try{const data=await jsonRequest('/api/chat/history?limit=40');history=data.messages||[];renderHistory();}catch(error){setStatus(error.message,'warning');}}
-async function sendMessage(){const text=chatInput.value.trim();if(!text||chatSend.disabled)return;chatInput.value='';chatInput.style.height='auto';history.push({id:`pending-${Date.now()}`,role:'user',content:text,pending:true});renderHistory();chatSend.disabled=true;setStatus('正在理解、归档并生成回复…');try{await jsonRequest('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text})});await Promise.all([loadHistory(),refreshBuckets()]);setStatus('');}catch(error){await loadHistory();setStatus(error.message,'warning');}finally{chatSend.disabled=false;chatInput.focus();}}
-async function confirmArchive(button){const card=button.closest('.archive-card');if(!card)return;const action=button.dataset.confirmAction;const text=card.dataset.sourceText;const attemptId=card.dataset.attemptId||null;let payload={confirmation_granted:true,action:action==='append-alternative'?'append':action,text,attempt_id:attemptId};if(action==='append'){payload.bucket_id=button.dataset.bucketId;}if(action==='append-alternative'){payload.bucket_id=card.querySelector('[data-role="alternative-bucket"]')?.value;if(!payload.bucket_id)throw new Error('请选择其他 Bucket');}if(action==='create'){payload.title=card.querySelector('[data-role="create-title"]')?.value.trim();payload.bucket_type=card.querySelector('[data-role="create-type"]')?.value;if(!payload.title)throw new Error('新 Bucket 标题不能为空');}button.disabled=true;setStatus('正在处理归档选择…');try{await jsonRequest('/api/chat/confirm',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});await Promise.all([loadHistory(),refreshBuckets()]);setStatus('已更新归档。');}finally{button.disabled=false;}}
-async function moveEntry(button){const card=button.closest('.archive-card');const entryId=button.dataset.entryId;const targetBucketId=card?.querySelector('[data-role="move-target"]')?.value;if(!entryId||!targetBucketId)throw new Error('请选择目标 Bucket');button.disabled=true;try{const data=await jsonRequest(correctionRoute,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entry_id:entryId,target_bucket_id:targetBucketId,command_text:'用户在对话中修改了 Bucket。'})});const status=card.querySelector('[data-role="move-status"]');if(status)status.innerHTML=`<span class="success">已移动到${bucketLabel(bucketById(targetBucketId)||{id:targetBucketId})}。</span>`;await refreshBuckets();}finally{button.disabled=false;}}
-async function deleteBucket(bucketId){if(!bucketId)throw new Error('Bucket ID 不能为空');const bucket=bucketById(bucketId)||{id:bucketId,title:bucketId};if(!confirm(`确定删除 Bucket「${bucket.title||bucket.id}」吗？其中的 Entry 和结构化记忆会一并删除。`))return;setStatus('正在删除 Bucket…');await jsonRequest('/api/buckets/'+encodeURIComponent(bucketId),{method:'DELETE'});if(selectedBucketId===bucketId){selectedBucketId=null;detail.innerHTML='<span class="muted">选择左侧 Bucket 查看详情。</span>';}await Promise.all([refreshBuckets(),loadHistory()]);setStatus('已删除 Bucket。');}
-chatMessages.addEventListener('click',async event=>{const button=event.target.closest('button[data-action]');if(!button)return;try{if(button.dataset.action==='chat-confirm')await confirmArchive(button);else if(button.dataset.action==='move-entry')await moveEntry(button);else if(button.dataset.action==='show-bucket')await showBucket(button.dataset.bucketId);}catch(error){setStatus(error.message,'warning');}});
-buckets.addEventListener('click',event=>{const button=event.target.closest('button[data-action="show-bucket"]');if(button)showBucket(button.dataset.bucketId);});
-detail.addEventListener('click',async event=>{const button=event.target.closest('button[data-action="delete-bucket"]');if(!button)return;try{await deleteBucket(button.dataset.bucketId);}catch(error){setStatus(error.message,'warning');}});
-chatSend.addEventListener('click',sendMessage);chatInput.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}});chatInput.addEventListener('input',()=>{chatInput.style.height='auto';chatInput.style.height=Math.min(chatInput.scrollHeight,180)+'px';});document.querySelector('#new-chat').addEventListener('click',()=>{chatInput.value='';chatInput.focus();setStatus('');});document.querySelector('#refresh-buckets').addEventListener('click',refreshBuckets);memoryQueryButton.addEventListener('click',runMemoryQuery);memoryQueryInput.addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();runMemoryQuery();}});
-Promise.all([refreshBuckets(),loadHistory()]);
-</script>
-</body>
-</html>"##;
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
@@ -1843,10 +1754,30 @@ mod tests {
         let health = server.handle_request(HttpRequest::new("GET", "/health", ""));
         assert_eq!(health.status, 200);
         assert!(health.body.contains("doggie-local-web"));
+
         let ui = server.handle_request(HttpRequest::new("GET", "/", ""));
         assert_eq!(ui.content_type, "text/html; charset=utf-8");
         assert!(ui.body.contains("Doggie 本地工作记忆"));
-        assert!(ui.body.contains("/api/archive"));
+        assert!(ui.body.contains("assets/styles.css"));
+        assert!(ui.body.contains("assets/app.js"));
+        assert!(!ui.body.contains("<style>"));
+        assert!(!ui.body.contains("<script>"));
+
+        let index = server.handle_request(HttpRequest::new("GET", "/index.html", ""));
+        assert_eq!(index.status, 200);
+        assert_eq!(index.body, ui.body);
+
+        let style = server.handle_request(HttpRequest::new("GET", "/assets/styles.css", ""));
+        assert_eq!(style.status, 200);
+        assert_eq!(style.content_type, "text/css; charset=utf-8");
+        assert!(style.body.contains(".app-shell"));
+
+        let script = server.handle_request(HttpRequest::new("GET", "/assets/app.js", ""));
+        assert_eq!(script.status, 200);
+        assert_eq!(script.content_type, "text/javascript; charset=utf-8");
+        assert!(script.body.contains("/api/archive"));
+
+        let ui_bundle = format!("{}{}{}", ui.body, style.body, script.body);
         for marker in [
             "推荐 Bucket",
             "备选 Bucket",
@@ -1871,15 +1802,15 @@ mod tests {
             "/api/archive/create",
             "/api/corrections/move",
             "删除 Bucket",
-            "data-action=\"delete-bucket\"",
+            r#"data-action="delete-bucket""#,
             "DELETE",
             "/api/buckets/",
             "自动关联最近和热门 Bucket",
         ] {
-            assert!(ui.body.contains(marker), "missing UI marker: {marker}");
+            assert!(ui_bundle.contains(marker), "missing UI marker: {marker}");
         }
-        assert!(!ui.body.contains("onclick="));
-        assert!(!ui.body.contains("candidate_bucket_ids[0]"));
+        assert!(!ui_bundle.contains("onclick="));
+        assert!(!ui_bundle.contains("candidate_bucket_ids[0]"));
     }
 
     #[test]
