@@ -1,0 +1,429 @@
+use std::{cell::RefCell, collections::VecDeque, rc::Rc, time::Duration};
+
+use doggie_application::CanonicalService;
+use doggie_domain::{
+    BucketType, ClassificationResult, ConfidencePolicy, ExtractionResult, TimelineEventExtract,
+};
+use doggie_engine::{CanonicalRuntime, MemoryModel};
+use doggie_storage_sqlite::DoggieArchiveAudit;
+use tempfile::tempdir;
+
+struct FixedModel {
+    classifications: VecDeque<Result<ClassificationResult, String>>,
+    extractions: VecDeque<Result<ExtractionResult, String>>,
+}
+
+impl FixedModel {
+    fn new(
+        classifications: impl IntoIterator<Item = Result<ClassificationResult, String>>,
+        extractions: impl IntoIterator<Item = Result<ExtractionResult, String>>,
+    ) -> Self {
+        Self {
+            classifications: classifications.into_iter().collect(),
+            extractions: extractions.into_iter().collect(),
+        }
+    }
+}
+
+struct SpyModel {
+    classifications: VecDeque<Result<ClassificationResult, String>>,
+    extractions: VecDeque<Result<ExtractionResult, String>>,
+    seen_candidate_ids: Rc<RefCell<Vec<Vec<String>>>>,
+}
+
+impl SpyModel {
+    fn new(
+        classifications: impl IntoIterator<Item = Result<ClassificationResult, String>>,
+        extractions: impl IntoIterator<Item = Result<ExtractionResult, String>>,
+        seen_candidate_ids: Rc<RefCell<Vec<Vec<String>>>>,
+    ) -> Self {
+        Self {
+            classifications: classifications.into_iter().collect(),
+            extractions: extractions.into_iter().collect(),
+            seen_candidate_ids,
+        }
+    }
+}
+
+impl MemoryModel for SpyModel {
+    type Error = String;
+
+    fn classify(
+        &mut self,
+        _text: &str,
+        candidates: &[doggie_domain::BucketView],
+    ) -> Result<ClassificationResult, Self::Error> {
+        self.seen_candidate_ids.borrow_mut().push(
+            candidates
+                .iter()
+                .map(|candidate| candidate.id().to_owned())
+                .collect(),
+        );
+        self.classifications
+            .pop_front()
+            .expect("spy classification queue")
+    }
+
+    fn extract(&mut self, _text: &str) -> Result<ExtractionResult, Self::Error> {
+        self.extractions.pop_front().expect("spy extraction queue")
+    }
+}
+
+impl MemoryModel for FixedModel {
+    type Error = String;
+
+    fn classify(
+        &mut self,
+        _text: &str,
+        _candidates: &[doggie_domain::BucketView],
+    ) -> Result<ClassificationResult, Self::Error> {
+        self.classifications
+            .pop_front()
+            .expect("test model classification queue")
+    }
+
+    fn extract(&mut self, _text: &str) -> Result<ExtractionResult, Self::Error> {
+        self.extractions
+            .pop_front()
+            .expect("test model extraction queue")
+    }
+}
+
+fn rich_extraction(summary: &str) -> ExtractionResult {
+    ExtractionResult::new(
+        summary,
+        vec!["follow up".to_owned()],
+        vec!["observed evidence".to_owned()],
+        vec![
+            TimelineEventExtract::new(Some("next week".to_owned()), "schedule review")
+                .expect("timeline"),
+        ],
+        vec!["use the canonical store".to_owned()],
+        vec!["the MVP is safe".to_owned()],
+        vec!["Rust".to_owned()],
+        vec!["mvp".to_owned()],
+    )
+    .expect("extraction")
+}
+
+fn service(path: &std::path::Path) -> CanonicalService {
+    CanonicalService::initialize(path).expect("canonical service")
+}
+
+fn runtime(service: CanonicalService, model: FixedModel) -> CanonicalRuntime<FixedModel> {
+    CanonicalRuntime::new(
+        service,
+        model,
+        ConfidencePolicy::default(),
+        "fixture-model",
+        "runtime-test-v1",
+    )
+    .expect("runtime")
+}
+
+#[test]
+fn archive_runs_the_complete_doggie_loop() {
+    let directory = tempdir().expect("tempdir");
+    let classification = ClassificationResult::create_new(
+        BucketType::Incident,
+        "Payment callback",
+        0.99,
+        "new incident",
+        vec![],
+    )
+    .expect("classification");
+    let mut runtime = runtime(
+        service(&directory.path().join("memory.db")),
+        FixedModel::new(
+            [Ok(classification)],
+            [Ok(rich_extraction("callback restored"))],
+        ),
+    );
+
+    let execution = runtime
+        .archive("The payment callback was restored.", None)
+        .expect("archive");
+
+    assert_eq!(execution.outcome.archive_state, "archived");
+    assert!(execution.outcome.entry_id.is_some());
+    assert_eq!(execution.outcome.memory_item_ids.len(), 7);
+    let counts = runtime.service().counts().expect("counts");
+    assert_eq!(counts.buckets, 1);
+    assert_eq!(counts.entries, 1);
+    assert_eq!(counts.memory_items, 7);
+    assert_eq!(counts.archive_attempts, 1);
+
+    let bucket_id = execution.outcome.bucket_id.expect("bucket id");
+    let detail = runtime
+        .service()
+        .bucket_detail(&bucket_id)
+        .expect("detail")
+        .expect("bucket detail");
+    assert_eq!(detail.entries.len(), 1);
+    assert_eq!(detail.memories.len(), 7);
+}
+
+#[test]
+fn low_confidence_archive_only_creates_a_confirmation_attempt() {
+    let directory = tempdir().expect("tempdir");
+    let classification = ClassificationResult::create_new(
+        BucketType::Task,
+        "Payment follow-up",
+        0.40,
+        "uncertain",
+        vec![],
+    )
+    .expect("classification");
+    let mut runtime = runtime(
+        service(&directory.path().join("memory.db")),
+        FixedModel::new([Ok(classification)], []),
+    );
+
+    let execution = runtime
+        .archive("A concrete payment fact.", None)
+        .expect("attempt");
+
+    assert_eq!(execution.outcome.archive_state, "needs_confirmation");
+    assert!(execution.outcome.bucket_id.is_none());
+    assert!(execution.outcome.entry_id.is_none());
+    assert!(execution.extraction.is_none());
+    let counts = runtime.service().counts().expect("counts");
+    assert_eq!(counts.buckets, 0);
+    assert_eq!(counts.entries, 0);
+    assert_eq!(counts.archive_attempts, 1);
+}
+
+#[test]
+fn confirmed_append_and_create_are_explicit_doggie_writes() {
+    let directory = tempdir().expect("tempdir");
+    let seed =
+        ClassificationResult::create_new(BucketType::Task, "Canonical MVP", 0.99, "seed", vec![])
+            .expect("seed classification");
+    let mut runtime = runtime(
+        service(&directory.path().join("memory.db")),
+        FixedModel::new(
+            [Ok(seed)],
+            [
+                Ok(ExtractionResult::minimal("seed").expect("seed extraction")),
+                Ok(ExtractionResult::minimal("append").expect("append extraction")),
+                Ok(ExtractionResult::minimal("create").expect("create extraction")),
+            ],
+        ),
+    );
+
+    let initial = runtime
+        .archive("The Doggie MVP is started.", None)
+        .expect("initial archive");
+    let source_bucket = initial.outcome.bucket_id.expect("source bucket");
+
+    let appended = runtime
+        .append_confirmed(
+            &source_bucket,
+            "The Doggie MVP now persists entries.",
+            Some(source_bucket.clone()),
+        )
+        .expect("append");
+    assert_eq!(
+        appended.outcome.bucket_id.as_deref(),
+        Some(source_bucket.as_str())
+    );
+    assert!(appended.outcome.entry_id.is_some());
+
+    let created = runtime
+        .create_confirmed(
+            "Second Rust bucket",
+            BucketType::Experiment,
+            "A separately confirmed memory.",
+            None,
+        )
+        .expect("create");
+    assert_eq!(created.outcome.archive_state, "archived");
+    assert_ne!(
+        created.outcome.bucket_id.as_deref(),
+        Some(source_bucket.as_str())
+    );
+
+    let counts = runtime.service().counts().expect("counts");
+    assert_eq!(counts.buckets, 2);
+    assert_eq!(counts.entries, 3);
+    assert_eq!(counts.archive_attempts, 3);
+}
+
+#[test]
+fn archive_state_survives_reopening_the_doggie_database() {
+    let directory = tempdir().expect("tempdir");
+    let database = directory.path().join("memory.db");
+    let classification = ClassificationResult::create_new(
+        BucketType::Idea,
+        "Rust-only memory",
+        0.99,
+        "new idea",
+        vec![],
+    )
+    .expect("classification");
+    let mut runtime = runtime(
+        service(&database),
+        FixedModel::new(
+            [Ok(classification)],
+            [Ok(
+                ExtractionResult::minimal("persisted").expect("extraction")
+            )],
+        ),
+    );
+    let execution = runtime
+        .archive("Persist this fact.", None)
+        .expect("archive");
+    let bucket_id = execution.outcome.bucket_id.expect("bucket id");
+    drop(runtime);
+
+    let reopened = CanonicalService::open_existing(&database).expect("reopen");
+    let detail = reopened
+        .bucket_detail(&bucket_id)
+        .expect("detail")
+        .expect("bucket");
+    assert_eq!(detail.entries.len(), 1);
+    assert_eq!(detail.entries[0].raw_text, "Persist this fact.");
+}
+
+#[test]
+fn query_projection_exposes_plan_entries_buckets_and_evidence_without_writes() {
+    let directory = tempdir().expect("tempdir");
+    let classification = ClassificationResult::create_new(
+        BucketType::Experiment,
+        "接口 A 压测",
+        0.99,
+        "query fixture",
+        vec![],
+    )
+    .expect("classification");
+    let mut runtime = runtime(
+        service(&directory.path().join("memory.db")),
+        FixedModel::new(
+            [Ok(classification)],
+            [Ok(rich_extraction("接口 A 压测结果摘要"))],
+        ),
+    );
+    runtime
+        .archive("接口 A 压测完成，P99 为 120ms。", None)
+        .expect("archive");
+    let before = runtime.service().counts().expect("counts before");
+
+    let body = doggie_engine::query_memory(runtime.service(), "查询接口 A 最近两周的压测结果", 10)
+        .expect("query projection");
+    assert_eq!(body["total_entries"], 1);
+    assert_eq!(body["total_buckets"], 1);
+    assert_eq!(
+        body["results"][0]["entry"]["raw_text"],
+        "接口 A 压测完成，P99 为 120ms。"
+    );
+    assert_eq!(
+        body["query_plan"]["entity_terms"],
+        serde_json::json!(["接口 A"])
+    );
+    assert_eq!(
+        body["query_plan"]["topic_terms"],
+        serde_json::json!(["压测结果"])
+    );
+    assert!(
+        body["evidence"]
+            .as_array()
+            .expect("evidence array")
+            .iter()
+            .any(|item| { item["text"] == "observed evidence" })
+    );
+    assert_eq!(runtime.service().counts().expect("counts after"), before);
+}
+
+#[test]
+fn archive_supplies_automatic_recent_and_popular_candidates_without_focus_priority() {
+    let directory = tempdir().expect("tempdir");
+    let mut service = service(&directory.path().join("memory.db"));
+    let audit =
+        DoggieArchiveAudit::new(vec![], None, "runtime-test-v1", "fixture-model").expect("audit");
+
+    let popular = service
+        .archive(
+            "热门 Bucket 第一条。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "热门 Bucket",
+                0.99,
+                "popular",
+                vec![],
+            )
+            .expect("classification"),
+            Some(ExtractionResult::minimal("popular 1").expect("extraction")),
+            audit.clone(),
+        )
+        .expect("popular create");
+    let popular_bucket_id = popular.bucket_id.expect("popular bucket");
+    for index in 2..=3 {
+        service
+            .archive(
+                format!("热门 Bucket 第 {index} 条。"),
+                ClassificationResult::append_existing(
+                    popular_bucket_id.clone(),
+                    Some(BucketType::Task),
+                    0.99,
+                    "popular append",
+                    vec![popular_bucket_id.clone()],
+                )
+                .expect("classification"),
+                Some(ExtractionResult::minimal(format!("popular {index}")).expect("extraction")),
+                audit.clone(),
+            )
+            .expect("popular append");
+    }
+
+    std::thread::sleep(Duration::from_millis(5));
+    let recent = service
+        .archive(
+            "最近 Bucket 唯一一条。",
+            ClassificationResult::create_new(
+                BucketType::Task,
+                "最近 Bucket",
+                0.99,
+                "recent",
+                vec![],
+            )
+            .expect("classification"),
+            Some(ExtractionResult::minimal("recent").expect("extraction")),
+            audit,
+        )
+        .expect("recent create");
+    let recent_bucket_id = recent.bucket_id.expect("recent bucket");
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let ask = ClassificationResult::ask_user(
+        None,
+        None,
+        0.99,
+        "仅用于检查候选列表。",
+        "请选择归档目标。",
+        vec![],
+    )
+    .expect("ask classification");
+    let mut runtime = CanonicalRuntime::new(
+        service,
+        SpyModel::new([Ok(ask)], [], seen.clone()),
+        ConfidencePolicy::default(),
+        "fixture-model",
+        "runtime-test-v1",
+    )
+    .expect("runtime");
+
+    runtime
+        .archive(
+            "自动候选测试包含具体指标 P99 100ms。",
+            Some(popular_bucket_id.clone()),
+        )
+        .expect("archive");
+
+    let seen = seen.borrow();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(
+        seen[0],
+        vec![recent_bucket_id, popular_bucket_id],
+        "manual focus must not outrank the automatic recent + popular candidates"
+    );
+}

@@ -1,4 +1,4 @@
-# Rust 测试与验收计划
+# Doggie 测试与验收计划
 
 ## 1. 固定门槛
 
@@ -18,7 +18,7 @@ git diff --check
 
 覆盖 Bucket 类型/状态、分类 action、候选排序、confidence 门控、低信息输入、时间解析和查询计划边界。
 
-### Contracts 与 Agent
+### Protocol、LLM 与 Agent Runtime
 
 覆盖严格 JSON 字段、未知字段、长度限制、Responses/Chat Completions 请求体、拒绝/截断/非法 JSON、网络错误分类、重试上限、工具 allow-list 和上下文资源上限。
 
@@ -26,7 +26,7 @@ git diff --check
 
 覆盖 canonical schema 初始化/重开、外键、事务提交和回滚、归档图、对话消息、纠错、状态变化、关键词查询、结构化字段查询和 evidence 去重。所有数据库使用临时文件。
 
-### Service 与 Runtime
+### Application 与 Engine
 
 覆盖：
 
@@ -37,7 +37,7 @@ git diff --check
 - 失败不产生部分写入；
 - 重启后对话和归档状态可恢复。
 
-### Server
+### Local Web UI
 
 覆盖健康检查、静态 UI、API 参数校验、UTF-8 query 解码、归档 projection、确认卡片字段、四种确认选项、修改 Bucket 入口和稳定错误 JSON。嵌入式 UI 还要检查 Markdown 渲染契约：代码围栏（含 `bash` 语言标签）、段落/列表/标题/引用/链接、代码换行保留、危险 URL 拒绝、HTML 转义以及渲染器不能被重复声明覆盖。
 
@@ -47,7 +47,7 @@ git diff --check
 
 ```bash
 cp .env.example .env
-cargo run -p work-memory-server
+cargo run -p doggie-local-web
 ```
 
 依次验证：

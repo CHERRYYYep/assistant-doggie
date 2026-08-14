@@ -1,17 +1,17 @@
-# Rust Work Memory
+# Doggie
 
-一个面向个人工作的本地长期记忆 Agent。用户可以像使用聊天助手一样输入日志、想法、会议结论、实验记录或排障事实；Rust runtime 会完成理解、查询、归档和后续纠错。
+一个面向个人工作的本地长期记忆 Agent。用户可以像使用聊天助手一样输入日志、想法、会议结论、实验记录或排障事实；Doggie engine 会完成理解、查询、归档和后续纠错。
 
 ```text
 对话输入
   → 分类已有/新建 Bucket
   → 低信息安全门控
   → 结构化提取
-  → Rust canonical SQLite 持久化
+  → Doggie canonical SQLite 持久化
   → 返回可解释的归档结果
 ```
 
-`work-memory-server` 是唯一应用入口，提供本地 HTTP API 和内嵌 Web UI。默认监听 `127.0.0.1:8787`，数据库默认使用 `rust-work-memory.db`。
+`doggie-local-web` 是唯一应用入口，提供本地 HTTP API 和内嵌 Web UI。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
 
 ## 当前能力
 
@@ -22,7 +22,7 @@
 - **可纠错**：归档结果提供修改 Bucket 的入口，也支持通过 API 移动 Entry、修改 Bucket 状态。
 - **自然语言记忆查询**：支持 Bucket 名称、Entry 原文、summary、tag、entity、时间范围、状态和结构化字段筛选。
 - **查询聚合**：关键词与结构化条件组合，按结果质量重排，去重 evidence，并可合并多个 Bucket 的结果。
-- **历史数据导入**：`work-memory-store-admin` 以 Rust 实现只读校验和一次性导入，将旧 schema 导入新的 canonical 数据库。
+- **历史数据导入**：`doggie-storage-admin` 以 Rust 实现只读校验和一次性导入，将旧 schema 导入新的 canonical 数据库。
 
 ## 快速开始
 
@@ -31,7 +31,7 @@
 ```bash
 cp .env.example .env
 # 编辑 .env，至少填写 OPENAI_API_KEY 和 OPENAI_MODEL
-cargo run -p work-memory-server
+cargo run -p doggie-local-web
 ```
 
 服务启动后打开 `http://127.0.0.1:8787/`。程序会自动读取当前工作目录的 `.env`；shell 环境变量优先。
@@ -49,8 +49,9 @@ cargo test --workspace --offline
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `RUST_DATABASE_PATH` | `rust-work-memory.db` | canonical SQLite 文件路径 |
-| `RUST_SERVER_ADDRESS` | `127.0.0.1:8787` | HTTP 监听地址 |
+| `DOGGIE_DATABASE_PATH` | `doggie.db` | canonical SQLite 文件路径 |
+| `DOGGIE_SERVER_ADDRESS` | `127.0.0.1:8787` | HTTP 监听地址 |
+| `RUST_DATABASE_PATH` / `RUST_SERVER_ADDRESS` | 无 | 旧变量名兼容读取；新配置请使用 `DOGGIE_*` |
 | `OPENAI_SITE` | 无 | `official` 或自定义站点名称 |
 | `OPENAI_BASE_URL` | 无 | 兼容端点的 API 根地址；官方站点可留空 |
 | `OPENAI_API_MODE` | 无 | `responses` 或 `chat_completions` |
@@ -112,13 +113,14 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 
 | crate | 职责 |
 |---|---|
-| `work-memory-core` | 领域模型、分类结果、低信息和置信度门控 |
-| `work-memory-contracts` | 严格 JSON 契约和模型输出校验 |
-| `work-memory-agent` | 模型适配、HTTP transport 和工具 Harness |
-| `work-memory-store` | canonical SQLite、事务、查询和历史导入 |
-| `work-memory-service` | 归档、查询、纠错、状态和对话服务 |
-| `work-memory-runtime` | 组合模型与服务，生成产品投影 |
-| `work-memory-server` | HTTP 路由、内嵌 UI 和进程入口 |
+| `doggie-domain` | 领域模型、分类结果、低信息和置信度门控 |
+| `doggie-protocol` | 严格 JSON 契约和模型输出校验 |
+| `doggie-llm` | 模型端点配置、HTTP transport、Structured Outputs 适配和 response 归一化 |
+| `doggie-agent-runtime` | 受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装 |
+| `doggie-storage-sqlite` | canonical SQLite、事务、查询和历史导入 |
+| `doggie-application` | 归档、查询、纠错、状态和对话服务 |
+| `doggie-engine` | 组合模型与服务，生成产品投影 |
+| `doggie-local-web` | HTTP 路由、内嵌 UI 和进程入口 |
 
 更多说明见：
 

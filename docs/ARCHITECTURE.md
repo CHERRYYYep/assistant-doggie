@@ -1,4 +1,4 @@
-# Rust Work Memory 架构
+# Doggie 架构
 
 ## 1. 组件边界
 
@@ -6,28 +6,30 @@
 浏览器 / curl
       │ HTTP + JSON
       ▼
-work-memory-server
-      │ 路由、校验、确认卡片、内嵌 UI
+doggie-local-web
+      │ 参数、传输、确认卡片、内嵌 UI
       ▼
-CanonicalRuntime<M>
-      ├── MemoryModel / Structured Output Adapter
+doggie-engine / CanonicalRuntime<M>
+      ├── MemoryModel / doggie-llm Structured Output Adapter
+      ├── doggie-agent-runtime 只读工具 Harness（回答阶段）
       ├── 低信息与置信度门控
-      ├── CanonicalService
+      ├── doggie-application / CanonicalService
       │     ├── 归档、确认、纠错和状态变更
       │     └── 自然语言查询、筛选、重排、聚合
       ▼
-RustStore / canonical SQLite
+doggie-storage-sqlite / canonical SQLite
 ```
 
 crate 职责：
 
-- `work-memory-core`：Bucket、Entry、分类/提取结果、状态和确定性安全规则。
-- `work-memory-contracts`：模型结构化输出的严格 JSON Schema 和边界校验。
-- `work-memory-agent`：端点配置、Responses/Chat Completions 适配、网络错误和受控工具 Harness。
-- `work-memory-store`：Rust canonical schema、事务、查询、审计和历史数据库导入。
-- `work-memory-service`：稳定的领域服务 facade。
-- `work-memory-runtime`：把模型、服务和安全策略组合成归档/查询运行时。
-- `work-memory-server`：HTTP listener、JSON projection 和单页 Web UI。
+- `doggie-domain`：Bucket、Entry、分类/提取结果、状态和确定性安全规则。
+- `doggie-protocol`：模型结构化输出的严格 JSON Schema 和边界校验。
+- `doggie-llm`：端点配置、Responses/Chat Completions 适配、网络错误和 response 归一化。
+- `doggie-agent-runtime`：受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装。
+- `doggie-storage-sqlite`：Doggie canonical schema、事务、查询、审计和历史数据库导入。
+- `doggie-application`：稳定的领域服务 facade。
+- `doggie-engine`：把模型、服务和安全策略组合成归档/查询运行时。
+- `doggie-local-web`：HTTP listener、JSON projection 和单页 Web UI。
 
 ## 2. 自动归档流程
 
@@ -66,4 +68,4 @@ crate 职责：
 
 ## 5. 可测试性
 
-Runtime 依赖 `MemoryModel` trait，测试可以注入固定分类/提取结果。HTTP 测试使用 fake responder，数据库测试使用临时 canonical SQLite 文件；不调用真实模型，也不读写用户本地数据库。
+`doggie-engine` 依赖 `MemoryModel` trait，测试可以注入固定分类/提取结果。HTTP 测试使用 fake responder，数据库测试使用临时 canonical SQLite 文件；不调用真实模型，也不读写用户本地数据库。

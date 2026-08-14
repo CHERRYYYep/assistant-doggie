@@ -1,6 +1,6 @@
 # 当前项目详解与后续提升指南
 
-本文档面向后续开发者和产品迭代者，用仓库当前 Rust 实现解释 Doggie / Rust Work Memory 的整体结构、关键数据流、模块职责、API 行为、测试地图以及可继续提升的方向。它不是替代源码的接口规范；当行为存在疑问时，以 `rust/` 下当前源码和测试为准。
+本文档面向后续开发者和产品迭代者，用仓库当前实现解释 Doggie 的整体结构、关键数据流、模块职责、API 行为、测试地图以及可继续提升的方向。它不是替代源码的接口规范；当行为存在疑问时，以 `crates/` 和 `apps/` 下当前源码和测试为准。
 
 ## 1. 项目定位与核心心智模型
 
@@ -38,27 +38,27 @@
 
 ## 2. 运行入口与配置
 
-唯一应用入口是 `work-memory-server`：
+唯一应用入口是 `doggie-local-web`：
 
 ```bash
 cp .env.example .env
 # 编辑 .env：至少配置 OPENAI_API_KEY 和 OPENAI_MODEL
-cargo run -p work-memory-server
+cargo run -p doggie-local-web
 ```
 
 默认行为：
 
 - HTTP 地址：`127.0.0.1:8787`
-- 数据库：`rust-work-memory.db`
-- 运行时：Rust canonical SQLite schema
+- 数据库：`doggie.db`
+- 运行时：Doggie canonical SQLite schema
 - 模型端点：官方 OpenAI 或兼容 Responses / Chat Completions 的 endpoint
 
 主要环境变量：
 
 | 变量 | 说明 |
 |---|---|
-| `RUST_DATABASE_PATH` | canonical SQLite 文件路径 |
-| `RUST_SERVER_ADDRESS` | HTTP 监听地址 |
+| `DOGGIE_DATABASE_PATH` | canonical SQLite 文件路径 |
+| `DOGGIE_SERVER_ADDRESS` | HTTP 监听地址 |
 | `OPENAI_SITE` | `official` 或自定义站点名称 |
 | `OPENAI_BASE_URL` | 兼容端点根地址；官方站点可留空 |
 | `OPENAI_API_MODE` | `responses` 或 `chat_completions` |
@@ -66,7 +66,7 @@ cargo run -p work-memory-server
 | `OPENAI_MODEL` | 分类、提取和回答使用的模型名 |
 | `OPENAI_TIMEOUT_SECONDS` | 单次模型 HTTP 请求超时 |
 
-`rust/work-memory-server/src/main.rs` 负责：
+`apps/doggie-local-web/src/main.rs` 负责：
 
 1. 读取 `.env` 和环境变量；shell 环境优先。
 2. 构造 `LlmEndpointConfig`、HTTP transport、`StructuredOutputAdapter`。
@@ -75,29 +75,30 @@ cargo run -p work-memory-server
 
 ## 3. Workspace 分层地图
 
-Rust workspace 只包含当前 canonical 路径：
+Cargo workspace 只包含当前 canonical 路径：
 
 | crate | 主要路径 | 职责 |
 |---|---|---|
-| `work-memory-core` | `rust/work-memory-core/src/` | 领域值、Bucket/Entry 模型、分类动作、提取结果、低信息与置信度门控 |
-| `work-memory-contracts` | `rust/work-memory-contracts/src/` | 模型结构化输出契约、JSON Schema、工具参数契约、严格边界校验 |
-| `work-memory-store` | `rust/work-memory-store/src/` | Rust-owned canonical SQLite schema、事务写入、查询、纠错、删除、历史导入和离线管理 |
-| `work-memory-service` | `rust/work-memory-service/src/` | 业务服务 facade：候选生成、归档边界、自然语言查询、状态和纠错 |
-| `work-memory-agent` | `rust/work-memory-agent/src/` | 模型 endpoint 配置、Responses/Chat Completions 适配、HTTP transport、受控工具 Harness |
-| `work-memory-runtime` | `rust/work-memory-runtime/src/lib.rs` | 组合模型、服务和安全策略，执行归档和读 projection |
-| `work-memory-server` | `rust/work-memory-server/src/` | 本地 HTTP API、ChatGPT 风格内嵌 Web UI、应用入口 |
+| `doggie-domain` | `crates/doggie-domain/src/` | 领域值、Bucket/Entry 模型、分类动作、提取结果、低信息与置信度门控 |
+| `doggie-protocol` | `crates/doggie-protocol/src/` | 模型结构化输出契约、JSON Schema、工具参数契约、严格边界校验 |
+| `doggie-storage-sqlite` | `crates/doggie-storage-sqlite/src/` | Doggie-owned canonical SQLite schema、事务写入、查询、纠错、删除、历史导入和离线管理 |
+| `doggie-application` | `crates/doggie-application/src/` | 业务服务 facade：候选生成、归档边界、自然语言查询、状态和纠错 |
+| `doggie-llm` | `crates/doggie-llm/src/` | 模型 endpoint 配置、Responses/Chat Completions 适配、HTTP transport 和 response 归一化 |
+| `doggie-agent-runtime` | `crates/doggie-agent-runtime/src/` | 受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装 |
+| `doggie-engine` | `crates/doggie-engine/src/lib.rs` | 组合模型、服务和安全策略，执行归档和读 projection |
+| `doggie-local-web` | `apps/doggie-local-web/src/` | 本地 HTTP API、ChatGPT 风格内嵌 Web UI、应用入口 |
 
 推荐阅读顺序：
 
 1. `README.md`：快速了解能力、运行方式和 API。
 2. 本文档：理解当前模块和关键流程。
 3. `docs/ARCHITECTURE.md`、`docs/DATA_MODEL.md`、`docs/AGENT_HARNESS.md`：了解设计边界。
-4. `rust/work-memory-runtime/src/lib.rs`：看完整归档编排。
-5. `rust/work-memory-service/src/canonical.rs` 和 `rust/work-memory-service/src/query.rs`：看业务服务和查询聚合。
-6. `rust/work-memory-store/src/canonical.rs`、`canonical_schema.rs`：看真实持久化模型。
-7. `rust/work-memory-server/src/lib.rs`：看 HTTP route、projection 和 UI。
+4. `crates/doggie-engine/src/lib.rs`：看完整归档编排。
+5. `crates/doggie-application/src/canonical.rs` 和 `crates/doggie-application/src/query.rs`：看业务服务和查询聚合。
+6. `crates/doggie-storage-sqlite/src/canonical.rs`、`canonical_schema.rs`：看真实持久化模型。
+7. `apps/doggie-local-web/src/lib.rs`：看 HTTP route、projection 和 UI。
 
-## 4. `work-memory-core`：领域模型与确定性安全门控
+## 4. `doggie-domain`：领域模型与确定性安全门控
 
 核心文件：
 
@@ -167,14 +168,14 @@ Bucket 生命周期 `BucketStatus`：
 
 注意：置信度不是概率；最终是否写入由服务端规则二次裁决。
 
-## 5. `work-memory-contracts`：模型与工具的严格 JSON 边界
+## 5. `doggie-protocol`：模型与工具的严格 JSON 边界
 
 该 crate 负责把不可信的模型输出转换成可信领域对象。关键原则：
 
 - 反序列化结构使用 `serde(deny_unknown_fields)`，未知字段直接拒绝。
 - 枚举字符串通过集中函数解析，拼写错误不会被静默接受。
-- JSON Schema 由 Rust contract 生成，用于 Structured Outputs。
-- contract 转领域对象时还会触发 `work-memory-core` 的字段和一致性校验。
+- JSON Schema 由 Doggie protocol contract 生成，用于 Structured Outputs。
+- contract 转领域对象时还会触发 `doggie-domain` 的字段和一致性校验。
 
 主要文件：
 
@@ -235,7 +236,7 @@ Bucket 生命周期 `BucketStatus`：
 
 contract 中仍保留写工具定义，例如 archive/save/create 类工具，但 server 的聊天回答阶段不会把它们放进 allow-list。归档写入只能走 runtime/server 的受控流程。
 
-## 6. `work-memory-store`：canonical SQLite 持久层
+## 6. `doggie-storage-sqlite`：canonical SQLite 持久层
 
 这是当前生产路径唯一持久层。它不暴露任意 SQL 写连接，业务写入通过强类型方法和事务完成。
 
@@ -243,7 +244,7 @@ contract 中仍保留写工具定义，例如 archive/save/create 类工具，�
 
 | 文件 | 说明 |
 |---|---|
-| `canonical_schema.rs` | Rust canonical schema 定义、表、索引和外键 |
+| `canonical_schema.rs` | Doggie canonical schema 定义、表、索引和外键 |
 | `canonical.rs` | 当前 canonical store 主实现和 projection 类型 |
 | `archive_write.rs`、`bucket_write.rs`、`entry_write.rs`、`extraction_write.rs` | 较细粒度写入构件和兼容写入边界 |
 | `delete_write.rs`、`correction_write.rs`、`chat_write.rs` | 删除、纠错、聊天消息写入 |
@@ -281,7 +282,7 @@ contract 中仍保留写工具定义，例如 archive/save/create 类工具，�
 
 ### 6.3 主要读写方法
 
-`RustStore` 常用读方法：
+`DoggieStore` 常用读方法：
 
 - `initialize`、`open_existing`、`open_read_only`
 - `list_buckets`
@@ -330,11 +331,11 @@ service 会把两组结果交错合并，再交给 core 去重截断。
 2. 执行硬删除 Bucket；依赖 Entry、memory、tag 级联删除。
 3. 保留 archive attempt，但对应外键置空。
 4. 写入 `corrections`，action 为 `delete_bucket`。
-5. 返回 `RustDeleteBucketOutcome`，包括删除的 Entry ID、memory item ID、受影响 attempt ID 和 correction ID。
+5. 返回 `DoggieDeleteBucketOutcome`，包括删除的 Entry ID、memory item ID、受影响 attempt ID 和 correction ID。
 
 当前删除没有 undo，也不是软删除；后续若要提升用户安全感，优先考虑回收站或可恢复删除。
 
-## 7. `work-memory-service`：业务服务 facade
+## 7. `doggie-application`：业务服务 facade
 
 `CanonicalService` 是 runtime/server 之下的业务边界。它把 store 的低层读写转换成产品语义：候选生成、归档边界、自然语言查询、纠错和状态管理。
 
@@ -389,9 +390,9 @@ service 会把两组结果交错合并，再交给 core 去重截断。
 
 当前 `answer` 是规则化摘要：说明命中 Entry 数和 Bucket 数，并列出前 5 条摘要片段。聊天回答模型可以基于这个只读结果进一步组织自然语言答案。
 
-## 8. `work-memory-agent`：模型适配与受控工具 Harness
+## 8. `doggie-llm` 与 `doggie-agent-runtime`：模型适配与受控工具 Harness
 
-这个 crate 分两部分：模型 HTTP/结构化输出适配，以及普通对话回答用的工具 Harness。
+`doggie-llm` 只负责模型 HTTP/结构化输出适配和 response 归一化；`doggie-agent-runtime` 负责普通对话回答用的工具 Harness。
 
 ### 8.1 endpoint 与 transport
 
@@ -402,7 +403,7 @@ service 会把两组结果交错合并，再交给 core 去重截断。
 
 ### 8.2 Agent Harness 安全限制
 
-`agent_harness.rs` 控制模型工具调用循环：
+`crates/doggie-agent-runtime/src/lib.rs` 控制模型工具调用循环：
 
 - 默认最多 4 个 tool round；硬上限 8。
 - 每轮最多 8 个 tool call。
@@ -415,7 +416,7 @@ service 会把两组结果交错合并，再交给 core 去重截断。
 
 ### 8.3 当前聊天回答阶段
 
-Server 的 `AgentChatResponder` 只给回答模型开放只读工具：
+`apps/doggie-local-web` 的 `AgentChatResponder` 只给回答模型开放只读工具：
 
 - `list_active_buckets`
 - `search_memory`
@@ -423,13 +424,13 @@ Server 的 `AgentChatResponder` 只给回答模型开放只读工具：
 
 归档写入、确认写入、移动 Entry、删除 Bucket、状态变更都不由回答模型直接触发，必须走 HTTP/server 的显式业务路径。
 
-## 9. `work-memory-runtime`：归档编排与 JSON projection
+## 9. `doggie-engine`：归档编排与 JSON projection
 
-`work-memory-runtime/src/lib.rs` 是连接模型、service 和核心安全策略的主编排层。
+`doggie-engine/src/lib.rs` 是连接模型、service 和核心安全策略的主编排层。
 
 关键常量：
 
-- `RUNTIME_PROMPT_VERSION = "rust-runtime-v1"`
+- `RUNTIME_PROMPT_VERSION = "doggie-engine-v1"`
 - `DEFAULT_ACTIVE_BUCKET_LIMIT = 20`
 - `DEFAULT_STRUCTURED_OUTPUT_RETRIES = 2`
 
@@ -495,7 +496,7 @@ Server 的 `AgentChatResponder` 只给回答模型开放只读工具：
 
 这使 UI 能完整展示推荐 Bucket、备选 Bucket、创建新 Bucket、不保存、归档后修改 Bucket 等入口。
 
-## 10. `work-memory-server`：HTTP API 与内嵌 Web UI
+## 10. `doggie-local-web`：HTTP API 与内嵌 Web UI
 
 ### 10.1 HTTP route 总览
 
@@ -560,7 +561,7 @@ append 还需要 `bucket_id`；create 还需要 `title` 和 `bucket_type`。服�
 
 ### 10.5 Web UI 当前状态
 
-UI 是嵌在 `rust/work-memory-server/src/lib.rs` 中的单页 HTML/CSS/JS：
+UI 是嵌在 `apps/doggie-local-web/src/lib.rs` 中的单页 HTML/CSS/JS：
 
 - 左侧显示活跃 Bucket。
 - 中间是长期对话。
@@ -805,13 +806,14 @@ git diff --check
 
 | 层 | 测试路径 | 重点 |
 |---|---|---|
-| core | `rust/work-memory-core/tests/` | 分类动作、候选排序、低信息门控、置信度门控 |
-| contracts | `rust/work-memory-contracts/tests/` | 严格 JSON、未知字段、schema 与领域对象转换 |
-| store | `rust/work-memory-store/tests/` | schema 初始化、事务、查询、删除级联、纠错审计、历史导入校验 |
-| service | `rust/work-memory-service/tests/` | 最近+热门候选、归档边界、自然语言查询、聚合回答 |
-| runtime | `rust/work-memory-runtime/tests/` | fake model 下的自动归档、确认、projection |
-| agent | `rust/work-memory-agent/tests/` | endpoint 配置、HTTP transport、structured output、工具 Harness 限制 |
-| server | `rust/work-memory-server/tests/` | route、UI contract、确认卡片、删除按钮、Markdown 渲染边界 |
+| core | `crates/doggie-domain/tests/` | 分类动作、候选排序、低信息门控、置信度门控 |
+| contracts | `crates/doggie-protocol/tests/` | 严格 JSON、未知字段、schema 与领域对象转换 |
+| store | `crates/doggie-storage-sqlite/tests/` | schema 初始化、事务、查询、删除级联、纠错审计、历史导入校验 |
+| service | `crates/doggie-application/tests/` | 最近+热门候选、归档边界、自然语言查询、聚合回答 |
+| runtime | `crates/doggie-engine/tests/` | fake model 下的自动归档、确认、projection |
+| llm | `crates/doggie-llm/tests/` | endpoint 配置、HTTP transport、structured output 和 response 归一化 |
+| agent-runtime | `crates/doggie-agent-runtime/tests/` | 工具 Harness 限制、工具 allow-list、上下文资源上限 |
+| server | `apps/doggie-local-web/tests/` | route、UI contract、确认卡片、删除按钮、Markdown 渲染边界 |
 
 测试原则：
 
@@ -897,10 +899,10 @@ git diff --check
 
 推荐顺序：
 
-1. `work-memory-core`：更新领域规则和门控测试。
-2. `work-memory-service`：更新候选构造和后处理测试。
-3. `work-memory-runtime`：更新 prompt 或归档编排。
-4. `work-memory-server`：更新 projection/UI 文案。
+1. `doggie-domain`：更新领域规则和门控测试。
+2. `doggie-application`：更新候选构造和后处理测试。
+3. `doggie-engine`：更新 prompt 或归档编排。
+4. `doggie-local-web`：更新 projection/UI 文案。
 5. `docs/PROMPTS.md`、本文档和测试计划同步。
 
 必须确认：低信息输入仍进入 `ask_user`；模型不能使用非候选 Bucket ID。

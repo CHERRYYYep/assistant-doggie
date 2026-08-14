@@ -378,6 +378,109 @@ dependencies = [
 ]
 
 [[package]]
+name = "doggie-agent-runtime"
+version = "0.1.0"
+dependencies = [
+ "doggie-llm",
+ "doggie-protocol",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "doggie-application"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "doggie-domain",
+ "doggie-storage-sqlite",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
+name = "doggie-domain"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+ "unicode-casefold",
+]
+
+[[package]]
+name = "doggie-engine"
+version = "0.1.0"
+dependencies = [
+ "doggie-application",
+ "doggie-domain",
+ "doggie-llm",
+ "doggie-protocol",
+ "doggie-storage-sqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "doggie-llm"
+version = "0.1.0"
+dependencies = [
+ "async-openai",
+ "doggie-protocol",
+ "httpmock",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "ureq",
+ "url",
+]
+
+[[package]]
+name = "doggie-local-web"
+version = "0.1.0"
+dependencies = [
+ "doggie-agent-runtime",
+ "doggie-application",
+ "doggie-domain",
+ "doggie-engine",
+ "doggie-llm",
+ "doggie-protocol",
+ "doggie-storage-sqlite",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
+name = "doggie-protocol"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "doggie-domain",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "doggie-storage-sqlite"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "doggie-domain",
+ "doggie-protocol",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1785,98 +1888,6 @@ name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
-
-[[package]]
-name = "work-memory-agent"
-version = "0.1.0"
-dependencies = [
- "async-openai",
- "httpmock",
- "serde",
- "serde_json",
- "thiserror",
- "ureq",
- "url",
- "work-memory-contracts",
-]
-
-[[package]]
-name = "work-memory-contracts"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "thiserror",
- "work-memory-core",
-]
-
-[[package]]
-name = "work-memory-core"
-version = "0.1.0"
-dependencies = [
- "thiserror",
- "unicode-casefold",
-]
-
-[[package]]
-name = "work-memory-runtime"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "work-memory-agent",
- "work-memory-contracts",
- "work-memory-core",
- "work-memory-service",
- "work-memory-store",
-]
-
-[[package]]
-name = "work-memory-server"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tempfile",
- "thiserror",
- "work-memory-agent",
- "work-memory-contracts",
- "work-memory-core",
- "work-memory-runtime",
- "work-memory-service",
- "work-memory-store",
-]
-
-[[package]]
-name = "work-memory-service"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde_json",
- "tempfile",
- "thiserror",
- "uuid",
- "work-memory-core",
- "work-memory-store",
-]
-
-[[package]]
-name = "work-memory-store"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "clap",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "uuid",
- "work-memory-contracts",
- "work-memory-core",
-]
 
 [[package]]
 name = "writeable"

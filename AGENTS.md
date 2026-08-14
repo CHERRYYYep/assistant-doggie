@@ -2,15 +2,16 @@
 
 ## 仓库指南
 
-本仓库是一个 Rust 个人工作记忆 Agent。所有产品运行、测试和开发路径都位于 Rust workspace：
+本仓库是一个 Rust 个人工作记忆 Agent。所有产品运行、测试和开发路径都位于 Cargo workspace：
 
-- `rust/work-memory-core/`：领域值、Bucket/Entry 模型、分类安全门控和确定性文本规则。
-- `rust/work-memory-contracts/`：模型结构化输出契约、JSON Schema 和边界校验。
-- `rust/work-memory-agent/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport 和受控工具 Harness。
-- `rust/work-memory-store/`：Rust canonical SQLite schema、事务、查询、归档写入和只读历史库导入工具。
-- `rust/work-memory-service/`：归档、自然语言记忆查询、纠错、状态和对话持久化服务。
-- `rust/work-memory-runtime/`：模型、服务和安全门控的组合运行时。
-- `rust/work-memory-server/`：本地 HTTP API、ChatGPT 风格内嵌 Web UI 和应用入口。
+- `crates/doggie-domain/`：领域值、Bucket/Entry 模型、分类安全门控和确定性文本规则。
+- `crates/doggie-application/`：归档、自然语言记忆查询、纠错、状态和对话持久化服务。
+- `crates/doggie-protocol/`：模型结构化输出契约、JSON Schema、HTTP/工具 DTO 和边界校验。
+- `crates/doggie-storage-sqlite/`：Doggie canonical SQLite schema、事务、查询、归档写入和只读历史库导入工具。
+- `crates/doggie-llm/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport 和 response 归一化。
+- `crates/doggie-agent-runtime/`：受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装。
+- `crates/doggie-engine/`：稳定 facade，组装模型、应用服务和安全门控。
+- `apps/doggie-local-web/`：当前唯一入口；本地 HTTP API、ChatGPT 风格内嵌 Web UI 和进程入口。
 - `docs/`：当前架构、数据模型、API 行为、迁移边界和测试方案。
 
 旧版运行时、旧测试和旧界面不属于本分支。历史数据库兼容能力只允许以 Rust 实现保留，不得重新引入其他语言的生产路径或测试依赖。
@@ -22,7 +23,7 @@
 ```bash
 cp .env.example .env
 # 编辑 .env，填写模型端点和 OPENAI_API_KEY
-cargo run -p work-memory-server
+cargo run -p doggie-local-web
 ```
 
 常用检查命令：

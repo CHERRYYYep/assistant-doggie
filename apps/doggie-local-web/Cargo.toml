@@ -1,0 +1,20 @@
+[package]
+name = "doggie-local-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Local HTTP API and embedded Web UI for Doggie"
+
+[dependencies]
+serde_json = "1"
+thiserror.workspace = true
+doggie-agent-runtime = { path = "../../crates/doggie-agent-runtime" }
+doggie-llm = { path = "../../crates/doggie-llm" }
+doggie-protocol = { path = "../../crates/doggie-protocol" }
+doggie-domain = { path = "../../crates/doggie-domain" }
+doggie-engine = { path = "../../crates/doggie-engine" }
+doggie-application = { path = "../../crates/doggie-application" }
+doggie-storage-sqlite = { path = "../../crates/doggie-storage-sqlite" }
+
+[dev-dependencies]
+tempfile.workspace = true

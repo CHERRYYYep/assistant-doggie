@@ -18,7 +18,7 @@
 - 枚举字段使用有限取值，未知字段拒绝解析，避免下游静默接受拼写错误。
 - `confidence` 必须位于 0 到 1；`reason` 和 `summary` 必须有实际内容。
 - 跨字段必须一致：追加必须给出 `bucket_id`，新建必须给出 `bucket_type` 和 `title`，询问必须给出 `question`。
-- Rust contract 和服务端校验用于本地调用的安全兜底；调用 Structured Outputs 时，仍要求模型返回完整字段。
+- Doggie protocol contract 和服务端校验用于本地调用的安全兜底；调用 Structured Outputs 时，仍要求模型返回完整字段。
 
 保持 MVP Schema 扁平。只有当产品确实需要截止时间、证据来源或决策原因时，再把字符串升级为嵌套对象，避免过早增加 Prompt 和校验复杂度。确认响应由服务端投影已有 Bucket 元数据：`recommended_bucket`、`recommended_bucket_id`、`candidate_buckets`、`candidate_bucket_ids`、`reason` 和 `question`；`bucket_title` / `bucket_type` 仅作为新 Bucket 建议。
 

@@ -1,4 +1,4 @@
-# Rust Work Memory MVP 规格
+# Doggie MVP 规格
 
 ## 1. 产品目标
 

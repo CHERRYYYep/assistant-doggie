@@ -1,8 +1,8 @@
-# Rust Canonical 数据模型
+# Doggie Canonical 数据模型
 
 ## 1. 存储原则
 
-`work-memory-store` 只向产品运行时暴露 Rust-owned canonical SQLite。所有业务写入通过强类型 request 和事务完成，应用层不拿到任意 SQL 写连接。
+`doggie-storage-sqlite` 只向产品运行时暴露 Doggie-owned canonical SQLite。所有业务写入通过强类型 request 和事务完成，应用层不拿到任意 SQL 写连接。
 
 历史 schema 只作为离线导入源：先只读校验，再把语义内容写入全新的 canonical 数据库；导入不修改源库，也不与在线写入并发共享文件。
 
