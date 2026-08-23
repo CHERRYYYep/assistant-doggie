@@ -10,6 +10,8 @@ pub const INDEX_HTML: &str = include_str!("../frontend/index.html");
 pub const STYLES_CSS: &str = include_str!("../frontend/assets/styles.css");
 /// Frontend application script.
 pub const APP_JS: &str = include_str!("../frontend/assets/app.js");
+/// Markdown renderer module imported by the application script.
+pub const MARKDOWN_JS: &str = include_str!("../frontend/assets/markdown.js");
 
 /// One static frontend asset served by the local Web UI server.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,6 +34,10 @@ pub fn asset_for_path(path: &str) -> Option<FrontendAsset> {
         "/assets/app.js" => Some(FrontendAsset {
             content_type: "text/javascript; charset=utf-8",
             body: APP_JS,
+        }),
+        "/assets/markdown.js" => Some(FrontendAsset {
+            content_type: "text/javascript; charset=utf-8",
+            body: MARKDOWN_JS,
         }),
         _ => None,
     }

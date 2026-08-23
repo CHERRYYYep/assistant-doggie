@@ -18,6 +18,10 @@ work_memory.db
 # Coverage and reports
 coverage/
 
+# Frontend tooling (Prettier + node --test only; no build output is committed)
+node_modules/
+package-lock.json
+
 # OS and editors
 .DS_Store
 Thumbs.db

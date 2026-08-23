@@ -27,7 +27,7 @@ use doggie_storage_sqlite::{ChatRole, DoggieChatMessage, StoreError};
 use serde_json::{Value, json};
 
 mod frontend;
-pub use frontend::{APP_JS, INDEX_HTML, STYLES_CSS};
+pub use frontend::{APP_JS, INDEX_HTML, MARKDOWN_JS, STYLES_CSS, asset_for_path};
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8787";
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -37,11 +37,10 @@ const CHAT_HISTORY_LIMIT: usize = 40;
 
 /// Content Security Policy for every response.
 ///
-/// The UI loads only same-origin assets, so everything else is denied.
-/// `'unsafe-inline'` is still needed under `style-src` because `app.js` emits a
-/// few inline `style` attributes; removing those lets this tighten to `'self'`.
+/// The UI loads only same-origin assets and emits no inline styles or scripts,
+/// so everything else is denied outright.
 const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
-     style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; \
+     style-src 'self'; img-src 'self'; connect-src 'self'; \
      base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /// The result produced by a conversational response provider.
@@ -2144,7 +2143,14 @@ mod tests {
         let script = server.handle_request(HttpRequest::new("GET", "/assets/app.js", ""));
         assert_eq!(script.status, 200);
         assert_eq!(script.content_type, "text/javascript; charset=utf-8");
-        assert!(script.body.contains("/api/archive"));
+        // The UI archives through the chat routes; `/api/archive` is a direct
+        // API path the frontend never called.
+        assert!(script.body.contains("/api/chat"));
+
+        let markdown = server.handle_request(HttpRequest::new("GET", "/assets/markdown.js", ""));
+        assert_eq!(markdown.status, 200);
+        assert_eq!(markdown.content_type, "text/javascript; charset=utf-8");
+        assert!(markdown.body.contains("export function renderMarkdown"));
 
         let ui_bundle = format!("{}{}{}", ui.body, style.body, script.body);
         for marker in [
@@ -2167,8 +2173,8 @@ mod tests {
             "matched_fields",
             "去重后的证据",
             "合并回答",
-            "/api/archive/append",
-            "/api/archive/create",
+            "/api/chat/confirm",
+            "/api/chat/history",
             "/api/corrections/move",
             "删除 Bucket",
             r#"data-action="delete-bucket""#,
