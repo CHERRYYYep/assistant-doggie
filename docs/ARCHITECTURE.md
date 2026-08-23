@@ -60,9 +60,14 @@ crate 职责：
 这是本地单用户 MVP：
 
 - 默认只绑定 loopback；
-- 没有内置认证、授权、TLS、CSRF、限流或多租户；
+- 没有内置认证、授权、TLS、限流或多租户；
+- **绑定 loopback 本身不是安全边界**：用户浏览的任意页面都能向 `127.0.0.1` 发起跨源请求，使用简单 content-type 的写请求不触发预检，即使攻击者读不到响应，副作用也已经发生。因此服务端强制：
+  - HTTP/1.1 必须携带 `Host`，且 `Host` 必须是 loopback 或实际绑定的地址（防 DNS rebinding，读写都覆盖）；
+  - 状态变更请求若携带 `Origin`，必须是允许的来源；`Origin: null` 一律拒绝；
+  - 带 body 的请求必须使用 `Content-Type: application/json`，迫使跨源调用先走预检并失败；
+  - 所有响应带 `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer` 和禁止外部资源的 CSP。
 - `confirmation_granted` 是业务确认，不是身份凭证；
-- 监听到非 loopback 地址时，访问者可以读写数据库；
+- 监听到非 loopback 地址时，该地址会被加入允许来源，访问者可以读写数据库；
 - Agent 只允许注册工具，限制工具轮数、参数大小、结果大小和历史上下文大小；
 - 模型 API Key 只从进程环境读取，错误和日志不得打印密钥。
 

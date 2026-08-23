@@ -35,6 +35,15 @@ const MAX_LIST_LIMIT: usize = 100;
 const MAX_HTTP_REQUEST_BYTES: usize = 1024 * 1024;
 const CHAT_HISTORY_LIMIT: usize = 40;
 
+/// Content Security Policy for every response.
+///
+/// The UI loads only same-origin assets, so everything else is denied.
+/// `'unsafe-inline'` is still needed under `style-src` because `app.js` emits a
+/// few inline `style` attributes; removing those lets this tighten to `'self'`.
+const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self'; \
+     style-src 'self' 'unsafe-inline'; img-src 'self'; connect-src 'self'; \
+     base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
 /// The result produced by a conversational response provider.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChatResponderResult {
@@ -180,12 +189,28 @@ impl<T: doggie_llm::StructuredOutputTransport> ChatResponder for AgentChatRespon
     }
 }
 
+/// The request headers the server actually inspects.
+///
+/// Only these three are retained. Everything else is dropped while parsing so
+/// the dispatcher cannot grow an accidental dependency on unvalidated client
+/// input.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RequestHeaders {
+    /// `Host`, used to reject DNS-rebinding attempts.
+    pub host: Option<String>,
+    /// `Origin`, used to reject cross-origin state changes.
+    pub origin: Option<String>,
+    /// `Content-Type`, used to force a preflight on cross-origin writes.
+    pub content_type: Option<String>,
+}
+
 /// Parsed request used by the route dispatcher and direct API tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequest {
     pub method: String,
     pub target: String,
     pub body: String,
+    pub headers: RequestHeaders,
 }
 
 impl HttpRequest {
@@ -198,8 +223,136 @@ impl HttpRequest {
             method: method.into(),
             target: target.into(),
             body: body.into(),
+            headers: RequestHeaders::default(),
         }
     }
+
+    /// Attach a `Host` header, as a browser always does.
+    #[must_use]
+    pub fn with_host(mut self, host: impl Into<String>) -> Self {
+        self.headers.host = Some(host.into());
+        self
+    }
+
+    /// Attach an `Origin` header, as a browser does for every state change.
+    #[must_use]
+    pub fn with_origin(mut self, origin: impl Into<String>) -> Self {
+        self.headers.origin = Some(origin.into());
+        self
+    }
+
+    /// Attach a `Content-Type` header.
+    #[must_use]
+    pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
+        self.headers.content_type = Some(content_type.into());
+        self
+    }
+}
+
+/// Which authorities the server answers for.
+///
+/// Binding to loopback is *not* a security boundary against a browser: any page
+/// the user visits can address `127.0.0.1`. A cross-origin `fetch` using a
+/// simple content type is delivered without a preflight, so the write lands even
+/// though the attacker cannot read the response. This policy is what actually
+/// draws the boundary.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OriginPolicy {
+    /// Authorities accepted in addition to the loopback defaults. Empty keeps
+    /// the server loopback-only, which is the documented MVP boundary.
+    extra_authorities: Vec<String>,
+}
+
+impl OriginPolicy {
+    /// Accept loopback authorities only.
+    #[must_use]
+    pub const fn loopback_only() -> Self {
+        Self {
+            extra_authorities: Vec::new(),
+        }
+    }
+
+    /// Accept loopback plus the address the listener actually bound to, so a
+    /// deliberately exposed instance keeps working.
+    #[must_use]
+    pub fn for_socket_address(address: std::net::SocketAddr) -> Self {
+        let mut extra_authorities = Vec::new();
+        if !address.ip().is_loopback() {
+            extra_authorities.push(address.to_string());
+        }
+        Self { extra_authorities }
+    }
+
+    /// Whether a `Host`-style `host[:port]` authority is accepted.
+    #[must_use]
+    pub fn allows_authority(&self, authority: &str) -> bool {
+        let authority = authority.trim();
+        if authority.is_empty() {
+            return false;
+        }
+        is_loopback_authority(authority)
+            || self
+                .extra_authorities
+                .iter()
+                .any(|known| known == authority)
+    }
+
+    /// Whether an `Origin`-style `scheme://host[:port]` value is accepted.
+    #[must_use]
+    pub fn allows_origin(&self, origin: &str) -> bool {
+        match authority_of_origin(origin.trim()) {
+            Some(authority) => self.allows_authority(authority),
+            // `null` and opaque origins never authorize a state change.
+            None => false,
+        }
+    }
+}
+
+/// Split the authority out of an `Origin` value.
+fn authority_of_origin(origin: &str) -> Option<&str> {
+    let rest = origin
+        .strip_prefix("http://")
+        .or_else(|| origin.strip_prefix("https://"))?;
+    (!rest.is_empty() && !rest.contains('/')).then_some(rest)
+}
+
+/// Split the host out of a `host[:port]` authority, tolerating IPv6 literals.
+fn host_of_authority(authority: &str) -> &str {
+    if let Some(end) = authority.find(']') {
+        return &authority[..=end];
+    }
+    if authority.matches(':').count() > 1 {
+        return authority;
+    }
+    match authority.rsplit_once(':') {
+        Some((host, _port)) => host,
+        None => authority,
+    }
+}
+
+/// Whether an authority names the local machine.
+fn is_loopback_authority(authority: &str) -> bool {
+    let host = host_of_authority(authority);
+    if matches!(host, "localhost" | "::1" | "[::1]") {
+        return true;
+    }
+    host.parse::<std::net::Ipv4Addr>()
+        .is_ok_and(|address| address.is_loopback())
+}
+
+/// Whether a method may change server state.
+fn is_state_changing(method: &str) -> bool {
+    !matches!(method, "GET" | "HEAD")
+}
+
+/// Whether a `Content-Type` value names JSON.
+fn is_json_content_type(value: &str) -> bool {
+    value
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case("application/json")
 }
 
 /// Response emitted by the route dispatcher.
@@ -236,7 +389,7 @@ impl HttpResponse {
         let body = self.body.as_bytes();
         write!(
             stream,
-            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n",
+            "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n\r\n",
             self.status,
             reason,
             self.content_type,
@@ -250,6 +403,7 @@ impl HttpResponse {
 pub struct Server<M, C = ArchiveAwareChatResponder> {
     runtime: CanonicalRuntime<M>,
     chat_responder: C,
+    origin_policy: OriginPolicy,
 }
 
 impl<M> Server<M> {
@@ -257,6 +411,7 @@ impl<M> Server<M> {
         Self {
             runtime,
             chat_responder: ArchiveAwareChatResponder,
+            origin_policy: OriginPolicy::loopback_only(),
         }
     }
 }
@@ -266,6 +421,61 @@ impl<M, C> Server<M, C> {
         Self {
             runtime,
             chat_responder,
+            origin_policy: OriginPolicy::loopback_only(),
+        }
+    }
+
+    /// Replace the accepted-authority policy. [`serve`] calls this with the
+    /// address the listener actually bound to.
+    pub fn set_origin_policy(&mut self, origin_policy: OriginPolicy) {
+        self.origin_policy = origin_policy;
+    }
+
+    /// Reject a request that a browser could have been tricked into sending.
+    ///
+    /// The checks key off `Host`. RFC 9112 makes it mandatory on HTTP/1.1, and
+    /// [`read_request`] rejects a network request without one, so anything that
+    /// reached the socket has it — and a hostile page cannot suppress it. Its
+    /// absence therefore means a direct library call, where cross-origin has no
+    /// meaning.
+    ///
+    /// Returns `None` when the request may proceed.
+    fn reject_untrusted_request(
+        &self,
+        request: &HttpRequest,
+        method: &str,
+    ) -> Option<HttpResponse> {
+        let host = request.headers.host.as_deref()?;
+        // A rebound DNS name resolves to loopback but keeps the attacker's
+        // authority in `Host`, so this covers reads as well as writes.
+        if !self.origin_policy.allows_authority(host) {
+            return Some(HttpResponse::error(403, "host is not allowed"));
+        }
+        if !is_state_changing(method) {
+            return None;
+        }
+        // A browser always sends `Origin` on a state change and a page cannot
+        // forge it. Absence means a non-browser client such as curl.
+        if let Some(origin) = request.headers.origin.as_deref() {
+            if !self.origin_policy.allows_origin(origin) {
+                return Some(HttpResponse::error(
+                    403,
+                    "cross-origin state change is not allowed",
+                ));
+            }
+        }
+        // Requiring JSON forces a preflight for any cross-origin caller, which
+        // then fails because no CORS headers are sent. Bodyless requests such as
+        // DELETE are already preflighted by the browser.
+        if request.body.is_empty() {
+            return None;
+        }
+        match request.headers.content_type.as_deref() {
+            Some(value) if is_json_content_type(value) => None,
+            _ => Some(HttpResponse::error(
+                415,
+                "request body must use Content-Type: application/json",
+            )),
         }
     }
 
@@ -287,6 +497,9 @@ where
     pub fn handle_request(&mut self, request: HttpRequest) -> HttpResponse {
         let (path, query) = split_target(&request.target);
         let method = request.method.trim().to_ascii_uppercase();
+        if let Some(rejection) = self.reject_untrusted_request(&request, &method) {
+            return rejection;
+        }
         if method == "GET" {
             if let Some(asset) = frontend::asset_for_path(path) {
                 return HttpResponse::static_asset(asset);
@@ -1046,6 +1259,7 @@ where
     C: ChatResponder,
 {
     let listener = TcpListener::bind(address)?;
+    server.set_origin_policy(OriginPolicy::for_socket_address(listener.local_addr()?));
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
@@ -1101,21 +1315,43 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Result<HttpRequest, String
         return Ok(Err("invalid HTTP request line".to_owned()));
     }
     let mut content_length = None;
+    let mut headers = RequestHeaders::default();
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             continue;
         };
-        if name.trim().eq_ignore_ascii_case("content-length") {
-            let parsed = value.trim().parse().map_err(|_| {
+        let name = name.trim();
+        let value = value.trim();
+        if name.eq_ignore_ascii_case("content-length") {
+            let parsed = value.parse().map_err(|_| {
                 io::Error::new(io::ErrorKind::InvalidData, "invalid content length")
             })?;
             if content_length.is_some_and(|previous| previous != parsed) {
                 return Ok(Err("conflicting content lengths".to_owned()));
             }
             content_length = Some(parsed);
+        } else if name.eq_ignore_ascii_case("host") {
+            // A duplicated Host is a request-smuggling signal, not a client quirk.
+            if headers.host.is_some() {
+                return Ok(Err("conflicting host headers".to_owned()));
+            }
+            headers.host = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("origin") {
+            if headers.origin.is_some() {
+                return Ok(Err("conflicting origin headers".to_owned()));
+            }
+            headers.origin = Some(value.to_owned());
+        } else if name.eq_ignore_ascii_case("content-type") {
+            headers.content_type = Some(value.to_owned());
         }
     }
     let content_length = content_length.unwrap_or(0);
+    // RFC 9112 requires Host on HTTP/1.1. Enforcing it means every request that
+    // reaches the dispatcher over the network carries the evidence the
+    // cross-origin checks rely on.
+    if headers.host.is_none() {
+        return Ok(Err("HTTP/1.1 requires a Host header".to_owned()));
+    }
     let request_end = header_end
         .checked_add(content_length)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "request is too large"))?;
@@ -1131,7 +1367,9 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Result<HttpRequest, String
     }
     let body = String::from_utf8(buffer[header_end..request_end].to_vec())
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "request body is not UTF-8"))?;
-    Ok(Ok(HttpRequest::new(method, target, body)))
+    let mut request = HttpRequest::new(method, target, body);
+    request.headers = headers;
+    Ok(Ok(request))
 }
 
 fn runtime_error_response(error: RuntimeError) -> HttpResponse {
@@ -1746,6 +1984,137 @@ mod tests {
                 Ok(ExtractionResult::minimal("confirmed create summary").expect("extraction")),
             ],
         )
+    }
+
+    /// A state change that a page on another origin tricked the browser into
+    /// sending must not reach the runtime.
+    #[test]
+    fn cross_origin_state_change_is_rejected() {
+        let (mut server, _database) = server();
+        let response = server.handle_request(
+            HttpRequest::new("POST", "/api/chat", r#"{"message":"注入"}"#)
+                .with_host("127.0.0.1:8787")
+                .with_origin("http://evil.example")
+                .with_content_type("application/json"),
+        );
+
+        assert_eq!(response.status, 403);
+        assert!(response.body.contains("cross-origin"));
+
+        // The rejected write must not have produced a chat message.
+        let history =
+            server.handle_request(HttpRequest::new("GET", "/api/chat/history?limit=40", ""));
+        let body: Value = serde_json::from_str(&history.body).expect("history json");
+        assert_eq!(
+            body["messages"].as_array().expect("messages").len(),
+            0,
+            "a rejected cross-origin request must not persist anything"
+        );
+    }
+
+    /// `Origin: null` is what a sandboxed iframe or a redirected form sends. It
+    /// names no authority, so it can never authorize a write.
+    #[test]
+    fn opaque_origin_is_rejected() {
+        let (mut server, _database) = server();
+        let response = server.handle_request(
+            HttpRequest::new("POST", "/api/chat", r#"{"message":"注入"}"#)
+                .with_host("127.0.0.1:8787")
+                .with_origin("null")
+                .with_content_type("application/json"),
+        );
+
+        assert_eq!(response.status, 403);
+    }
+
+    /// A rebound DNS name resolves to loopback but keeps the attacker authority
+    /// in `Host`. Reads are covered too, not just writes.
+    #[test]
+    fn foreign_host_header_is_rejected() {
+        let (mut server, _database) = server();
+        let response = server.handle_request(
+            HttpRequest::new("GET", "/api/buckets/active", "").with_host("doggie.evil.example"),
+        );
+
+        assert_eq!(response.status, 403);
+        assert!(response.body.contains("host"));
+    }
+
+    /// A body sent with a simple content type would skip the browser preflight,
+    /// so it is refused even when the other checks pass.
+    #[test]
+    fn simple_content_type_body_is_rejected() {
+        let (mut server, _database) = server();
+        let response = server.handle_request(
+            HttpRequest::new("POST", "/api/chat", r#"{"message":"注入"}"#)
+                .with_host("127.0.0.1:8787")
+                .with_content_type("text/plain;charset=UTF-8"),
+        );
+
+        assert_eq!(response.status, 415);
+    }
+
+    /// The real UI, curl, and a bodyless DELETE all keep working.
+    #[test]
+    fn same_origin_loopback_and_bodyless_requests_are_allowed() {
+        let (mut server, _database) = server();
+
+        // Exactly what the bundled UI sends.
+        let same_origin = server.handle_request(
+            HttpRequest::new(
+                "POST",
+                "/api/chat",
+                r#"{"message":"接口 A 压测 p99 620ms"}"#,
+            )
+            .with_host("127.0.0.1:8787")
+            .with_origin("http://127.0.0.1:8787")
+            .with_content_type("application/json; charset=utf-8"),
+        );
+        assert_eq!(same_origin.status, 200, "body: {}", same_origin.body);
+
+        // curl sends Host but no Origin; a page cannot suppress an Origin.
+        let no_origin = server.handle_request(
+            HttpRequest::new("GET", "/api/buckets/active", "").with_host("127.0.0.1:8787"),
+        );
+        assert_eq!(no_origin.status, 200);
+
+        // A bodyless DELETE carries no Content-Type and is preflighted anyway.
+        let bucket_id = {
+            let body: Value = serde_json::from_str(&no_origin.body).expect("buckets json");
+            body["buckets"][0]["id"]
+                .as_str()
+                .expect("bucket id")
+                .to_owned()
+        };
+        let deleted = server.handle_request(
+            HttpRequest::new("DELETE", format!("/api/buckets/{bucket_id}"), "")
+                .with_host("localhost:8787")
+                .with_origin("http://localhost:8787"),
+        );
+        assert_eq!(deleted.status, 200, "body: {}", deleted.body);
+    }
+
+    /// Every loopback spelling a browser may use names the same machine.
+    #[test]
+    fn loopback_aliases_are_accepted_and_others_are_not() {
+        let policy = super::OriginPolicy::loopback_only();
+        for authority in [
+            "127.0.0.1:8787",
+            "localhost:8787",
+            "[::1]:8787",
+            "127.0.0.2",
+        ] {
+            assert!(policy.allows_authority(authority), "rejected {authority}");
+        }
+        for authority in ["evil.example", "10.0.0.5:8787", "", "0.0.0.0:8787"] {
+            assert!(!policy.allows_authority(authority), "accepted {authority}");
+        }
+
+        assert!(policy.allows_origin("http://localhost:8787"));
+        assert!(!policy.allows_origin("http://evil.example"));
+        assert!(!policy.allows_origin("null"));
+        // An authority-shaped suffix must not sneak past the prefix check.
+        assert!(!policy.allows_origin("http://evil.example/127.0.0.1:8787"));
     }
 
     #[test]
