@@ -1,18 +1,20 @@
 //! Structural contract for the bundled frontend.
 //!
 //! These assertions cover facts about how the UI is *assembled* — which assets
-//! exist, how they are wired together, and which server routes they depend on.
+//! exist, how they import each other, and which server routes they depend on.
 //!
 //! They deliberately do **not** assert on the source text of the renderer.
 //! Assertions of that shape (`APP_JS.contains("escapeHtml(plain)")`) tested
 //! spelling rather than behaviour: reformatting the file broke all of them
 //! while changing nothing, and a real injection bug would have left them
 //! passing. Renderer behaviour — escaping, URL filtering, fenced-code
-//! containment and the injection payloads each rule exists to stop — is now
+//! containment and the injection payloads each rule exists to stop — is
 //! covered by executable tests in `frontend/tests/markdown.test.js`
 //! (`npm test --prefix apps/doggie-local-web/frontend`).
 
-use doggie_local_web::{APP_JS, INDEX_HTML, MARKDOWN_JS, STYLES_CSS};
+use doggie_local_web::{
+    APP_JS, FRONTEND_ASSETS, INDEX_HTML, MARKDOWN_JS, STYLES_CSS, asset_for_path, frontend_scripts,
+};
 
 #[test]
 fn frontend_is_split_into_external_assets() {
@@ -26,24 +28,79 @@ fn frontend_is_split_into_external_assets() {
         !INDEX_HTML.contains("<script>"),
         "scripts must stay in app.js"
     );
-    assert!(!STYLES_CSS.is_empty());
-    assert!(!APP_JS.is_empty());
-    assert!(!MARKDOWN_JS.is_empty());
-}
-
-#[test]
-fn app_script_loads_as_a_module_and_imports_the_single_renderer() {
     assert!(
         INDEX_HTML.contains(r#"<script type="module" src="assets/app.js">"#),
-        "app.js must load as an ES module so it can import markdown.js"
+        "app.js must load as an ES module"
+    );
+    for asset in FRONTEND_ASSETS {
+        assert!(!asset.body.is_empty(), "empty asset: {}", asset.path);
+    }
+}
+
+/// Every `import ... from "./x.js"` must resolve to an asset the server routes.
+///
+/// A module that is imported but never registered in `FRONTEND_ASSETS` returns
+/// 404 and breaks the page with no server-side error, so this is the check that
+/// makes the split safe to extend.
+#[test]
+fn every_imported_module_is_served() {
+    let mut checked = 0;
+    for (path, source) in frontend_scripts() {
+        for specifier in import_specifiers(source) {
+            let resolved = format!("/assets/{specifier}");
+            assert!(
+                asset_for_path(&resolved).is_some(),
+                "{path} imports {specifier}, which is not served"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "no imports found; the parser is broken");
+    assert!(asset_for_path("/assets/missing.js").is_none());
+}
+
+/// `/` and `/index.html` must be the same document.
+#[test]
+fn index_is_reachable_from_the_site_root() {
+    let root = asset_for_path("/").expect("root asset");
+    let index = asset_for_path("/index.html").expect("index asset");
+    assert_eq!(root, index);
+    assert_eq!(root.content_type, "text/html; charset=utf-8");
+}
+
+/// Each module keeps one job: only `dom.js` touches the document, only
+/// `api.js` calls the network, only `state.js` owns mutable state.
+#[test]
+fn module_responsibilities_do_not_leak() {
+    let module = |name: &str| {
+        frontend_scripts()
+            .find(|(path, _)| *path == name)
+            .unwrap_or_else(|| panic!("missing module {name}"))
+            .1
+    };
+
+    for (path, source) in frontend_scripts() {
+        if path != "/assets/dom.js" {
+            assert!(
+                !source.contains("document.querySelector"),
+                "{path} queries the DOM directly; element handles belong in dom.js"
+            );
+        }
+        if path != "/assets/api.js" {
+            assert!(
+                !source.contains("fetch("),
+                "{path} calls fetch directly; network access belongs in api.js"
+            );
+        }
+    }
+
+    assert!(
+        module("/assets/app.js").contains("addEventListener"),
+        "app.js is the wiring module"
     );
     assert!(
-        APP_JS.contains(r#"from "./markdown.js""#),
-        "app.js must import the renderer instead of defining its own"
-    );
-    assert!(
-        !APP_JS.contains("function renderMarkdown"),
-        "the renderer must live only in markdown.js"
+        !module("/assets/markdown.js").contains("import "),
+        "the renderer must stay dependency-free so it can be unit tested"
     );
     assert!(
         MARKDOWN_JS
@@ -52,24 +109,10 @@ fn app_script_loads_as_a_module_and_imports_the_single_renderer() {
             == 1,
         "markdown.js must export exactly one renderer"
     );
-}
-
-/// Every asset the UI references must actually be routable.
-#[test]
-fn every_referenced_asset_path_is_served() {
-    for path in [
-        "/",
-        "/index.html",
-        "/assets/styles.css",
-        "/assets/app.js",
-        "/assets/markdown.js",
-    ] {
-        assert!(
-            doggie_local_web::asset_for_path(path).is_some(),
-            "unrouted asset path: {path}"
-        );
-    }
-    assert!(doggie_local_web::asset_for_path("/assets/missing.js").is_none());
+    assert!(
+        !APP_JS.contains("function renderMarkdown"),
+        "the renderer must live only in markdown.js"
+    );
 }
 
 /// The stylesheet must not hard-code a colour outside the token blocks, or a
@@ -94,21 +137,24 @@ fn stylesheet_defines_light_and_dark_tokens() {
 /// A CSP without `'unsafe-inline'` only holds if nothing emits inline styles.
 #[test]
 fn no_asset_emits_inline_style_attributes() {
-    for (name, source) in [
-        ("index.html", INDEX_HTML),
-        ("app.js", APP_JS),
-        ("markdown.js", MARKDOWN_JS),
-    ] {
+    assert!(!INDEX_HTML.contains("style=\""));
+    for (path, source) in frontend_scripts() {
         assert!(
             !source.contains("style=\""),
-            "{name} emits an inline style attribute, which the CSP forbids"
+            "{path} emits an inline style attribute, which the CSP forbids"
         );
     }
 }
 
-/// The routes the UI calls must match the ones the server dispatches.
+/// The routes the UI calls must match the ones the server dispatches, and they
+/// must all be declared in one place.
 #[test]
-fn app_script_calls_only_live_server_routes() {
+fn server_routes_are_declared_only_in_the_api_module() {
+    let api = frontend_scripts()
+        .find(|(path, _)| *path == "/assets/api.js")
+        .expect("api.js")
+        .1;
+
     for route in [
         "/api/chat",
         "/api/chat/confirm",
@@ -117,7 +163,16 @@ fn app_script_calls_only_live_server_routes() {
         "/api/memory/query",
         "/api/corrections/move",
     ] {
-        assert!(APP_JS.contains(route), "app.js no longer calls {route}");
+        assert!(api.contains(route), "api.js no longer declares {route}");
+    }
+
+    for (path, source) in frontend_scripts() {
+        if path != "/assets/api.js" {
+            assert!(
+                !source.contains("\"/api/"),
+                "{path} hard-codes a server route; routes belong in api.js"
+            );
+        }
     }
 
     // Removed in the frontend split; these were declared but never referenced.
@@ -128,11 +183,23 @@ fn app_script_calls_only_live_server_routes() {
 
 #[test]
 fn bucket_delete_and_auto_association_controls_are_present() {
-    assert!(APP_JS.contains("async function deleteBucket"));
-    assert!(APP_JS.contains(r#"data-action="delete-bucket""#));
+    let bundle: String = frontend_scripts().map(|(_, source)| source).collect();
+    assert!(bundle.contains("export async function deleteBucket"));
+    assert!(bundle.contains(r#"data-action="delete-bucket""#));
     assert!(INDEX_HTML.contains("自动关联最近和热门 Bucket"));
     assert!(
-        !APP_JS.contains("focus_bucket_id"),
+        !bundle.contains("focus_bucket_id"),
         "bucket candidates are chosen server-side"
     );
+}
+
+/// Collect the `./x.js` specifiers a module imports.
+fn import_specifiers(source: &str) -> Vec<&str> {
+    source
+        .match_indices("from \"./")
+        .filter_map(|(index, marker)| {
+            let rest = &source[index + marker.len()..];
+            rest.find('"').map(|end| &rest[..end])
+        })
+        .collect()
 }

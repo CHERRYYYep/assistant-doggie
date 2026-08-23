@@ -27,7 +27,10 @@ use doggie_storage_sqlite::{ChatRole, DoggieChatMessage, StoreError};
 use serde_json::{Value, json};
 
 mod frontend;
-pub use frontend::{APP_JS, INDEX_HTML, MARKDOWN_JS, STYLES_CSS, asset_for_path};
+pub use frontend::{
+    APP_JS, FRONTEND_ASSETS, FrontendAsset, INDEX_HTML, MARKDOWN_JS, STYLES_CSS, asset_for_path,
+    frontend_scripts,
+};
 
 pub const DEFAULT_BIND_ADDRESS: &str = "127.0.0.1:8787";
 const DEFAULT_LIST_LIMIT: usize = 20;
@@ -2116,6 +2119,9 @@ mod tests {
         assert!(!policy.allows_origin("http://evil.example/127.0.0.1:8787"));
     }
 
+    /// Every registered asset must be reachable through the real dispatcher
+    /// with the right content type. Structure of the assets themselves is
+    /// asserted in `tests/ui_contract.rs`; this covers only the HTTP surface.
     #[test]
     fn health_and_static_ui_routes_are_available() {
         let (mut server, _database) = server();
@@ -2123,36 +2129,33 @@ mod tests {
         assert_eq!(health.status, 200);
         assert!(health.body.contains("doggie-local-web"));
 
-        let ui = server.handle_request(HttpRequest::new("GET", "/", ""));
-        assert_eq!(ui.content_type, "text/html; charset=utf-8");
-        assert!(ui.body.contains("Doggie 本地工作记忆"));
-        assert!(ui.body.contains("assets/styles.css"));
-        assert!(ui.body.contains("assets/app.js"));
-        assert!(!ui.body.contains("<style>"));
-        assert!(!ui.body.contains("<script>"));
+        for asset in crate::FRONTEND_ASSETS {
+            let response = server.handle_request(HttpRequest::new("GET", asset.path, ""));
+            assert_eq!(response.status, 200, "unserved asset: {}", asset.path);
+            assert_eq!(response.content_type, asset.content_type, "{}", asset.path);
+            assert_eq!(response.body, asset.body, "{}", asset.path);
+        }
 
+        // `/` is an alias for the index document.
+        let root = server.handle_request(HttpRequest::new("GET", "/", ""));
         let index = server.handle_request(HttpRequest::new("GET", "/index.html", ""));
-        assert_eq!(index.status, 200);
-        assert_eq!(index.body, ui.body);
+        assert_eq!(root.status, 200);
+        assert_eq!(root.body, index.body);
+        assert_eq!(root.content_type, "text/html; charset=utf-8");
+        assert!(root.body.contains("Doggie 本地工作记忆"));
 
-        let style = server.handle_request(HttpRequest::new("GET", "/assets/styles.css", ""));
-        assert_eq!(style.status, 200);
-        assert_eq!(style.content_type, "text/css; charset=utf-8");
-        assert!(style.body.contains(".app-shell"));
+        let missing = server.handle_request(HttpRequest::new("GET", "/assets/nope.js", ""));
+        assert_eq!(missing.status, 404);
+    }
 
-        let script = server.handle_request(HttpRequest::new("GET", "/assets/app.js", ""));
-        assert_eq!(script.status, 200);
-        assert_eq!(script.content_type, "text/javascript; charset=utf-8");
-        // The UI archives through the chat routes; `/api/archive` is a direct
-        // API path the frontend never called.
-        assert!(script.body.contains("/api/chat"));
-
-        let markdown = server.handle_request(HttpRequest::new("GET", "/assets/markdown.js", ""));
-        assert_eq!(markdown.status, 200);
-        assert_eq!(markdown.content_type, "text/javascript; charset=utf-8");
-        assert!(markdown.body.contains("export function renderMarkdown"));
-
-        let ui_bundle = format!("{}{}{}", ui.body, style.body, script.body);
+    /// The confirmation UI must keep offering every archive choice, and must
+    /// never fall back to inline handlers the CSP forbids.
+    #[test]
+    fn confirmation_ui_offers_every_archive_choice() {
+        let bundle: String = crate::frontend_scripts()
+            .map(|(_, source)| source)
+            .chain(std::iter::once(crate::INDEX_HTML))
+            .collect();
         for marker in [
             "推荐 Bucket",
             "备选 Bucket",
@@ -2166,26 +2169,23 @@ mod tests {
             "candidate_bucket_ids",
             "entry_id",
             "语言查询",
-            "/api/memory/query",
             "query_plan",
             "entity_terms",
             "topic_terms",
             "matched_fields",
             "去重后的证据",
             "合并回答",
-            "/api/chat/confirm",
-            "/api/chat/history",
-            "/api/corrections/move",
             "删除 Bucket",
             r#"data-action="delete-bucket""#,
-            "DELETE",
-            "/api/buckets/",
             "自动关联最近和热门 Bucket",
         ] {
-            assert!(ui_bundle.contains(marker), "missing UI marker: {marker}");
+            assert!(bundle.contains(marker), "missing UI marker: {marker}");
         }
-        assert!(!ui_bundle.contains("onclick="));
-        assert!(!ui_bundle.contains("candidate_bucket_ids[0]"));
+        assert!(
+            !bundle.contains("onclick="),
+            "inline handlers are forbidden by the CSP"
+        );
+        assert!(!bundle.contains("candidate_bucket_ids[0]"));
     }
 
     #[test]
