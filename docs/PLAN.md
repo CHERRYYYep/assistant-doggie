@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T8 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T8/T8b 已完成
 
 ---
 
@@ -57,7 +57,7 @@
 
 415 行 `app.js` → 10 个模块。契约测试升级为真实结构不变量：每个 `import` 必须能路由到、只有 `dom.js` 能碰 DOM、只有 `api.js` 能 `fetch`、路由只在一处声明。用 stub DOM 的 Node harness 真实执行了模块图，确认无循环 import 与缺失导出。
 
-### 阶段 B — TypeScript 重写（T8 已完成，T8b 待完成）
+### 阶段 B — TypeScript 重写（T8/T8b 已完成）
 
 | # | 提交 | 内容 |
 |---|---|---|
@@ -69,6 +69,7 @@
 | **T6** | `03bfe63` | LLM 端点、严格结构化输出、wire 归一化和有界重试 |
 | **T7** | `4d1caca` | HTTP 合同、Hono API、S1 安全边界和 Node loopback server |
 | **T8** | `fe66410` → `2339bd3` | 前端 TypeScript、共享 HTTP DTO、Node/Rust 类型剥离与浏览器 smoke test |
+| **T8b** | `6c9e8eb` | GitHub Actions：Node 24 + `npm ci` + `npm run check` |
 
 **T1 — 骨架与规格**
 
@@ -182,6 +183,14 @@ T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通�
 
 实现提交链：`fe66410` → `459e4e4` → `f729bc4` → `2339bd3`；收口文档和格式提交：`315de89` → `e02b4b5` → `87e2af1` → `d44ec3f`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T8b — CI**
+
+T8b 已完成：新增 `.github/workflows/ci.yml`，在 `push` 和 `pull_request` 上以最小只读权限运行 Node 24、`npm ci` 和 `npm run check`；npm cache 已启用。工作流不扩展到 Rust CI，以保持本阶段范围聚焦。
+
+本地等价门禁已通过：Prettier YAML 检查、`npm run check`（166 个 TS 测试、23 个前端测试）和 `git diff --check`。真实 GitHub runner 将在该分支首次推送或 pull request 时执行；本地验证不将其误记为远程运行结果。
+
+提交：`6c9e8eb Add CI workflow`。未跟踪的 PDF 文件保留，未纳入提交。
+
 ---
 
 ## 三、待完成
@@ -189,7 +198,7 @@ T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通�
 ### 里程碑
 
 ```
-M1  TS 与 Rust 功能对等           T7 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
+M1  TS 与 Rust 功能对等           T7 → T8b ✅  ← CI 已就位，协作者可加入
 M2  记忆开始被日常消费             T9 → T10     ← 最高杠杆，产品开始有价值
 M3  Doggie 成为 Agent 控制面      T11 → T13
 M4  日常长期助手                  T14 → T17
@@ -205,7 +214,7 @@ M4  日常长期助手                  T14 → T17
 | **T6** ✅ | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
 | **T7** ✅ | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
 | **T8** ✅ | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
-| **T8b** | **CI** | GitHub Actions 跑 `npm run check` | — | T8 |
+| **T8b** ✅ | **CI** | GitHub Actions 跑 `npm run check` | — | T8 |
 
 **T3 约束（按 Q3 调整）**：**不做 legacy 导入，不兼容现有 `doggie.db`**。物理 schema 自由设计，但必须保留 §4 全部 15 条事务语义，且为 T17 导出/导入预留：业务 ID 稳定、无隐藏状态、派生数据可从原文重建。WAL + `busy_timeout` 从一开始就配好（T12 后台执行器的前置）。
 
