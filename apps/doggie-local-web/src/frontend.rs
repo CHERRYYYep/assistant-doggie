@@ -1,8 +1,9 @@
 //! Static assets for the local Web UI.
 //!
 //! The UI lives under `apps/doggie-local-web/frontend/` as plain ES modules
-//! with no build step: the server embeds the source files verbatim and serves
-//! them same-origin. Node is used only for formatting and tests.
+//! with a tiny build step: Node 24 strips TypeScript syntax before the server
+//! embeds the modules and serves them same-origin. No generated files are
+//! committed to the repository.
 //!
 //! Adding a module means adding one row to [`FRONTEND_ASSETS`]. The
 //! `every_referenced_asset_path_is_served` test fails if a module is imported
@@ -13,25 +14,28 @@ pub const INDEX_HTML: &str = include_str!("../frontend/index.html");
 /// Frontend stylesheet.
 pub const STYLES_CSS: &str = include_str!("../frontend/assets/styles.css");
 /// Entry point: binds DOM events to controllers.
-pub const APP_JS: &str = include_str!("../frontend/assets/app.ts");
+pub const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/app.js"));
 /// Markdown renderer.
-pub const MARKDOWN_JS: &str = include_str!("../frontend/assets/markdown.ts");
+pub const MARKDOWN_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/markdown.js"));
 /// Server routes and JSON transport.
-pub const API_JS: &str = include_str!("../frontend/assets/api.ts");
+pub const API_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/api.js"));
 /// The single mutable state object.
-pub const STATE_JS: &str = include_str!("../frontend/assets/state.ts");
+pub const STATE_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/state.js"));
 /// Element handles and the status line.
-pub const DOM_JS: &str = include_str!("../frontend/assets/dom.ts");
+pub const DOM_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/dom.js"));
 /// Controllers: fetch, mutate state, re-render.
-pub const VIEWS_JS: &str = include_str!("../frontend/assets/views.ts");
+pub const VIEWS_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/views.js"));
 /// Bucket presentation helpers.
-pub const RENDER_BUCKET_JS: &str = include_str!("../frontend/assets/render-bucket.ts");
+pub const RENDER_BUCKET_JS: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/frontend/render-bucket.js"));
 /// Archive result and confirmation card.
-pub const RENDER_ARCHIVE_JS: &str = include_str!("../frontend/assets/render-archive.ts");
+pub const RENDER_ARCHIVE_JS: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/frontend/render-archive.js"));
 /// Chat transcript rendering.
-pub const RENDER_CHAT_JS: &str = include_str!("../frontend/assets/render-chat.ts");
+pub const RENDER_CHAT_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/render-chat.js"));
 /// Memory query plan and results.
-pub const RENDER_QUERY_JS: &str = include_str!("../frontend/assets/render-query.ts");
+pub const RENDER_QUERY_JS: &str =
+    include_str!(concat!(env!("OUT_DIR"), "/frontend/render-query.js"));
 
 const HTML: &str = "text/html; charset=utf-8";
 const CSS: &str = "text/css; charset=utf-8";

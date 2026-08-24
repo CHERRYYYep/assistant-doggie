@@ -115,6 +115,28 @@ fn module_responsibilities_do_not_leak() {
     );
 }
 
+#[test]
+fn rust_embeds_browser_javascript_not_typescript_source() {
+    for (path, source) in frontend_scripts() {
+        assert!(
+            !source.contains("import type"),
+            "TS import survived in {path}"
+        );
+        assert!(
+            !source.contains("export type"),
+            "TS export survived in {path}"
+        );
+        assert!(
+            !source.contains("satisfies "),
+            "TS satisfies survived in {path}"
+        );
+        assert!(
+            !source.contains(" as const"),
+            "TS const assertion survived in {path}"
+        );
+    }
+}
+
 /// The stylesheet must not hard-code a colour outside the token blocks, or a
 /// new surface will silently look wrong in one of the two themes.
 #[test]
