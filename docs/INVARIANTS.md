@@ -147,11 +147,11 @@
 | 8.9 | 错误响应是稳定的 JSON 形状 `{ok:false, error}` | `[R]` `read_routes_and_store_failures_have_stable_json_errors` |
 | 8.10 | 分类或聊天模型失败时，**已接收的 user 消息仍要保留** | `[R]` chat failure tests |
 
-## 9. `[!]` Rust 重写中丢失的能力
+## 9. 评测能力（T9 已恢复）
 
-**交叉核对 Python 79 个测试后发现的最重要一件事**：
+**历史缺口**：交叉核对 Python 79 个测试后发现，Rust 重写曾丢失整套评测 harness；T9 已在 TypeScript 中恢复确定性评测和可复现 live 报告。
 
-Python 版本有一整套**评测harness**，Rust 版本**完全没有移植**：
+原 Python 版本有一整套**评测 harness**，Rust 版本**完全没有移植**；当前 TS 版本已恢复对应能力：
 
 | 文件 | 行数 | 作用 |
 | --- | --- | --- |
@@ -164,7 +164,7 @@ Python 版本有一整套**评测harness**，Rust 版本**完全没有移植**�
 
 **为什么这是个问题**：`docs/PRD.md` 第 8 节的成功指标写着「**自动分类准确率是否能达到 70% 以上**」。Rust 版本没有任何东西能回答这个问题。更严重的是提取忠实度检查——它专门抓「模型编造了原文里没有的数字」，而这直接违反 PRD 的「原文保留」原则。
 
-**TS 重写必须把这套评测带回来。** 人工标注 fixture 在 `dev` 分支的 `tests/fixtures/` 下，可以直接复用。
+**T9 已完成恢复。** 人工标注 fixture 从 `dev` 分支的 `tests/fixtures/` 复用；TS 实现在 `src/evaluation/`，普通测试不调用真实模型，live harness 通过注入 classifier/extractor 后单独运行。
 
 ---
 

@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T8/T8b 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T9 已完成（M2 进行中）
 
 ---
 
@@ -191,6 +191,18 @@ T8b 已完成：新增 `.github/workflows/ci.yml`，在 `push` 和 `pull_request
 
 提交：`6c9e8eb Add CI workflow`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T9 — 评测 harness 恢复**
+
+T9 已完成，恢复了原 Python harness 的确定性能力，并保留 live evaluation 的可复现报告格式：
+
+- `src/evaluation/classification.ts`：加载并校验 50 条人工标注分类 fixture，计算 action / Bucket / 自动归档准确率、ask-user recall、高代价误合并和 confidence 分档指标；同时提供不读取 expected label 的 keyword baseline；
+- `src/evaluation/extraction.ts`：计算 summary / todo / evidence / timeline / decision term recall，检测 forbidden terms 和原文不存在的新数字；`85` 与 `85%` 按同一数字风险归一化；
+- `src/evaluation/live.ts`：注入真实 classifier / extractor，记录模型、端点、API mode、prompt version、生成时间和原始预测，写出可复核的 snake_case JSON 报告；不在普通测试中调用真实模型；
+- 复用了 `dev` 分支的 `tests/fixtures/classification_cases.json`（50 条）和 `extraction_cases.json`（3 条），没有重新标注；
+- 测试覆盖 fixture 覆盖率、指标边界、ID 对齐、报告加载/写盘和空选择拒绝。
+
+T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d901d`（live 报告）。首次完成后的全量 `npm run check` 与 `git diff --check` 作为收口门禁执行；真实模型 live run 仍需由用户显式提供端点和密钥后单独运行。
+
 ---
 
 ## 三、待完成
@@ -199,7 +211,7 @@ T8b 已完成：新增 `.github/workflows/ci.yml`，在 `push` 和 `pull_request
 
 ```
 M1  TS 与 Rust 功能对等           T7 → T8b ✅  ← CI 已就位，协作者可加入
-M2  记忆开始被日常消费             T9 → T10     ← 最高杠杆，产品开始有价值
+M2  记忆开始被日常消费             T9 ✅ → T10     ← 最高杠杆，产品开始有价值
 M3  Doggie 成为 Agent 控制面      T11 → T13
 M4  日常长期助手                  T14 → T17
 ```
@@ -228,7 +240,7 @@ M4  日常长期助手                  T14 → T17
 
 | # | 阶段 | 交付 | 说明 |
 |---|---|---|---|
-| **T9** | 评测 harness 恢复 | 分类准确率 + 提取忠实度 | 补回规格 §9 标 `[!]` 的能力；人工标注 fixture 在 `dev` 分支可复用 |
+| **T9** ✅ | 评测 harness 恢复 | 分类准确率 + 提取忠实度 + live 报告 | 已补回规格 §9 标 `[!]` 的能力；人工标注 fixture 已从 `dev` 分支复用 |
 | **T10** | **MCP server** | 只读工具 + `propose_entry` | **最高杠杆** |
 
 **T10 为什么最高杠杆**：它让已有的存储+查询层**每天在你用 Claude Code 工作时被调用**，而不是只有侧边栏在用。`AGENT_TOOL_DEFINITIONS` 已经是 JSON Schema 形状，MCP 的 `tools/list` 返回的就是这个——缺的只是协议传输层。
