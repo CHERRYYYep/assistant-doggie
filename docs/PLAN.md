@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T4 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T5 已完成
 
 ---
 
@@ -8,16 +8,16 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | 5,588 行（含测试） |
-| TS 测试 | **84 个测试声明通过** |
+| TS 代码 | 8,488 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **97 个测试声明通过** |
 | 前端测试 | **16 个测试声明通过** |
 | Rust 参考实现 | **124 通过**（完好保留，可随时对拍） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **43 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 条） |
-| 剩余 | **42 条** |
+| 已覆盖 | **54 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 条） |
+| 剩余 | **31 条** |
 
 ```
-进度  ██████████████░░░░░░░░░░░░  43 / 85
+进度  ██████████████████░░░░░░░░░░  54 / 85
 ```
 
 ### 分支布局
@@ -65,6 +65,7 @@
 | **T2** | `faf9977` | 领域层 + 安全门控 + 差分测试 |
 | **T3** | `2fdf105` | SQLite 存储层 + canonical schema + 事务 + Rust/TS 差分测试 |
 | **T4** | `02d6e24` | 归档确认 + 纠错 + Bucket 生命周期应用服务 |
+| **T5** | `d794fc4` | Entry 级自然语言查询、确定性重排和 evidence 投影 |
 
 **T1 — 骨架与规格**
 
@@ -120,6 +121,21 @@ T4 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 
 提交链：`7f69c1b` → `1d947d9` → `896c041` → `02d6e24`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T5 — 自然语言查询**
+
+T5 已完成，覆盖 `docs/INVARIANTS.md` §5 全部 11 条：
+
+- 确定性 `MemoryQuery` 解析器提取 entity/topic/bucket terms、相对 UTC 时间、生命周期状态和调用方 structured filters，并用类型化错误限制空查询、500 字符上限、非法 limit、时间范围和过滤器数量；
+- Store 以 Entry 为候选单元，检索 Bucket 标题/摘要/标签、Entry 原文/summary/content type，以及所属 memory 的 kind/text/status/source/metadata；memory 严格按 `entry_id` 关联；
+- SQL LIKE 始终参数绑定，并把 `%`、`_`、`/` 作为字面量转义；Unicode 内存回退固定为 Rust `unicode-casefold 0.2.0` 的 Unicode 9 full/non-Turkic 语义，1,112,064 个 Unicode scalar value 全量差分一致；
+- 查询服务支持 lifecycle、`Entry.created_at` UTC 半开区间和结构化字段过滤；全局完成 lexical ranking、recency bonus、稳定 tie-break 后才应用 limit，并按 Bucket 聚合；
+- evidence 按 `kind + casefold(trim(text))` 去重，同文本不同 kind 保留；`answer` 完全确定性生成，字段明确命名为 `lexicalSimilarity`，不冒充 embedding/vector score；
+- 查询前后数据库业务快照、Bucket 活动时间和聊天历史保持不变；额外覆盖非法日历日期、无时区时间、RFC3339 offset、顶层数组 metadata、archived、时间四边界和重复查询一致性。
+
+T5 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。当前共有 97 个 TS 测试声明、16 个前端测试声明，Rust 参考实现 124 个测试继续全部通过。
+
+提交链：`be25375` → `4b06031` → `99ff0d6` → `d794fc4`。未跟踪的 PDF 文件保留，未纳入提交。
+
 ---
 
 ## 三、待完成
@@ -127,7 +143,7 @@ T4 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 ### 里程碑
 
 ```
-M1  TS 与 Rust 功能对等           T4 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
+M1  TS 与 Rust 功能对等           T5 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
 M2  记忆开始被日常消费             T9 → T10     ← 最高杠杆，产品开始有价值
 M3  Doggie 成为 Agent 控制面      T11 → T13
 M4  日常长期助手                  T14 → T17
@@ -139,7 +155,7 @@ M4  日常长期助手                  T14 → T17
 |---|---|---|---|---|
 | **T3** ✅ | 存储层 | `node:sqlite`、canonical schema、事务、Rust/TS 差分测试 | §4 全部 15 条 | T2 |
 | **T4** ✅ | 应用服务 | 归档、确认、纠错、状态变更 | §3 全部 8 条 | T3 |
-| **T5** | 查询 | `MemoryQuery` 解析、检索、重排、evidence 去重 | §5 全部 11 条 | T3 |
+| **T5** ✅ | 查询 | `MemoryQuery` 解析、检索、重排、evidence 去重 | §5 全部 11 条 | T3 |
 | **T6** | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
 | **T7** | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
 | **T8** | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
