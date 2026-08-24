@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T5 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T6 已完成
 
 ---
 
@@ -8,16 +8,16 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | 8,488 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **97 个测试声明通过** |
+| TS 代码 | 11,200 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **124 个测试声明通过** |
 | 前端测试 | **16 个测试声明通过** |
 | Rust 参考实现 | **124 通过**（完好保留，可随时对拍） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **54 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 条） |
-| 剩余 | **31 条** |
+| 已覆盖 | **66 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 + §6 全部 12 条） |
+| 剩余 | **19 条** |
 
 ```
-进度  ██████████████████░░░░░░░░░░  54 / 85
+进度  ██████████████████████░░░░░░  66 / 85
 ```
 
 ### 分支布局
@@ -66,6 +66,7 @@
 | **T3** | `2fdf105` | SQLite 存储层 + canonical schema + 事务 + Rust/TS 差分测试 |
 | **T4** | `02d6e24` | 归档确认 + 纠错 + Bucket 生命周期应用服务 |
 | **T5** | `d794fc4` | Entry 级自然语言查询、确定性重排和 evidence 投影 |
+| **T6** | `03bfe63` | LLM 端点、严格结构化输出、wire 归一化和有界重试 |
 
 **T1 — 骨架与规格**
 
@@ -136,6 +137,21 @@ T5 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 
 提交链：`be25375` → `4b06031` → `99ff0d6` → `d794fc4`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T6 — LLM 适配**
+
+T6 已完成，覆盖 `docs/INVARIANTS.md` §6 全部 12 条：
+
+- 用 zod 建立 classification、extraction 和 bucket summary 的严格运行时合同，并提供 Responses / Chat Completions 共用的严格 JSON Schema；未知字段、非法 confidence、不一致 action、缺失 summary 和非法 timeline 文本均被拒绝；
+- extraction 的数组默认值每次解析独立创建，并兼容 Rust `Option<Vec<_>>` 的缺失值和 `null`；`timeline_events: null` 仍按合同拒绝；
+- endpoint 配置区分 official/custom 与 Responses/Chat 两种模式；自定义地址拒绝 credentials、query、fragment 和远程明文 HTTP，仅允许 localhost HTTP gateway；site 按 100 UTF-8 字节限制；
+- fetch transport 将 API Key 保存在 JavaScript 私有字段中，错误与 inspect 输出统一脱敏；timeout 限制为 1 到 2,147,483,647 的 safe integer，并区分瞬时 HTTP 与不可重试客户端错误；
+- Responses / Chat wire parser 统一处理 final answer、refusal、incomplete、content filter、非终止状态和 modern function tool calls；structured-output 路径明确拒绝 tool calls、legacy function_call、unsupported tool output 和畸形 finish reason，不允许文本掩盖未解决的工具调用；
+- structured adapter 发送 `strict: true` JSON Schema 请求，保留 prompt 原文、只 trim model，按 `maxRetries + 1` 精确限制总尝试次数，并统一处理 transport、wire、JSON 和 contract 错误；endpoint、transport 和 timeout 使用运行时私有状态，不能用 `Reflect.set` 绕过校验。
+
+T6 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。当前共有 124 个 TS 测试声明、16 个前端测试声明，其中 LLM 边界有 27 个测试声明；Rust 参考实现 124 个测试继续全部通过。
+
+提交链：`98826cf` → `c03841f` → `0a619c0` → `4436bc8` → `03bfe63`。未跟踪的 PDF 文件保留，未纳入提交。
+
 ---
 
 ## 三、待完成
@@ -143,7 +159,7 @@ T5 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 ### 里程碑
 
 ```
-M1  TS 与 Rust 功能对等           T5 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
+M1  TS 与 Rust 功能对等           T6 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
 M2  记忆开始被日常消费             T9 → T10     ← 最高杠杆，产品开始有价值
 M3  Doggie 成为 Agent 控制面      T11 → T13
 M4  日常长期助手                  T14 → T17
@@ -156,7 +172,7 @@ M4  日常长期助手                  T14 → T17
 | **T3** ✅ | 存储层 | `node:sqlite`、canonical schema、事务、Rust/TS 差分测试 | §4 全部 15 条 | T2 |
 | **T4** ✅ | 应用服务 | 归档、确认、纠错、状态变更 | §3 全部 8 条 | T3 |
 | **T5** ✅ | 查询 | `MemoryQuery` 解析、检索、重排、evidence 去重 | §5 全部 11 条 | T3 |
-| **T6** | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
+| **T6** ✅ | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
 | **T7** | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
 | **T8** | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
 | **T8b** | **CI** | GitHub Actions 跑 `npm run check` | — | T8 |
