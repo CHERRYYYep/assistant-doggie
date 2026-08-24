@@ -284,7 +284,13 @@ export class Store {
       }
 
       const timestamp = this.#now();
-      this.#insertMemories(bucketId, entryId, request.extraction, timestamp, true);
+      this.#insertMemories(
+        bucketId,
+        entryId,
+        request.extraction,
+        timestamp,
+        true,
+      );
       this.#database
         .prepare("UPDATE entries SET summary = ? WHERE id = ?")
         .run(request.extraction.summary, entryId);
@@ -407,7 +413,9 @@ export class Store {
 
   #existingMemoryKeys(bucketId: string): Set<string> {
     const rows = this.#database
-      .prepare("SELECT kind, text, occurred_at FROM memory_items WHERE bucket_id = ?")
+      .prepare(
+        "SELECT kind, text, occurred_at FROM memory_items WHERE bucket_id = ?",
+      )
       .all(bucketId) as {
       kind: string;
       text: string;
@@ -416,7 +424,12 @@ export class Store {
     return new Set(rows.map((row) => this.#memoryKey(row)));
   }
 
-  #memoryKey(row: { kind: string; text: string; occurredAt?: string | null; occurred_at?: string | null }): string {
+  #memoryKey(row: {
+    kind: string;
+    text: string;
+    occurredAt?: string | null;
+    occurred_at?: string | null;
+  }): string {
     const occurredAt = row.occurredAt ?? row.occurred_at ?? null;
     return row.kind === "timeline"
       ? `timeline|${occurredAt ?? ""}|${normalizedKey(row.text)}`
