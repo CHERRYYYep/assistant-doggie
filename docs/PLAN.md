@@ -57,7 +57,7 @@
 
 415 行 `app.js` → 10 个模块。契约测试升级为真实结构不变量：每个 `import` 必须能路由到、只有 `dom.js` 能碰 DOM、只有 `api.js` 能 `fetch`、路由只在一处声明。用 stub DOM 的 Node harness 真实执行了模块图，确认无循环 import 与缺失导出。
 
-### 阶段 B — TypeScript 重写（进行中）
+### 阶段 B — TypeScript 重写（T8 已完成，T8b 待完成）
 
 | # | 提交 | 内容 |
 |---|---|---|
@@ -68,6 +68,7 @@
 | **T5** | `d794fc4` | Entry 级自然语言查询、确定性重排和 evidence 投影 |
 | **T6** | `03bfe63` | LLM 端点、严格结构化输出、wire 归一化和有界重试 |
 | **T7** | `4d1caca` | HTTP 合同、Hono API、S1 安全边界和 Node loopback server |
+| **T8** | `fe66410` → `2339bd3` | 前端 TypeScript、共享 HTTP DTO、Node/Rust 类型剥离与浏览器 smoke test |
 
 **T1 — 骨架与规格**
 
@@ -179,7 +180,7 @@ T8 已完成：S2/S3 前端资产已全部迁移为严格 TypeScript，并与后
 
 T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通过）、`npm test`（166 个通过）、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。Rust `doggie-local-web` UI contract 测试 9 个全部通过；Node HTTP server 的 10 个真实 `.ts` 资源经 headless Chrome 加载成功，无 TypeScript 语法错误、模块加载错误或 CSP 拒绝。
 
-提交链：`fe66410` → `459e4e4` → `f729bc4` → `2339bd3` → `315de89`。未跟踪的 PDF 文件保留，未纳入提交。
+实现提交链：`fe66410` → `459e4e4` → `f729bc4` → `2339bd3`；收口文档和格式提交：`315de89` → `e02b4b5` → `87e2af1` → `d44ec3f`。未跟踪的 PDF 文件保留，未纳入提交。
 
 ---
 
