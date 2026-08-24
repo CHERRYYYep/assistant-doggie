@@ -1,6 +1,10 @@
 /** Product-level correction orchestration over the transactional Store. */
 
-import type { EntryRow, MoveEntryOutcome } from "../storage/store.ts";
+import type {
+  DeleteBucketOutcome,
+  EntryRow,
+  MoveEntryOutcome,
+} from "../storage/store.ts";
 import { Store } from "../storage/store.ts";
 
 export type CorrectionErrorKind =
@@ -31,9 +35,15 @@ export type CorrectionResult = {
   readonly targetBucketId: string;
 };
 
-export type DeletionResult = {
-  readonly action: "delete_entry" | "delete_bucket";
-  readonly targetType: "entry" | "bucket";
+export type EntryDeletionResult = {
+  readonly action: "delete_entry";
+  readonly targetType: "entry";
+  readonly targetId: string;
+};
+
+export type BucketDeletionResult = DeleteBucketOutcome & {
+  readonly action: "delete_bucket";
+  readonly targetType: "bucket";
   readonly targetId: string;
 };
 
@@ -81,14 +91,18 @@ export class CorrectionService {
     );
   }
 
-  deleteEntry(entryId: string, commandText: string): DeletionResult {
+  deleteEntry(entryId: string, commandText: string): EntryDeletionResult {
     this.#store.deleteEntry(entryId, cleanedCommand(commandText));
     return { action: "delete_entry", targetType: "entry", targetId: entryId };
   }
 
-  deleteBucket(bucketId: string, commandText: string): DeletionResult {
-    this.#store.deleteBucket(bucketId, cleanedCommand(commandText));
+  deleteBucket(bucketId: string, commandText: string): BucketDeletionResult {
+    const outcome = this.#store.deleteBucket(
+      bucketId,
+      cleanedCommand(commandText),
+    );
     return {
+      ...outcome,
       action: "delete_bucket",
       targetType: "bucket",
       targetId: bucketId,

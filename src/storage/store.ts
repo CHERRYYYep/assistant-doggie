@@ -60,6 +60,7 @@ export type EntryRow = {
   readonly createdAt: string;
   readonly movedFromBucketId: string | null;
   readonly archiveState: string;
+  readonly archivedAt: string;
 };
 
 export type JsonValue =
@@ -90,6 +91,12 @@ export type QueryEntryCandidate = {
   readonly bucket: BucketRow;
   readonly entry: EntryRow;
   readonly memories: readonly MemoryRow[];
+};
+
+export type BucketSearchHit = {
+  readonly bucket: BucketRow;
+  readonly matchedEntryCount: number;
+  readonly score: number;
 };
 
 export type BucketDetail = {
@@ -165,6 +172,25 @@ export type SaveExtractionInput = {
   readonly bucketId: string;
   readonly entryId: string;
   readonly extraction: ExtractionResult;
+};
+
+export type DeleteBucketOutcome = {
+  readonly bucketId: string;
+  readonly deletedEntryIds: readonly string[];
+  readonly deletedMemoryItemIds: readonly string[];
+  readonly updatedArchiveAttemptIds: readonly string[];
+  readonly correctionId: string;
+};
+
+export type ChatMessageRow = {
+  readonly id: string;
+  readonly sequence: number;
+  readonly role: string;
+  readonly content: string;
+  readonly toolName: string | null;
+  readonly toolCallId: string | null;
+  readonly details: unknown;
+  readonly createdAt: string;
 };
 
 export class Store {
@@ -842,18 +868,34 @@ export class Store {
   // ── deletion ─────────────────────────────────────────────────────────────
 
   /** Delete a Bucket and everything that belongs to it (§4.5). */
-  deleteBucket(bucketId: string, commandText: string): void {
+  deleteBucket(bucketId: string, commandText: string): DeleteBucketOutcome {
     const command = requiredField(commandText, "command_text");
-    withTransaction(this.#database, () => {
+    return withTransaction(this.#database, () => {
       const exists = this.#database
         .prepare("SELECT 1 FROM buckets WHERE id = ?")
         .get(bucketId);
       if (exists === undefined)
         throw StorageError.missingRecord("buckets", bucketId);
 
+      const entryRows = this.#database
+        .prepare("SELECT id FROM entries WHERE bucket_id = ? ORDER BY id")
+        .all(bucketId) as { id: string }[];
+      const memoryRows = this.#database
+        .prepare("SELECT id FROM memory_items WHERE bucket_id = ? ORDER BY id")
+        .all(bucketId) as { id: string }[];
+      const attemptRows = this.#database
+        .prepare(
+          `SELECT id FROM archive_attempts
+           WHERE bucket_id = ?1
+              OR entry_id IN (SELECT id FROM entries WHERE bucket_id = ?1)
+           ORDER BY id`,
+        )
+        .all(bucketId) as { id: string }[];
+
       // Entries, tags and memory go by ON DELETE CASCADE; archive attempts
       // keep their audit row with the link cleared by ON DELETE SET NULL.
       this.#database.prepare("DELETE FROM buckets WHERE id = ?").run(bucketId);
+      const correctionId = newId();
       this.#database
         .prepare(
           `INSERT INTO corrections
@@ -861,12 +903,19 @@ export class Store {
            VALUES (?, ?, 'delete_bucket', 'bucket', ?, ?, ?)`,
         )
         .run(
-          newId(),
+          correctionId,
           command,
           bucketId,
           JSON.stringify({ bucket_id: bucketId }),
           this.#now(),
         );
+      return {
+        bucketId,
+        deletedEntryIds: entryRows.map((row) => row.id),
+        deletedMemoryItemIds: memoryRows.map((row) => row.id),
+        updatedArchiveAttemptIds: attemptRows.map((row) => row.id),
+        correctionId,
+      };
     });
   }
 
@@ -933,7 +982,7 @@ export class Store {
     toolName?: string | undefined;
     toolCallId?: string | undefined;
     details?: unknown;
-  }): string {
+  }): ChatMessageRow {
     const content = requiredField(message.content, "content");
     return withTransaction(this.#database, () => {
       const row = this.#database
@@ -942,6 +991,9 @@ export class Store {
         )
         .get() as { max: number };
       const id = newId();
+      const createdAt = this.#now();
+      const toolName = optionalField(message.toolName);
+      const toolCallId = optionalField(message.toolCallId);
       this.#database
         .prepare(
           `INSERT INTO conversation_messages
@@ -953,30 +1005,31 @@ export class Store {
           row.max + 1,
           message.role,
           content,
-          optionalField(message.toolName),
-          optionalField(message.toolCallId),
+          toolName,
+          toolCallId,
           message.details === undefined
             ? null
             : JSON.stringify(message.details),
-          this.#now(),
+          createdAt,
         );
-      return id;
+      return {
+        id,
+        sequence: row.max + 1,
+        role: message.role,
+        content,
+        toolName,
+        toolCallId,
+        details: message.details,
+        createdAt,
+      };
     });
   }
 
   /** Most recent `limit` messages, returned oldest-first for rendering. */
-  listChatMessages(limit: number): {
-    id: string;
-    sequence: number;
-    role: string;
-    content: string;
-    toolName: string | null;
-    details: unknown;
-    createdAt: string;
-  }[] {
+  listChatMessages(limit: number): ChatMessageRow[] {
     const rows = this.#database
       .prepare(
-        `SELECT id, sequence, role, content, tool_name, details_json, created_at
+        `SELECT id, sequence, role, content, tool_name, tool_call_id, details_json, created_at
          FROM conversation_messages ORDER BY sequence DESC LIMIT ?`,
       )
       .all(limit) as {
@@ -985,6 +1038,7 @@ export class Store {
       role: string;
       content: string;
       tool_name: string | null;
+      tool_call_id: string | null;
       details_json: string | null;
       created_at: string;
     }[];
@@ -994,6 +1048,7 @@ export class Store {
       role: row.role,
       content: row.content,
       toolName: row.tool_name,
+      toolCallId: row.tool_call_id,
       details:
         row.details_json === null ? undefined : JSON.parse(row.details_json),
       createdAt: row.created_at,
@@ -1028,7 +1083,7 @@ export class Store {
     const row = this.#database
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state
+                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
          FROM entries WHERE id = ?`,
       )
       .get(entryId) as EntryColumns | undefined;
@@ -1039,7 +1094,7 @@ export class Store {
     const row = this.#database
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state
+                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
          FROM entries ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
       .get() as EntryColumns | undefined;
@@ -1057,6 +1112,40 @@ export class Store {
       )
       .all(limit) as BucketColumns[];
     return rows.map((row) => this.#toBucketRow(row));
+  }
+
+  /** Legacy Bucket-level search kept separate from Entry query planning. */
+  searchBuckets(query: string, limit: number): BucketSearchHit[] {
+    const cleaned = requiredField(query, "query");
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw StorageError.invalidWrite("limit", "must be a positive integer");
+    }
+    const needle = cleaned.toLowerCase();
+    const hits: BucketSearchHit[] = [];
+    for (const bucket of this.listBuckets()) {
+      const detail = this.getBucketDetail(bucket.id);
+      if (detail === undefined) continue;
+      const bucketText = `${bucket.title} ${bucket.summary} ${bucket.tags.join(" ")}`.toLowerCase();
+      let score = tokenScore(needle, bucketText);
+      let matchedEntryCount = 0;
+      for (const entry of detail.entries) {
+        const entryText = `${entry.rawText} ${entry.summary ?? ""}`.toLowerCase();
+        const entryScore = tokenScore(needle, entryText);
+        if (entryScore > 0) {
+          matchedEntryCount += 1;
+          score += entryScore + 1;
+        }
+      }
+      if (score > 0) hits.push({ bucket, matchedEntryCount, score });
+    }
+    hits.sort(
+      (left, right) =>
+        right.score - left.score ||
+        right.bucket.lastActiveAt.localeCompare(left.bucket.lastActiveAt) ||
+        left.bucket.id.localeCompare(right.bucket.id),
+    );
+    hits.splice(limit);
+    return hits;
   }
 
   /**
@@ -1176,7 +1265,7 @@ export class Store {
     const entries = this.#database
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state
+                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
          FROM entries WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
       )
       .all(bucketId) as EntryColumns[];
@@ -1254,6 +1343,7 @@ type EntryColumns = {
   created_at: string;
   moved_from_bucket_id: string | null;
   archive_state: string;
+  archived_at: string;
 };
 
 type MemoryColumns = {
@@ -1295,6 +1385,7 @@ function toEntryRow(row: EntryColumns): EntryRow {
     createdAt: row.created_at,
     movedFromBucketId: row.moved_from_bucket_id,
     archiveState: row.archive_state,
+    archivedAt: row.archived_at,
   };
 }
 
@@ -1318,3 +1409,13 @@ type ArchiveAttemptColumns = {
   created_at: string;
   resolved_at: string | null;
 };
+
+function tokenScore(needle: string, haystack: string): number {
+  let score = haystack.includes(needle) ? 3 : 0;
+  for (const token of needle.split(/\s+/u)) {
+    if (Buffer.byteLength(token, "utf8") > 1 && haystack.includes(token)) {
+      score += 1;
+    }
+  }
+  return score;
+}

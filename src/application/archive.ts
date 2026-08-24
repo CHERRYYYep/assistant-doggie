@@ -114,8 +114,10 @@ export class ArchiveService {
     return {
       ...outcome,
       action: classification.action,
-      bucketTitle: bucket?.title ?? classification.title,
-      bucketType: bucket?.kind ?? classification.bucketType,
+      // Proposed fields describe only a possible new Bucket. Existing Bucket
+      // metadata is projected separately by the HTTP/runtime boundary.
+      bucketTitle: classification.title,
+      bucketType: classification.bucketType,
       confidence: classification.confidence,
       reason: classification.reason,
       question: classification.question,

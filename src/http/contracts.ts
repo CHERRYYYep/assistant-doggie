@@ -13,12 +13,17 @@ import {
 } from "../application/memory-query.ts";
 import type { MemorySearchResponse } from "../application/query.ts";
 import { DomainError } from "../domain/errors.ts";
-import { BUCKET_STATUSES, BUCKET_TYPES } from "../domain/types.ts";
+import {
+  BUCKET_STATUSES,
+  BUCKET_TYPES,
+  type BucketView,
+} from "../domain/types.ts";
 import { LlmError } from "../llm/structured-output.ts";
 import { StorageError } from "../storage/database.ts";
 import type {
   BucketDetail,
   BucketRow,
+  ChatMessageRow,
   EntryRow,
   JsonValue,
   MemoryRow,
@@ -29,6 +34,9 @@ export const MAX_LIST_LIMIT = 100;
 
 const optionalTrimmedString = z.string().trim().min(1).optional();
 const requiredTrimmedString = z.string().trim().min(1);
+const requiredOriginalString = z
+  .string()
+  .refine((value) => value.trim() !== "", "must not be empty");
 const listLimit = z.coerce.number().int().min(1).max(MAX_LIST_LIMIT);
 
 export const archiveRequestSchema = z
@@ -48,7 +56,7 @@ export const chatRequestSchema = z
 const confirmationBase = {
   confirmation_granted: z.literal(true),
   attempt_id: requiredTrimmedString,
-  text: requiredTrimmedString,
+  text: requiredOriginalString,
   focus_bucket_id: optionalTrimmedString,
 } as const;
 
@@ -100,7 +108,7 @@ export const memoryQueryRequestSchema = z
     start_at: z.string().trim().min(1).optional(),
     end_at: z.string().trim().min(1).optional(),
     statuses: z.array(z.enum(BUCKET_STATUSES)).default([]),
-    structured_filters: z
+    filters: z
       .array(
         z
           .object({
@@ -126,17 +134,24 @@ export type MemoryQueryRequest = z.infer<typeof memoryQueryRequestSchema>;
 
 export class HttpBoundaryError extends Error {
   readonly status: number;
+  readonly details: Readonly<Record<string, unknown>> | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(
+    status: number,
+    message: string,
+    details?: Readonly<Record<string, unknown>>,
+  ) {
     super(message);
     this.name = "HttpBoundaryError";
     this.status = status;
+    this.details = details;
   }
 }
 
 export type ErrorBody = {
   readonly ok: false;
   readonly error: string;
+  readonly [key: string]: unknown;
 };
 
 export function stableError(error: unknown): {
@@ -146,7 +161,11 @@ export function stableError(error: unknown): {
   const normalized = normalizeHttpError(error);
   return {
     status: normalized.status,
-    body: { ok: false, error: normalized.message },
+    body: {
+      ok: false,
+      error: normalized.message,
+      ...(normalized.details ?? {}),
+    },
   };
 }
 
@@ -217,6 +236,7 @@ export function projectEntry(entry: EntryRow) {
     created_at: entry.createdAt,
     moved_from_bucket_id: entry.movedFromBucketId,
     archive_state: entry.archiveState,
+    archived_at: entry.archivedAt,
   } as const;
 }
 
@@ -252,6 +272,7 @@ export function projectQueryPlan(plan: MemoryQueryPlan) {
     terms: [...plan.terms],
     entity_terms: [...plan.entityTerms],
     topic_terms: [...plan.topicTerms],
+    bucket_terms: [...plan.bucketTerms],
     time_range:
       plan.timeRange === undefined
         ? null
@@ -272,14 +293,17 @@ export function projectQueryPlan(plan: MemoryQueryPlan) {
 export function projectMemoryQuery(response: MemorySearchResponse) {
   return {
     ok: true,
+    query: response.query.rawText,
     query_plan: projectQueryPlan(response.query),
+    total_entries: response.results.length,
+    total_buckets: response.buckets.length,
     results: response.results.map((hit) => ({
       bucket: projectBucket(hit.bucket),
       entry: projectEntry(hit.entry),
       memories: hit.memories.map(projectMemory),
       matched_fields: [...hit.matchedFields],
       keyword_score: hit.keywordScore,
-      lexical_similarity: hit.lexicalSimilarity,
+      semantic_score: hit.lexicalSimilarity,
       score: hit.score,
     })),
     buckets: response.buckets.map((group) => ({
@@ -292,24 +316,58 @@ export function projectMemoryQuery(response: MemorySearchResponse) {
   } as const;
 }
 
-export function projectArchive(result: ArchiveResult) {
+export type ArchiveProjectionOptions = {
+  readonly candidates?: readonly BucketView[];
+  readonly bucket?: BucketRow | undefined;
+  readonly memoryItemIds?: readonly string[];
+};
+
+export function projectArchive(
+  result: ArchiveResult,
+  options: ArchiveProjectionOptions = {},
+) {
+  const recommendedBucketId =
+    result.action === "append_existing"
+      ? (result.bucketId ?? result.candidateBucketIds[0] ?? null)
+      : (result.candidateBucketIds[0] ?? null);
+  const candidateBuckets = result.candidateBucketIds.flatMap((candidateId) => {
+    const candidate = options.candidates?.find(({ id }) => id === candidateId);
+    return candidate === undefined
+      ? []
+      : [
+          {
+            id: candidate.id,
+            title: candidate.title,
+            type: candidate.bucketType,
+            status: candidate.status,
+            summary: candidate.summary,
+            tags: [...candidate.tags],
+            last_active_at_unix_ms: candidate.lastActiveAtUnixMs,
+            is_recommended: candidate.id === recommendedBucketId,
+          },
+        ];
+  });
+  const recommendedBucket =
+    candidateBuckets.find(({ is_recommended }) => is_recommended) ?? null;
+
   return {
     ok: true,
     attempt_id: result.attemptId,
     archive_state: result.archiveState,
     bucket_id: result.bucketId ?? null,
     entry_id: result.entryId ?? null,
+    memory_item_ids: [...(options.memoryItemIds ?? [])],
     action: result.action,
     confidence: result.confidence,
     reason: result.reason,
     question: result.question ?? null,
     candidate_bucket_ids: [...result.candidateBucketIds],
-    recommended_bucket_id:
-      result.action === "append_existing"
-        ? (result.bucketId ?? result.candidateBucketIds[0] ?? null)
-        : (result.candidateBucketIds[0] ?? null),
+    recommended_bucket_id: recommendedBucketId,
+    recommended_bucket: recommendedBucket,
+    candidate_buckets: candidateBuckets,
     bucket_title: result.bucketTitle ?? null,
     bucket_type: result.bucketType ?? null,
+    bucket: options.bucket === undefined ? null : projectBucket(options.bucket),
     extraction:
       result.extraction === undefined
         ? null
@@ -327,6 +385,19 @@ export function projectArchive(result: ArchiveResult) {
             tags: [...result.extraction.tags],
           },
     source_attempt_id: result.sourceAttemptId ?? null,
+  } as const;
+}
+
+export function projectChatMessage(message: ChatMessageRow) {
+  return {
+    id: message.id,
+    sequence: message.sequence,
+    role: message.role,
+    content: message.content,
+    tool_name: message.toolName,
+    tool_call_id: message.toolCallId,
+    details: message.details ?? null,
+    created_at: message.createdAt,
   } as const;
 }
 

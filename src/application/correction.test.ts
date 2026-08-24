@@ -170,11 +170,14 @@ test("delete correction methods retain stable application projections", () => {
     bucketTarget.bucketId,
     "删除错误主题",
   );
-  assert.deepEqual(bucketResult, {
-    action: "delete_bucket",
-    targetType: "bucket",
-    targetId: bucketTarget.bucketId,
-  });
+  assert.equal(bucketResult.action, "delete_bucket");
+  assert.equal(bucketResult.targetType, "bucket");
+  assert.equal(bucketResult.targetId, bucketTarget.bucketId);
+  assert.equal(bucketResult.bucketId, bucketTarget.bucketId);
+  assert.equal(typeof bucketResult.correctionId, "string");
+  assert.deepEqual(bucketResult.deletedEntryIds, [bucketTarget.entryId]);
+  assert.deepEqual(bucketResult.deletedMemoryItemIds, []);
+  assert.equal(bucketResult.updatedArchiveAttemptIds.length, 1);
   assert.equal(store.getBucket(bucketTarget.bucketId), undefined);
 });
 

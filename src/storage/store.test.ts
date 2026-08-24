@@ -463,6 +463,34 @@ test("moving a missing entry or to a missing bucket is rejected without change",
 
 // ── §4.5 deletion ──────────────────────────────────────────────────────────
 
+test("legacy Bucket search scores Bucket and Entry text without mutating activity", () => {
+  const store = freshStore();
+  const first = store.archive(
+    "支付接口错误率升到 12%",
+    createNew("支付故障"),
+    createExtraction({
+      summary: "线上支付接口异常",
+      tags: ["payments"],
+      evidences: ["错误率 12%"],
+    }),
+    AUDIT,
+  );
+  const second = store.archive(
+    "支付接口恢复",
+    createNew("支付恢复"),
+    minimalExtraction("支付接口已恢复"),
+    AUDIT,
+  );
+  const before = store.getBucket(first.bucketId!)!.lastActiveAt;
+  const hits = store.searchBuckets("错误率", 1);
+  assert.equal(hits.length, 1);
+  assert.equal(hits[0]?.bucket.id, first.bucketId);
+  assert.equal(hits[0]?.matchedEntryCount, 1);
+  assert.ok(hits[0]!.score > 3);
+  assert.equal(store.getBucket(first.bucketId!)!.lastActiveAt, before);
+  assert.notEqual(second.bucketId, first.bucketId);
+});
+
 test("deleting a bucket cascades entries, tags and memory but keeps the audit", () => {
   const store = freshStore();
   const outcome = store.archive(

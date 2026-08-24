@@ -40,6 +40,7 @@ const detail: BucketDetail = {
       createdAt: "2026-08-24T00:01:00.000Z",
       movedFromBucketId: null,
       archiveState: "archived",
+      archivedAt: "2026-08-24T00:01:00.000Z",
     },
   ],
   memories: [
@@ -70,7 +71,7 @@ test("HTTP request DTOs trim values, reject extras and keep bounded defaults", (
     query: "接口 A",
     limit: 20,
     statuses: [],
-    structured_filters: [],
+    filters: [],
   });
   assert.throws(() =>
     memoryQueryRequestSchema.parse({ query: "x", limit: 101 }),
@@ -93,6 +94,16 @@ test("confirmation DTO is a strict action-discriminated contract", () => {
       text: "原文",
       bucket_id: "bucket-1",
     },
+  );
+  assert.equal(
+    chatConfirmationRequestSchema.parse({
+      confirmation_granted: true,
+      action: "append",
+      attempt_id: "attempt-1",
+      text: "原文 ",
+      bucket_id: "bucket-1",
+    }).text,
+    "原文 ",
   );
   assert.throws(() =>
     chatConfirmationRequestSchema.parse({
@@ -139,6 +150,7 @@ test("route projections expose stable snake_case frontend fields", () => {
         created_at: "2026-08-24T00:01:00.000Z",
         moved_from_bucket_id: null,
         archive_state: "archived",
+        archived_at: "2026-08-24T00:01:00.000Z",
       },
     ],
     memories: [
