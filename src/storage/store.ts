@@ -135,6 +135,12 @@ export type AppendEntryInput = {
   readonly classificationReason?: string | null;
 };
 
+export type MoveEntryOutcome = EntryRow & {
+  readonly correctionId: string;
+  readonly sourceBucketId: string;
+  readonly targetBucketId: string;
+};
+
 export type SaveExtractionInput = {
   readonly bucketId: string;
   readonly entryId: string;
@@ -675,7 +681,7 @@ export class Store {
     entryId: string,
     targetBucketId: string,
     commandText: string,
-  ): EntryRow {
+  ): MoveEntryOutcome {
     const command = requiredField(commandText, "command_text");
 
     return withTransaction(this.#database, () => {
@@ -728,6 +734,7 @@ export class Store {
       }
       this.#rebuildSummary(targetBucketId, timestamp);
 
+      const correctionId = newId();
       this.#database
         .prepare(
           `INSERT INTO corrections
@@ -735,7 +742,7 @@ export class Store {
            VALUES (?, ?, 'move_entry', 'entry', ?, ?, ?, ?)`,
         )
         .run(
-          newId(),
+          correctionId,
           command,
           entryId,
           JSON.stringify({ bucket_id: sourceBucketId }),
@@ -757,7 +764,12 @@ export class Store {
       const moved = this.getEntry(entryId);
       if (moved === undefined)
         throw StorageError.missingRecord("entries", entryId);
-      return moved;
+      return {
+        ...moved,
+        correctionId,
+        sourceBucketId,
+        targetBucketId,
+      };
     });
   }
 
@@ -945,6 +957,16 @@ export class Store {
 
   // ── reads ────────────────────────────────────────────────────────────────
 
+  listBuckets(): BucketRow[] {
+    const rows = this.#database
+      .prepare(
+        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at, last_active_at
+         FROM buckets ORDER BY created_at ASC, id ASC`,
+      )
+      .all() as BucketColumns[];
+    return rows.map((row) => this.#toBucketRow(row));
+  }
+
   getBucket(bucketId: string): BucketRow | undefined {
     const row = this.#database
       .prepare(
@@ -963,6 +985,17 @@ export class Store {
          FROM entries WHERE id = ?`,
       )
       .get(entryId) as EntryColumns | undefined;
+    return row === undefined ? undefined : toEntryRow(row);
+  }
+
+  getLatestEntry(): EntryRow | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
+                classification_reason, created_at, moved_from_bucket_id, archive_state
+         FROM entries ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get() as EntryColumns | undefined;
     return row === undefined ? undefined : toEntryRow(row);
   }
 
