@@ -105,13 +105,23 @@ test("archive writes the whole graph in one transaction", () => {
   assert.ok(detail.bucket.summary.includes("620ms"));
 
   const kinds = detail.memories.map((memory) => memory.kind).sort();
-  assert.deepEqual(kinds, [
-    "evidence",
-    "summary",
-    "tag",
-    "tag",
-    "timeline",
-    "todo",
+  assert.deepEqual(kinds, ["evidence", "tag", "tag", "timeline", "todo"]);
+
+  const metadata = plainAll(
+    store.database
+      .prepare(
+        `SELECT kind, status, source FROM memory_items
+         WHERE kind IN ('todo', 'evidence') ORDER BY kind`,
+      )
+      .all() as {
+      kind: string;
+      status: string | null;
+      source: string | null;
+    }[],
+  );
+  assert.deepEqual(metadata, [
+    { kind: "evidence", status: null, source: "llm" },
+    { kind: "todo", status: "open", source: null },
   ]);
 });
 

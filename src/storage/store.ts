@@ -387,8 +387,9 @@ export class Store {
       : new Set<string>();
     const insert = this.#database.prepare(
       `INSERT INTO memory_items
-         (id, bucket_id, entry_id, kind, text, occurred_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
+          created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertedIds: string[] = [];
     for (const row of extractionToMemoryRows(extraction)) {
@@ -401,7 +402,9 @@ export class Store {
         entryId,
         row.kind,
         row.text,
+        row.status,
         row.occurredAt,
+        row.source,
         timestamp,
         timestamp,
       );

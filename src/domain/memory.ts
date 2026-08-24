@@ -100,27 +100,47 @@ export function minimalExtraction(summary: string): ExtractionResult {
   return createExtraction({ summary });
 }
 
+/** Flatten the structured child records derived from an extraction. */
+export type ExtractedMemoryRow = {
+  readonly kind: MemoryKind;
+  readonly text: string;
+  readonly status: string | null;
+  readonly occurredAt: string | null;
+  readonly source: string | null;
+};
+
 /**
- * Flatten an extraction into `(kind, text, occurredAt)` rows.
- *
- * The summary is included as a `summary` memory item so the Entry's own digest
- * is retrievable without re-reading the raw text.
+ * Entry summaries stay on `entries.summary`; they are not duplicated as memory
+ * rows. Todo and evidence metadata mirrors the Rust canonical store.
  */
 export function extractionToMemoryRows(
   extraction: ExtractionResult,
-): { kind: MemoryKind; text: string; occurredAt: string | null }[] {
-  const rows: { kind: MemoryKind; text: string; occurredAt: string | null }[] =
-    [{ kind: MemoryKind.Summary, text: extraction.summary, occurredAt: null }];
-  const push = (kind: MemoryKind, values: readonly string[]) => {
-    for (const text of values) rows.push({ kind, text, occurredAt: null });
+): ExtractedMemoryRow[] {
+  const rows: ExtractedMemoryRow[] = [];
+  const push = (
+    kind: MemoryKind,
+    values: readonly string[],
+    metadata: Pick<ExtractedMemoryRow, "status" | "source"> = {
+      status: null,
+      source: null,
+    },
+  ) => {
+    for (const text of values) {
+      rows.push({ kind, text, ...metadata, occurredAt: null });
+    }
   };
-  push(MemoryKind.Todo, extraction.todos);
-  push(MemoryKind.Evidence, extraction.evidences);
+  push(MemoryKind.Todo, extraction.todos, { status: "open", source: null });
+  push(MemoryKind.Evidence, extraction.evidences, {
+    status: null,
+    source: "llm",
+  });
   for (const event of extraction.timelineEvents) {
     rows.push({
       kind: MemoryKind.Timeline,
       text: event.text,
+      status: null,
       occurredAt: event.occurredAt ?? null,
+      source: null,
     });
   }
   push(MemoryKind.Decision, extraction.decisions);
