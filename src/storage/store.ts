@@ -84,6 +84,26 @@ export type ArchiveAudit = {
   readonly focusBucketId?: string | undefined;
   readonly promptVersion: string;
   readonly modelName: string;
+  readonly confirmationAttemptId?: string | undefined;
+};
+
+export type ArchiveAttemptRow = {
+  readonly id: string;
+  readonly rawText: string;
+  readonly action: ClassificationAction;
+  readonly archiveState: string;
+  readonly bucketId: string | null;
+  readonly entryId: string | null;
+  readonly confidence: number;
+  readonly reason: string;
+  readonly question: string | null;
+  readonly candidateBucketIds: readonly string[];
+  readonly focusBucketId: string | null;
+  readonly promptVersion: string;
+  readonly modelName: string;
+  readonly corrected: boolean;
+  readonly createdAt: string;
+  readonly resolvedAt: string | null;
 };
 
 export type ArchiveOutcome = {
@@ -158,6 +178,16 @@ export class Store {
     return withTransaction(this.#database, () => {
       const timestamp = this.#now();
       const attemptId = newId();
+      const confirmationAttemptId = audit.confirmationAttemptId;
+      if (confirmationAttemptId !== undefined) {
+        this.#requirePendingAttempt(confirmationAttemptId, text);
+        if (decision.action === "ask_user") {
+          throw StorageError.invalidWrite(
+            "confirmation",
+            "cannot resolve to ask_user",
+          );
+        }
+      }
 
       if (decision.action === "ask_user") {
         this.#insertAttempt(attemptId, text, decision, audit, {
@@ -186,7 +216,11 @@ export class Store {
       const bucketId =
         decision.action === "create_new"
           ? this.#createBucket(decision, timestamp)
-          : this.#requireBucket(decision.bucketId, timestamp);
+          : this.#requireBucket(
+              decision.bucketId,
+              timestamp,
+              confirmationAttemptId !== undefined,
+            );
 
       const entryId = this.#insertEntry(
         bucketId,
@@ -205,6 +239,19 @@ export class Store {
         promptVersion,
         modelName,
       });
+      if (confirmationAttemptId !== undefined) {
+        const updated = this.#database
+          .prepare(
+            `UPDATE archive_attempts
+             SET archive_state = 'archived', bucket_id = ?, entry_id = ?, resolved_at = ?
+             WHERE id = ? AND archive_state = 'needs_confirmation'
+               AND resolved_at IS NULL AND corrected = 0`,
+          )
+          .run(bucketId, entryId, timestamp, confirmationAttemptId);
+        if (updated.changes !== 1) {
+          throw StorageError.archiveAttemptNotPending(confirmationAttemptId);
+        }
+      }
 
       return {
         attemptId,
@@ -329,15 +376,22 @@ export class Store {
     return bucketId;
   }
 
-  #requireBucket(bucketId: string | undefined, timestamp: string): string {
+  #requireBucket(
+    bucketId: string | undefined,
+    timestamp: string,
+    requireActive = false,
+  ): string {
     if (bucketId === undefined) {
       throw StorageError.invalidWrite("append_existing", "requires bucket_id");
     }
-    const exists = this.#database
-      .prepare("SELECT 1 FROM buckets WHERE id = ?")
-      .get(bucketId);
-    if (exists === undefined)
+    const bucket = this.#database
+      .prepare("SELECT lifecycle FROM buckets WHERE id = ?")
+      .get(bucketId) as { lifecycle: string } | undefined;
+    if (bucket === undefined)
       throw StorageError.missingRecord("buckets", bucketId);
+    if (requireActive && bucket.lifecycle !== "active") {
+      throw StorageError.inactiveBucket(bucketId);
+    }
     this.#database
       .prepare(
         "UPDATE buckets SET updated_at = ?, last_active_at = ? WHERE id = ?",
@@ -526,6 +580,77 @@ export class Store {
         context.timestamp,
         context.archiveState === "archived" ? context.timestamp : null,
       );
+  }
+
+  #requirePendingAttempt(
+    attemptId: string,
+    rawText: string,
+  ): ArchiveAttemptRow {
+    const attempt = this.getArchiveAttempt(attemptId);
+    if (attempt === undefined) {
+      throw StorageError.archiveAttemptNotFound(attemptId);
+    }
+    if (attempt.rawText !== rawText) {
+      throw StorageError.archiveAttemptTextMismatch(attemptId);
+    }
+    if (
+      attempt.archiveState !== "needs_confirmation" ||
+      attempt.resolvedAt !== null ||
+      attempt.corrected
+    ) {
+      throw StorageError.archiveAttemptNotPending(attemptId);
+    }
+    return attempt;
+  }
+
+  getArchiveAttempt(attemptId: string): ArchiveAttemptRow | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, raw_text, action, archive_state, bucket_id, entry_id,
+                confidence, reason, question, candidate_bucket_ids_json,
+                focus_bucket_id, prompt_version, model_name, corrected,
+                created_at, resolved_at
+         FROM archive_attempts WHERE id = ?`,
+      )
+      .get(attemptId) as ArchiveAttemptColumns | undefined;
+    if (row === undefined) return undefined;
+    return {
+      id: row.id,
+      rawText: row.raw_text,
+      action: row.action,
+      archiveState: row.archive_state,
+      bucketId: row.bucket_id,
+      entryId: row.entry_id,
+      confidence: row.confidence,
+      reason: row.reason,
+      question: row.question,
+      candidateBucketIds: JSON.parse(row.candidate_bucket_ids_json) as string[],
+      focusBucketId: row.focus_bucket_id,
+      promptVersion: row.prompt_version,
+      modelName: row.model_name,
+      corrected: row.corrected === 1,
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
+    };
+  }
+
+  discardArchiveAttempt(attemptId: string, rawText: string): void {
+    const id = requiredField(attemptId, "attempt_id");
+    const text = requiredField(rawText, "raw_text");
+    withTransaction(this.#database, () => {
+      this.#requirePendingAttempt(id, text);
+      const updated = this.#database
+        .prepare(
+          `UPDATE archive_attempts
+           SET archive_state = 'discarded', resolved_at = ?
+           WHERE id = ? AND archive_state = 'needs_confirmation'
+             AND resolved_at IS NULL AND corrected = 0`,
+        )
+        .run(this.#now(), id);
+      if (updated.changes !== 1) {
+        throw StorageError.archiveAttemptNotPending(id);
+      }
+    });
   }
 
   // ── correction ───────────────────────────────────────────────────────────
@@ -969,3 +1094,22 @@ function toEntryRow(row: EntryColumns): EntryRow {
     archiveState: row.archive_state,
   };
 }
+
+type ArchiveAttemptColumns = {
+  id: string;
+  raw_text: string;
+  action: ClassificationAction;
+  archive_state: string;
+  bucket_id: string | null;
+  entry_id: string | null;
+  confidence: number;
+  reason: string;
+  question: string | null;
+  candidate_bucket_ids_json: string;
+  focus_bucket_id: string | null;
+  prompt_version: string;
+  model_name: string;
+  corrected: number;
+  created_at: string;
+  resolved_at: string | null;
+};

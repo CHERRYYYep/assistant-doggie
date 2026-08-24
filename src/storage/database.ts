@@ -21,6 +21,10 @@ export type StorageErrorKind =
   | "unsupported_schema_version"
   | "missing_record"
   | "invalid_write"
+  | "inactive_bucket"
+  | "archive_attempt_not_found"
+  | "archive_attempt_text_mismatch"
+  | "archive_attempt_not_pending"
   | "pragma_not_applied";
 
 export class StorageError extends Error {
@@ -41,6 +45,31 @@ export class StorageError extends Error {
 
   static invalidWrite(field: string, reason: string): StorageError {
     return new StorageError("invalid_write", `${field} ${reason}`);
+  }
+
+  static inactiveBucket(id: string): StorageError {
+    return new StorageError("inactive_bucket", `bucket ${id} is not active`);
+  }
+
+  static archiveAttemptNotFound(id: string): StorageError {
+    return new StorageError(
+      "archive_attempt_not_found",
+      `archive attempt ${id} was not found`,
+    );
+  }
+
+  static archiveAttemptTextMismatch(id: string): StorageError {
+    return new StorageError(
+      "archive_attempt_text_mismatch",
+      `archive attempt ${id} does not match the original text`,
+    );
+  }
+
+  static archiveAttemptNotPending(id: string): StorageError {
+    return new StorageError(
+      "archive_attempt_not_pending",
+      `archive attempt ${id} is not pending`,
+    );
   }
 }
 
