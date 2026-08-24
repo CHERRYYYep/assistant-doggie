@@ -29,6 +29,10 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "apps/doggie-local-web/frontend/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "apps/doggie-local-web/frontend/**/*.ts"
+  ],
   "exclude": ["node_modules", "target", "crates"]
 }
