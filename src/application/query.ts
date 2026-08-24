@@ -90,7 +90,7 @@ export class MemoryQueryService {
       (left, right) =>
         right.score - left.score ||
         Date.parse(right.entry.createdAt) - Date.parse(left.entry.createdAt) ||
-        left.entry.id.localeCompare(right.entry.id),
+        compareStrings(left.entry.id, right.entry.id),
     );
     results.splice(query.limit);
 
@@ -325,6 +325,10 @@ function recencyBonus(createdAt: string, now: Date): number {
   return ageDays < 0 ? 10 : Math.min(10, Math.max(0, 10 - ageDays));
 }
 
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function groupBuckets(
   results: readonly MemorySearchHit[],
 ): MemoryBucketGroup[] {
@@ -340,7 +344,7 @@ function groupBuckets(
   return [...groups.values()].sort(
     (left, right) =>
       right.topScore - left.topScore ||
-      left.bucket.id.localeCompare(right.bucket.id),
+      compareStrings(left.bucket.id, right.bucket.id),
   );
 }
 

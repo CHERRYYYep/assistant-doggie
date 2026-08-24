@@ -62,6 +62,14 @@ export type EntryRow = {
   readonly archiveState: string;
 };
 
+export type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
 export type MemoryRow = {
   readonly id: string;
   readonly bucketId: string;
@@ -75,7 +83,7 @@ export type MemoryRow = {
   readonly reason: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
-  readonly metadata: Readonly<Record<string, unknown>>;
+  readonly metadata: JsonValue;
 };
 
 export type QueryEntryCandidate = {
@@ -1080,9 +1088,11 @@ export class Store {
    * escaped before binding; user text is never interpolated into SQL.
    */
   searchEntryCandidates(terms: readonly string[]): QueryEntryCandidate[] {
-    const normalizedTerms = [...new Set(
-      terms.map((term) => term.trim()).filter((term) => term !== ""),
-    )];
+    const normalizedTerms = [
+      ...new Set(
+        terms.map((term) => term.trim()).filter((term) => term !== ""),
+      ),
+    ];
     const sqlMatchedIds = new Set<string>();
 
     if (normalizedTerms.length > 0) {
@@ -1130,21 +1140,23 @@ export class Store {
         const memories = detail.memories.filter(
           (memory) => memory.entryId === entry.id,
         );
-        const corpus = unicodeCaseFold([
-          bucket.title,
-          bucket.summary,
-          ...bucket.tags,
-          entry.rawText,
-          entry.summary ?? "",
-          entry.contentType,
-          ...memories.flatMap((memory) => [
-            memory.kind,
-            memory.text,
-            memory.status ?? "",
-            memory.source ?? "",
-            JSON.stringify(memory.metadata),
-          ]),
-        ].join(" "));
+        const corpus = unicodeCaseFold(
+          [
+            bucket.title,
+            bucket.summary,
+            ...bucket.tags,
+            entry.rawText,
+            entry.summary ?? "",
+            entry.contentType,
+            ...memories.flatMap((memory) => [
+              memory.kind,
+              memory.text,
+              memory.status ?? "",
+              memory.source ?? "",
+              JSON.stringify(memory.metadata),
+            ]),
+          ].join(" "),
+        );
         if (
           foldedTerms.length === 0 ||
           sqlMatchedIds.has(entry.id) ||
@@ -1261,14 +1273,14 @@ type MemoryColumns = {
 };
 
 function escapeLikeLiteral(value: string): string {
-  return value.replaceAll("/", "//").replaceAll("%", "/%").replaceAll("_", "/_");
+  return value
+    .replaceAll("/", "//")
+    .replaceAll("%", "/%")
+    .replaceAll("_", "/_");
 }
 
-function parseMetadata(value: string): Readonly<Record<string, unknown>> {
-  const parsed: unknown = JSON.parse(value);
-  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : {};
+function parseMetadata(value: string): JsonValue {
+  return JSON.parse(value) as JsonValue;
 }
 
 function toEntryRow(row: EntryColumns): EntryRow {

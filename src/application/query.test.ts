@@ -80,13 +80,17 @@ test("returns Entry hits across Buckets with grouped and de-duplicated evidence"
   const first = store.archive(
     "接口 A 首轮压测完成，P99 为 120ms。",
     decision("接口 A 压测"),
-    extraction("接口 A 压测结果：P99 为 120ms。", "Straße STATUS", "压测"),
+    extraction("接口 A 压测结果：P99 为 120ms。", "Straße STATUS", "压测", [
+      "ı marker",
+    ]),
     AUDIT,
   );
   store.archive(
     "接口 A 第二轮压测完成，P99 为 110ms。",
     appendDecision(first.bucketId!),
-    extraction("接口 A 压测结果：P99 为 110ms。", "STRASSE status", "压测"),
+    extraction("接口 A 压测结果：P99 为 110ms。", "STRASSE status", "压测", [
+      "i marker",
+    ]),
     AUDIT,
   );
   store.archive(
@@ -113,6 +117,16 @@ test("returns Entry hits across Buckets with grouped and de-duplicated evidence"
   assert.equal(
     foldedEvidence.filter((memory) => memory.kind === "hypothesis").length,
     1,
+  );
+  assert.deepEqual(
+    response.evidence
+      .filter(
+        (memory) =>
+          memory.kind === "hypothesis" && memory.text.endsWith(" marker"),
+      )
+      .map((memory) => memory.text)
+      .sort(),
+    ["i marker", "ı marker"],
   );
   assert.match(response.answer, /找到 3 条相关 Entry，涉及 2 个 Bucket/);
   assert.ok(response.results.every((hit) => hit.lexicalSimilarity > 0));
@@ -169,7 +183,7 @@ test("applies lifecycle and every structured filter dimension", () => {
     .prepare(
       "UPDATE memory_items SET metadata_json = ? WHERE entry_id = ? AND kind = 'evidence'",
     )
-    .run(JSON.stringify({ metrics: { region: "华东-1" } }), outcome.entryId!);
+    .run(JSON.stringify([{ metrics: { region: "华东-1" } }]), outcome.entryId!);
 
   const base = parseMemoryQuery("质量", 10, NOW);
   const filters = [

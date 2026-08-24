@@ -26,25 +26,37 @@ test("normalization matches the Rust casefold and whitespace rules", () => {
   assert.equal(unicodeCaseFold("ẞ"), "ss");
 });
 
-test("case folding makes the forms that must compare equal actually equal", () => {
-  for (const [a, b] of [
-    ["Straße", "STRASSE"],
-    ["ΟΣ", "ος"],
-    ["ǅ", "ǆ"],
-    ["Ĳ", "ĳ"],
-    ["ПРИВЕТ", "привет"],
+test("case folding makes the Rust full-fold equivalents equal", () => {
+  for (const [a, b, expected] of [
+    ["Straße", "STRASSE", "strasse"],
+    ["ẞ", "ss", "ss"],
+    ["ΟΣ", "ος", "οσ"],
+    ["ǅ", "ǆ", "ǆ"],
+    ["Ĳ", "ĳ", "ĳ"],
+    ["ПРИВЕТ", "привет", "привет"],
+    // Unicode case folding deliberately uses Cherokee uppercase as the
+    // canonical form. JavaScript's upper/lower round trip produces lowercase.
+    ["ᎠᏰ", "ꭰᏸ", "ᎠᏰ"],
   ] as const) {
-    assert.equal(
-      unicodeCaseFold(a),
-      unicodeCaseFold(b),
-      `${a} should fold equal to ${b}`,
-    );
+    assert.equal(unicodeCaseFold(a), expected);
+    assert.equal(unicodeCaseFold(b), expected);
   }
+});
+
+test("case folding follows the Rust non-Turkic and Unicode 9 boundaries", () => {
+  assert.equal(unicodeCaseFold("Iİıi"), "ii̇ıi");
+  assert.notEqual(unicodeCaseFold("ı"), unicodeCaseFold("i"));
+
+  // Georgian Mtavruli casing was added after Unicode 9. Rust's pinned table
+  // therefore leaves it unchanged even if the current JavaScript runtime has
+  // learned a newer lowercase mapping.
+  assert.equal(unicodeCaseFold("Ა"), "Ა");
 });
 
 test("case folding keeps genuinely different strings different", () => {
   assert.notEqual(unicodeCaseFold("payments"), unicodeCaseFold("payment"));
   assert.notEqual(unicodeCaseFold("接口 A"), unicodeCaseFold("接口 B"));
+  assert.notEqual(unicodeCaseFold("ı"), unicodeCaseFold("i"));
 });
 
 test("normalizedKey trims and collapses whitespace runs", () => {

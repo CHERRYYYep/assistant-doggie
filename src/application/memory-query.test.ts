@@ -51,23 +51,72 @@ test("accepts validated half-open ranges and structured overrides", () => {
   assert.equal(plan.timeRange?.end.toISOString(), "2026-08-02T00:00:00.000Z");
   assert.deepEqual(plan.statuses, [BucketStatus.Archived]);
   assert.deepEqual(plan.structuredFilters, [{ field: "tag", value: "性能" }]);
+
+  const cleared = withMemoryQueryOverrides(plan, { timeRange: undefined });
+  assert.equal(cleared.timeRange, undefined);
+});
+
+test("parses only canonical UTC timestamp formats", () => {
+  assert.equal(
+    createTimeRange(
+      "2026-08-24 12:34:56.789123",
+      "2026-08-25",
+      "sqlite",
+    ).start.toISOString(),
+    "2026-08-24T12:34:56.789Z",
+  );
+  assert.equal(
+    createTimeRange(
+      "2026-08-24T20:00:00+08:00",
+      "2026-08-25T20:00:00+08:00",
+      "offset",
+    ).start.toISOString(),
+    "2026-08-24T12:00:00.000Z",
+  );
+
+  for (const timestamp of [
+    "08/24/2026",
+    "2026-02-30",
+    "2026-08-24T12:00:00",
+    "2026-08-24T12:00:00+24:00",
+  ]) {
+    assert.throws(
+      () => createTimeRange(timestamp, "2026-09-01", "invalid"),
+      (error: unknown) =>
+        error instanceof MemoryQueryError &&
+        error.kind === "invalid_time_range",
+    );
+  }
 });
 
 test("rejects invalid query plans with typed errors", () => {
   const cases: readonly [() => unknown, MemoryQueryError["kind"]][] = [
     [() => parseMemoryQuery("  ", 10), "empty_query"],
-    [() => parseMemoryQuery("界".repeat(MAX_QUERY_CHARACTERS + 1), 10), "query_too_long"],
+    [
+      () => parseMemoryQuery("界".repeat(MAX_QUERY_CHARACTERS + 1), 10),
+      "query_too_long",
+    ],
     [() => parseMemoryQuery("query", 0), "invalid_limit"],
-    [() => createTimeRange("not-a-date", "2026-08-06", "bad"), "invalid_time_range"],
-    [() => createTimeRange("2026-08-07", "2026-08-06", "backwards"), "invalid_time_range"],
+    [
+      () => createTimeRange("not-a-date", "2026-08-06", "bad"),
+      "invalid_time_range",
+    ],
+    [
+      () => createTimeRange("2026-08-07", "2026-08-06", "backwards"),
+      "invalid_time_range",
+    ],
     [() => createStructuredFieldFilter(" ", "x"), "invalid_structured_filter"],
     [
-      () => withMemoryQueryOverrides(parseMemoryQuery("x", 1), {
-        structuredFilters: Array.from({ length: MAX_STRUCTURED_FILTERS + 1 }, () => ({
-          field: "tag",
-          value: "x",
-        })),
-      }),
+      () =>
+        withMemoryQueryOverrides(parseMemoryQuery("x", 1), {
+          structuredFilters: Array.from(
+            { length: MAX_STRUCTURED_FILTERS + 1 },
+            () => ({
+              field: "tag",
+              value: "x",
+            }),
+          ),
+        }),
       "too_many_structured_filters",
     ],
   ];
@@ -75,7 +124,8 @@ test("rejects invalid query plans with typed errors", () => {
   for (const [action, kind] of cases) {
     assert.throws(
       action,
-      (error: unknown) => error instanceof MemoryQueryError && error.kind === kind,
+      (error: unknown) =>
+        error instanceof MemoryQueryError && error.kind === kind,
     );
   }
 });

@@ -780,33 +780,75 @@ test("query candidates cover stored fields and escape LIKE literals", () => {
     createNew("特殊 / 路径"),
     createExtraction({
       summary: "字面量检索",
-      entities: ["服务 Straße"],
+      entities: ["服务 Straße", "ΟΣ", "ı-only marker"],
       tags: ["release_100%"],
       evidences: ["artifact/path"],
     }),
     AUDIT,
   );
   store.archive(
-    "发布值 100XXready/path 仅作干扰",
+    "发布值 100XXreadypath 仅作干扰",
     createNew("普通路径"),
     minimalExtraction("不应被百分号或下划线当通配符命中"),
     AUDIT,
   );
+  const percentOnly = store.archive(
+    "只有 100% 没有斜杠",
+    createNew("百分号干扰项"),
+    minimalExtraction("用于证明 slash 本身按字面量查询"),
+    AUDIT,
+  );
 
   const exact = store.searchEntryCandidates(["100%_ready/path"]);
-  assert.deepEqual(exact.map((candidate) => candidate.entry.id), [literal.entryId]);
+  assert.deepEqual(
+    exact.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
+
+  assert.deepEqual(
+    new Set(
+      store.searchEntryCandidates(["%"]).map((candidate) => candidate.entry.id),
+    ),
+    new Set([literal.entryId, percentOnly.entryId]),
+  );
+  assert.deepEqual(
+    store.searchEntryCandidates(["_"]).map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
+  assert.deepEqual(
+    store.searchEntryCandidates(["/"]).map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
 
   const bucket = store.searchEntryCandidates(["特殊 / 路径"]);
-  assert.deepEqual(bucket.map((candidate) => candidate.entry.id), [literal.entryId]);
+  assert.deepEqual(
+    bucket.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
 
   const tag = store.searchEntryCandidates(["release_100%"]);
-  assert.deepEqual(tag.map((candidate) => candidate.entry.id), [literal.entryId]);
+  assert.deepEqual(
+    tag.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
 
   const evidence = store.searchEntryCandidates(["artifact/path"]);
-  assert.deepEqual(evidence.map((candidate) => candidate.entry.id), [literal.entryId]);
+  assert.deepEqual(
+    evidence.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
 
   const folded = store.searchEntryCandidates(["STRASSE"]);
-  assert.deepEqual(folded.map((candidate) => candidate.entry.id), [literal.entryId]);
+  assert.deepEqual(
+    folded.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
+  const greekFolded = store.searchEntryCandidates(["ος"]);
+  assert.deepEqual(
+    greekFolded.map((candidate) => candidate.entry.id),
+    [literal.entryId],
+  );
+  assert.deepEqual(store.searchEntryCandidates(["i-only marker"]), []);
 });
 
 test("query candidate reads do not refresh Bucket activity", () => {
