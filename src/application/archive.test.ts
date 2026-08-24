@@ -262,13 +262,16 @@ test("discard resolves the attempt without creating formal memory", () => {
 });
 
 test("non-active and deleted confirmation targets leave the attempt pending", () => {
-  for (const targetState of ["paused", "deleted"] as const) {
+  for (const targetState of [
+    "paused",
+    "done",
+    "archived",
+    "deleted",
+  ] as const) {
     const { store, service } = setup();
     const targetBucketId = createBucket(service, `目标-${targetState}`);
-    if (targetState === "paused") {
-      store.database
-        .prepare("UPDATE buckets SET lifecycle = 'paused' WHERE id = ?")
-        .run(targetBucketId);
+    if (targetState !== "deleted") {
+      store.setBucketStatus(targetBucketId, targetState);
     } else {
       store.deleteBucket(targetBucketId, "删除确认目标");
     }
@@ -286,7 +289,7 @@ test("non-active and deleted confirmation targets leave the attempt pending", ()
         }),
       (error: unknown) =>
         error instanceof StorageError &&
-        (targetState === "paused"
+        (targetState !== "deleted"
           ? error.kind === "inactive_bucket"
           : error.kind === "missing_record"),
     );

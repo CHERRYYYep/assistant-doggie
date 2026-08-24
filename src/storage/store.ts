@@ -46,6 +46,7 @@ export type BucketRow = {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly lastActiveAt: string;
+  readonly archivedAt: string | null;
 };
 
 export type EntryRow = {
@@ -879,6 +880,31 @@ export class Store {
     });
   }
 
+  // ── Bucket lifecycle ─────────────────────────────────────────────────────
+
+  /** Set any valid lifecycle value, matching the canonical Rust service. */
+  setBucketStatus(bucketId: string, status: BucketStatus): BucketRow {
+    const id = requiredField(bucketId, "bucket_id");
+    return withTransaction(this.#database, () => {
+      const timestamp = this.#now();
+      const archivedAt = status === "archived" ? timestamp : null;
+      const updated = this.#database
+        .prepare(
+          `UPDATE buckets SET lifecycle = ?, updated_at = ?, archived_at = ?
+           WHERE id = ?`,
+        )
+        .run(status, timestamp, archivedAt, id);
+      if (updated.changes !== 1) {
+        throw StorageError.missingRecord("buckets", id);
+      }
+      const bucket = this.getBucket(id);
+      if (bucket === undefined) {
+        throw StorageError.missingRecord("buckets", id);
+      }
+      return bucket;
+    });
+  }
+
   // ── conversation ─────────────────────────────────────────────────────────
 
   /** Append one chat message. `sequence` is assigned inside the transaction. */
@@ -960,7 +986,8 @@ export class Store {
   listBuckets(): BucketRow[] {
     const rows = this.#database
       .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at, last_active_at
+        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+                last_active_at, archived_at
          FROM buckets ORDER BY created_at ASC, id ASC`,
       )
       .all() as BucketColumns[];
@@ -970,7 +997,8 @@ export class Store {
   getBucket(bucketId: string): BucketRow | undefined {
     const row = this.#database
       .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at, last_active_at
+        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+                last_active_at, archived_at
          FROM buckets WHERE id = ?`,
       )
       .get(bucketId) as BucketColumns | undefined;
@@ -1003,7 +1031,8 @@ export class Store {
   listActiveBuckets(limit: number): BucketRow[] {
     const rows = this.#database
       .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at, last_active_at
+        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+                last_active_at, archived_at
          FROM buckets WHERE lifecycle = 'active'
          ORDER BY last_active_at DESC, updated_at DESC, id ASC LIMIT ?`,
       )
@@ -1021,7 +1050,7 @@ export class Store {
     const rows = this.#database
       .prepare(
         `SELECT b.id, b.title, b.kind, b.lifecycle, b.summary,
-                b.created_at, b.updated_at, b.last_active_at,
+                b.created_at, b.updated_at, b.last_active_at, b.archived_at,
                   (SELECT COUNT(*) FROM entries e WHERE e.bucket_id = b.id)
                 + (SELECT COUNT(*) FROM memory_items m WHERE m.bucket_id = b.id) AS volume
          FROM buckets b WHERE b.lifecycle = 'active'
@@ -1082,6 +1111,7 @@ export class Store {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       lastActiveAt: row.last_active_at,
+      archivedAt: row.archived_at,
     };
   }
 }
@@ -1095,6 +1125,7 @@ type BucketColumns = {
   created_at: string;
   updated_at: string;
   last_active_at: string;
+  archived_at: string | null;
 };
 
 type EntryColumns = {
