@@ -29,7 +29,7 @@
 | 1.3 | 低信息输入（纯指代、无主体状态短句）即使高 confidence 也必须确认 | `[RP]` `high_confidence_low_information_status_inputs_require_confirmation` |
 | 1.4 | 低信息**指代**阻止自动 append | `[RP]` `low_information_reference_blocks_automatic_append` / `test_low_information_reference_gate_blocks_vague_high_confidence_append` |
 | 1.5 | 但含具体事实的指代**允许**继续 append | `[RP]` `concrete_fact_allows_a_referenced_append_to_continue` / `test_low_information_reference_gate_allows_concrete_status_update` |
-| 1.6 | Unicode 数字（全角、中文数字）算作具体事实 | `[R]` `unicode_digits_count_as_concrete_facts` |
+| 1.6 | 具体事实判定含 Unicode 数字：`\p{N}`（全角 `３`、`〇`、`Ⅴ`、`½` 都算），**但汉字数词 `三`/`百` 不算**（它们是 Lo 不是 N）。等价于 Rust `char::is_numeric()`，已实测逐字符比对 | `[R]` `unicode_digits_count_as_concrete_facts` |
 | 1.7 | 空工作区 + 高 confidence 可以直接建第一个 Bucket（跳过门控） | `[RP]` `empty_workspace_can_bootstrap_a_high_confidence_bucket` / `test_first_bucket_create_new_skips_confidence_confirmation_gate` |
 | 1.8 | 空工作区 + 中 confidence 仍要确认 | `[R]` `empty_workspace_requires_confirmation_for_medium_confidence_new_bucket` |
 | 1.9 | 空 Bucket 状态下，纯模糊指代仍然要问 | `[P]` `test_empty_bucket_still_asks_for_pure_vague_reference` |
