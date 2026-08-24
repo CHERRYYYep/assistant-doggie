@@ -7,7 +7,7 @@ import {
   renderInline,
   renderMarkdown,
   safeHref,
-} from "../assets/markdown.js";
+} from "../assets/markdown.ts";
 
 /** Build a string containing a raw control character without an escape literal. */
 const withControl = (before, code, after) => before + String.fromCharCode(code) + after;

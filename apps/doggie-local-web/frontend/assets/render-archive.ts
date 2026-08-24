@@ -5,14 +5,14 @@
  * written an Entry, the card must say so and offer all four choices.
  */
 
-import { escapeHtml, renderMarkdown } from "./markdown.js";
+import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import {
   bucketLabel,
   candidateBuckets,
   renderBucketOptions,
   renderBucketSummary,
-} from "./render-bucket.js";
-import { bucketById, state } from "./state.js";
+} from "./render-bucket.ts";
+import { bucketById, state } from "./state.ts";
 
 export function renderMoveEntryCard(archive) {
   if (!archive.entry_id) return "";

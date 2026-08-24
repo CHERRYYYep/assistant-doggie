@@ -14,7 +14,7 @@ import {
   postChatConfirmation,
   postChatMessage,
   postEntryMove,
-} from "./api.js";
+} from "./api.ts";
 import {
   buckets,
   chatInput,
@@ -25,12 +25,12 @@ import {
   memoryQueryResult,
   selectedBucketLabel,
   setStatus,
-} from "./dom.js";
-import { escapeHtml } from "./markdown.js";
-import { renderBucketSummary } from "./render-bucket.js";
-import { renderEmpty, renderMessage } from "./render-chat.js";
-import { renderMemoryQuery } from "./render-query.js";
-import { bucketById, state } from "./state.js";
+} from "./dom.ts";
+import { escapeHtml } from "./markdown.ts";
+import { renderBucketSummary } from "./render-bucket.ts";
+import { renderEmpty, renderMessage } from "./render-chat.ts";
+import { renderMemoryQuery } from "./render-query.ts";
+import { bucketById, state } from "./state.ts";
 
 export async function refreshBuckets() {
   try {

@@ -1,7 +1,7 @@
 /** Bucket presentation shared by the sidebar, the archive card and queries. */
 
-import { escapeHtml } from "./markdown.js";
-import { bucketById, state } from "./state.js";
+import { escapeHtml } from "./markdown.ts";
+import { bucketById, state } from "./state.ts";
 
 export function bucketLabel(bucket) {
   return bucket ? `「${escapeHtml(bucket.title || bucket.id)}」` : "未命名 Bucket";

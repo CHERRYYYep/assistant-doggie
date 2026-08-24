@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test 'tests/**/*.test.ts' 'src/**/*.test.ts'",
-    "test:web": "node --test 'apps/doggie-local-web/frontend/tests/*.test.js'",
+    "test:web": "node --test 'apps/doggie-local-web/frontend/tests/*.test.ts'",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm test && npm run test:web"

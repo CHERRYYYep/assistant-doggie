@@ -10,7 +10,7 @@
  *   2. attribute values are additionally constrained (`safeHref` for URLs,
  *      a character allow-list for code languages).
  *
- * Behaviour is covered by `tests/markdown.test.js`, including the injection
+ * Behaviour is covered by `tests/markdown.test.ts`, including the injection
  * payloads each rule exists to stop.
  */
 

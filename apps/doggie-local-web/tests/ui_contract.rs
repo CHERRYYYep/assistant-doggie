@@ -9,7 +9,7 @@
 //! while changing nothing, and a real injection bug would have left them
 //! passing. Renderer behaviour — escaping, URL filtering, fenced-code
 //! containment and the injection payloads each rule exists to stop — is
-//! covered by executable tests in `frontend/tests/markdown.test.js`
+//! covered by executable tests in `frontend/tests/markdown.test.ts`
 //! (`npm test --prefix apps/doggie-local-web/frontend`).
 
 use doggie_local_web::{
@@ -19,25 +19,25 @@ use doggie_local_web::{
 #[test]
 fn frontend_is_split_into_external_assets() {
     assert!(INDEX_HTML.contains("assets/styles.css"));
-    assert!(INDEX_HTML.contains("assets/app.js"));
+    assert!(INDEX_HTML.contains("assets/app.ts"));
     assert!(
         !INDEX_HTML.contains("<style>"),
         "styles must stay in styles.css"
     );
     assert!(
         !INDEX_HTML.contains("<script>"),
-        "scripts must stay in app.js"
+        "scripts must stay in app.ts"
     );
     assert!(
-        INDEX_HTML.contains(r#"<script type="module" src="assets/app.js">"#),
-        "app.js must load as an ES module"
+        INDEX_HTML.contains(r#"<script type="module" src="assets/app.ts">"#),
+        "app.ts must load as an ES module"
     );
     for asset in FRONTEND_ASSETS {
         assert!(!asset.body.is_empty(), "empty asset: {}", asset.path);
     }
 }
 
-/// Every `import ... from "./x.js"` must resolve to an asset the server routes.
+/// Every `import ... from "./x.ts"` must resolve to an asset the server routes.
 ///
 /// A module that is imported but never registered in `FRONTEND_ASSETS` returns
 /// 404 and breaks the page with no server-side error, so this is the check that
@@ -56,7 +56,7 @@ fn every_imported_module_is_served() {
         }
     }
     assert!(checked > 0, "no imports found; the parser is broken");
-    assert!(asset_for_path("/assets/missing.js").is_none());
+    assert!(asset_for_path("/assets/missing.ts").is_none());
 }
 
 /// `/` and `/index.html` must be the same document.
@@ -68,8 +68,8 @@ fn index_is_reachable_from_the_site_root() {
     assert_eq!(root.content_type, "text/html; charset=utf-8");
 }
 
-/// Each module keeps one job: only `dom.js` touches the document, only
-/// `api.js` calls the network, only `state.js` owns mutable state.
+/// Each module keeps one job: only `dom.ts` touches the document, only
+/// `api.ts` calls the network, only `state.ts` owns mutable state.
 #[test]
 fn module_responsibilities_do_not_leak() {
     let module = |name: &str| {
@@ -80,26 +80,26 @@ fn module_responsibilities_do_not_leak() {
     };
 
     for (path, source) in frontend_scripts() {
-        if path != "/assets/dom.js" {
+        if path != "/assets/dom.ts" {
             assert!(
                 !source.contains("document.querySelector"),
-                "{path} queries the DOM directly; element handles belong in dom.js"
+                "{path} queries the DOM directly; element handles belong in dom.ts"
             );
         }
-        if path != "/assets/api.js" {
+        if path != "/assets/api.ts" {
             assert!(
                 !source.contains("fetch("),
-                "{path} calls fetch directly; network access belongs in api.js"
+                "{path} calls fetch directly; network access belongs in api.ts"
             );
         }
     }
 
     assert!(
-        module("/assets/app.js").contains("addEventListener"),
-        "app.js is the wiring module"
+        module("/assets/app.ts").contains("addEventListener"),
+        "app.ts is the wiring module"
     );
     assert!(
-        !module("/assets/markdown.js").contains("import "),
+        !module("/assets/markdown.ts").contains("import "),
         "the renderer must stay dependency-free so it can be unit tested"
     );
     assert!(
@@ -107,11 +107,11 @@ fn module_responsibilities_do_not_leak() {
             .matches("export function renderMarkdown")
             .count()
             == 1,
-        "markdown.js must export exactly one renderer"
+        "markdown.ts must export exactly one renderer"
     );
     assert!(
         !APP_JS.contains("function renderMarkdown"),
-        "the renderer must live only in markdown.js"
+        "the renderer must live only in markdown.ts"
     );
 }
 
@@ -151,8 +151,8 @@ fn no_asset_emits_inline_style_attributes() {
 #[test]
 fn server_routes_are_declared_only_in_the_api_module() {
     let api = frontend_scripts()
-        .find(|(path, _)| *path == "/assets/api.js")
-        .expect("api.js")
+        .find(|(path, _)| *path == "/assets/api.ts")
+        .expect("api.ts")
         .1;
 
     for route in [
@@ -163,14 +163,14 @@ fn server_routes_are_declared_only_in_the_api_module() {
         "/api/memory/query",
         "/api/corrections/move",
     ] {
-        assert!(api.contains(route), "api.js no longer declares {route}");
+        assert!(api.contains(route), "api.ts no longer declares {route}");
     }
 
     for (path, source) in frontend_scripts() {
-        if path != "/assets/api.js" {
+        if path != "/assets/api.ts" {
             assert!(
                 !source.contains("\"/api/"),
-                "{path} hard-codes a server route; routes belong in api.js"
+                "{path} hard-codes a server route; routes belong in api.ts"
             );
         }
     }
@@ -193,7 +193,7 @@ fn bucket_delete_and_auto_association_controls_are_present() {
     );
 }
 
-/// Collect the `./x.js` specifiers a module imports.
+/// Collect the `./x.ts` specifiers a module imports.
 fn import_specifiers(source: &str) -> Vec<&str> {
     source
         .match_indices("from \"./")

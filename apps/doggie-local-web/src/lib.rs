@@ -2144,7 +2144,7 @@ mod tests {
         assert_eq!(root.content_type, "text/html; charset=utf-8");
         assert!(root.body.contains("Doggie 本地工作记忆"));
 
-        let missing = server.handle_request(HttpRequest::new("GET", "/assets/nope.js", ""));
+        let missing = server.handle_request(HttpRequest::new("GET", "/assets/nope.ts", ""));
         assert_eq!(missing.status, 404);
     }
 

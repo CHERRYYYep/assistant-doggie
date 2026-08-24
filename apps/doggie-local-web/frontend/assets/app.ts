@@ -1,8 +1,8 @@
 /**
  * Entry point: bind DOM events to controllers, then load the initial view.
  *
- * Nothing else lives here. Rendering is in `render-*.js`, network access in
- * `api.js`, mutable state in `state.js`, controllers in `views.js`.
+ * Nothing else lives here. Rendering is in `render-*.ts`, network access in
+ * `api.ts`, mutable state in `state.ts`, controllers in `views.ts`.
  */
 
 import {
@@ -16,7 +16,7 @@ import {
   newChatButton,
   refreshBucketsButton,
   setStatus,
-} from "./dom.js";
+} from "./dom.ts";
 import {
   confirmArchive,
   deleteBucket,
@@ -26,7 +26,7 @@ import {
   runMemoryQuery,
   sendMessage,
   showBucket,
-} from "./views.js";
+} from "./views.ts";
 
 chatMessages.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-action]");

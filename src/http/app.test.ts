@@ -51,7 +51,7 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
       body: "<main>Doggie</main>",
     },
     {
-      path: "/assets/app.js",
+      path: "/assets/app.ts",
       contentType: "text/javascript; charset=utf-8",
       body: "export const doggie = true;",
     },
@@ -62,7 +62,7 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
   assert.equal(index.headers.get("content-type"), "text/html; charset=utf-8");
   assert.equal(await index.text(), "<main>Doggie</main>");
 
-  const head = await localRequest(app, "http://127.0.0.1:8787/assets/app.js", {
+  const head = await localRequest(app, "http://127.0.0.1:8787/assets/app.ts", {
     method: "HEAD",
   });
   assert.equal(head.status, 200);

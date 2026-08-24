@@ -1,8 +1,8 @@
 /** Natural-language query results: the parsed plan, then grouped evidence. */
 
-import { escapeHtml, renderMarkdown } from "./markdown.js";
-import { bucketLabel } from "./render-bucket.js";
-import { memoryQueryResult } from "./dom.js";
+import { escapeHtml, renderMarkdown } from "./markdown.ts";
+import { bucketLabel } from "./render-bucket.ts";
+import { memoryQueryResult } from "./dom.ts";
 
 export function renderQueryPlan(plan) {
   const range = plan.time_range

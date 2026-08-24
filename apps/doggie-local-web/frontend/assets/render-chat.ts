@@ -1,8 +1,8 @@
 /** Chat transcript rendering: the empty state and one message. */
 
-import { escapeHtml, renderMarkdown } from "./markdown.js";
-import { renderArchiveCard } from "./render-archive.js";
-import { chatMessages } from "./dom.js";
+import { escapeHtml, renderMarkdown } from "./markdown.ts";
+import { renderArchiveCard } from "./render-archive.ts";
+import { chatMessages } from "./dom.ts";
 
 export function renderEmpty() {
   chatMessages.innerHTML =

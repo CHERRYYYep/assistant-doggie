@@ -10,7 +10,7 @@
     "allowImportingTsExtensions": true,
 
     "target": "esnext",
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "types": ["node"],
@@ -29,6 +29,6 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
-  "exclude": ["node_modules", "target", "crates", "apps"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "apps/doggie-local-web/frontend/**/*.ts"],
+  "exclude": ["node_modules", "target", "crates"]
 }
