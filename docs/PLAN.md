@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T6 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T7 已完成
 
 ---
 
@@ -8,16 +8,16 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | 11,200 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **124 个测试声明通过** |
+| TS 代码 | 15,483 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **165 个测试声明通过** |
 | 前端测试 | **16 个测试声明通过** |
 | Rust 参考实现 | **124 通过**（完好保留，可随时对拍） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **66 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 + §6 全部 12 条） |
-| 剩余 | **19 条** |
+| 已覆盖 | **76 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 + §6 全部 12 + §8 全部 10 条） |
+| 剩余 | **9 条** |
 
 ```
-进度  ██████████████████████░░░░░░  66 / 85
+进度  ███████████████████████████░░░  76 / 85
 ```
 
 ### 分支布局
@@ -39,7 +39,7 @@
 
 | # | 提交 | 内容 | 是否随重写保留 |
 |---|---|---|---|
-| **S1** | `38592c9` | 服务端安全边界 | 规则保留，代码待 T7 重建 |
+| **S1** | `38592c9` | 服务端安全边界 | **✅ 已在 T7 重建并加强** |
 | **S2** | `c299b4c` | 前端还原为可审查源码 | **✅ 完全保留** |
 | **S3** | `0d1ba54` | 前端拆成 10 个单一职责模块 | **✅ 完全保留** |
 
@@ -67,6 +67,7 @@
 | **T4** | `02d6e24` | 归档确认 + 纠错 + Bucket 生命周期应用服务 |
 | **T5** | `d794fc4` | Entry 级自然语言查询、确定性重排和 evidence 投影 |
 | **T6** | `03bfe63` | LLM 端点、严格结构化输出、wire 归一化和有界重试 |
+| **T7** | `4d1caca` | HTTP 合同、Hono API、S1 安全边界和 Node loopback server |
 
 **T1 — 骨架与规格**
 
@@ -152,6 +153,20 @@ T6 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 
 提交链：`98826cf` → `c03841f` → `0a619c0` → `4436bc8` → `03bfe63`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T7 — HTTP 服务**
+
+T7 已完成，覆盖 `docs/INVARIANTS.md` §8 全部 10 条：
+
+- 建立严格 HTTP DTO 和 Hono 路由，组装归档、确认、查询、纠错、Bucket 生命周期、聊天历史与状态 API；UTF-8 query、HEAD 和稳定 JSON 错误投影均有回归测试；
+- 新增 concrete API 与 archive runtime facade，补齐 confirmation/history/query parity：`focus_bucket_id` 全链路进入审计，失败确认保留已接受消息，缺失 Bucket 不暴露无效移动操作，legacy Bucket 搜索使用确定性排序；
+- 在 API dispatch 前重建 S1 安全边界：严格校验 Host、Origin 和有 body 请求的 JSON Content-Type，允许合法 loopback authority 与无 Origin CLI 请求，拒绝 foreign/opaque/重复或畸形头；所有响应统一带 `no-store`、`nosniff`、`no-referrer` 和无 `unsafe-inline` 的 CSP，且不发送 CORS allow headers；
+- 新增 `node:http` loopback server adapter，在 `rawHeaders` 层拒绝重复 Host/Origin/Content-Type/Content-Length、Content-Length 与 Transfer-Encoding 冲突及非严格 chunked 编码；完整 socket 字节预算限制为 1 MiB，并校验 fatal UTF-8；
+- 真实 loopback socket 测试覆盖正常请求、合法 chunked JSON、超限/framing/parser 错误、内部错误和 HEAD 无 body；安全拒绝发生在业务 dispatch 前，不产生写入副作用。
+
+T7 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。当前共有 165 个 TS 测试声明、16 个前端测试声明，Rust 参考实现 124 个测试继续全部通过。真实 socket 测试在默认沙箱中因禁止绑定 `127.0.0.1:0` 返回 `EPERM`，在允许 loopback socket 的环境下全部通过。
+
+提交链：`3842bc2` → `da755f9` → `2da2e3f` → `186306b` → `5d03523` → `531bd05` → `4d1caca`。未跟踪的 PDF 文件保留，未纳入提交。
+
 ---
 
 ## 三、待完成
@@ -159,7 +174,7 @@ T6 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 ### 里程碑
 
 ```
-M1  TS 与 Rust 功能对等           T6 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
+M1  TS 与 Rust 功能对等           T7 → T8b     ← 可以删除 Rust；CI 就位待协作者加入
 M2  记忆开始被日常消费             T9 → T10     ← 最高杠杆，产品开始有价值
 M3  Doggie 成为 Agent 控制面      T11 → T13
 M4  日常长期助手                  T14 → T17
@@ -173,7 +188,7 @@ M4  日常长期助手                  T14 → T17
 | **T4** ✅ | 应用服务 | 归档、确认、纠错、状态变更 | §3 全部 8 条 | T3 |
 | **T5** ✅ | 查询 | `MemoryQuery` 解析、检索、重排、evidence 去重 | §5 全部 11 条 | T3 |
 | **T6** ✅ | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
-| **T7** | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
+| **T7** ✅ | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
 | **T8** | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
 | **T8b** | **CI** | GitHub Actions 跑 `npm run check` | — | T8 |
 
