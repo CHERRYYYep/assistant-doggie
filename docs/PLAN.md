@@ -177,7 +177,7 @@ T8 已完成：S2/S3 前端资产已全部迁移为严格 TypeScript，并与后
 - 浏览器继续请求 `/assets/*.ts` 路径，但服务端响应体已是可执行 JavaScript，并保持 `text/javascript; charset=utf-8`；
 - DOM 类型守卫、事件类型收窄、JSON-safe details、Markdown 输入边界和归档确认判别联合均已完成严格类型化。
 
-T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通过）、`npm test`（166 个通过）、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。Rust `doggie-local-web` UI contract 测试 9 个全部通过；真实浏览器 smoke test 在 T8 收口阶段补做。
+T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通过）、`npm test`（166 个通过）、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。Rust `doggie-local-web` UI contract 测试 9 个全部通过；Node HTTP server 的 10 个真实 `.ts` 资源经 headless Chrome 加载成功，无 TypeScript 语法错误、模块加载错误或 CSP 拒绝。
 
 提交链：`fe66410` → `459e4e4` → `f729bc4` → `2339bd3` → `315de89`。未跟踪的 PDF 文件保留，未纳入提交。
 
