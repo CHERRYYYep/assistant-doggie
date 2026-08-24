@@ -7,7 +7,7 @@
   "scripts": {
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "node --test tests/"
+    "test": "node --test --test-isolation=none 'tests/**/*.test.ts'"
   },
   "devDependencies": {
     "prettier": "^3.9.6"

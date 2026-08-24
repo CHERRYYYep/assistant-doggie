@@ -37,6 +37,19 @@ import {
   type MemoryQueryRequest,
   type MoveEntryRequest,
 } from "./contracts.ts";
+import type {
+  ActiveBucketsResponse,
+  ArchiveResponse,
+  BucketDetailResponse,
+  BucketSearchResponse,
+  BucketStatusResponse,
+  ChatConfirmationResponse,
+  ChatHistoryResponse,
+  ChatResponse as HttpChatResponse,
+  DeleteBucketResponse,
+  MemoryQueryResponse,
+  MoveEntryResponse,
+} from "./dto.ts";
 
 export const CHAT_HISTORY_LIMIT = 40;
 
@@ -88,14 +101,14 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     this.#chatResponder = options.chatResponder;
   }
 
-  activeBuckets(limit: number) {
+  activeBuckets(limit: number): ActiveBucketsResponse {
     return {
       ok: true,
       buckets: this.#store.listActiveBuckets(limit).map(projectBucket),
     } as const;
   }
 
-  searchBuckets(query: string, limit: number) {
+  searchBuckets(query: string, limit: number): BucketSearchResponse {
     return {
       ok: true,
       results: this.#store.searchBuckets(query, limit).map((hit) => ({
@@ -106,7 +119,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  chatHistory(limit: number) {
+  chatHistory(limit: number): ChatHistoryResponse {
     return {
       ok: true,
       messages: this.#store
@@ -115,11 +128,11 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  memoryQuery(query: string, limit: number) {
+  memoryQuery(query: string, limit: number): MemoryQueryResponse {
     return projectMemoryQuery(this.#query.search(query, limit));
   }
 
-  memoryQueryJson(request: MemoryQueryRequest) {
+  memoryQueryJson(request: MemoryQueryRequest): MemoryQueryResponse {
     const now = this.#clock();
     const base = parseMemoryQuery(request.query, request.limit, now);
     const hasStart = request.start_at !== undefined;
@@ -144,7 +157,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     return projectMemoryQuery(this.#query.searchWithPlan(plan, now));
   }
 
-  bucketDetail(bucketId: string) {
+  bucketDetail(bucketId: string): BucketDetailResponse {
     const detail = this.#store.getBucketDetail(bucketId);
     if (detail === undefined) {
       throw StorageError.missingRecord("buckets", bucketId);
@@ -152,7 +165,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     return { ok: true, detail: projectBucketDetail(detail) } as const;
   }
 
-  deleteBucket(bucketId: string) {
+  deleteBucket(bucketId: string): DeleteBucketResponse {
     const result = this.#correction.deleteBucket(
       bucketId,
       "Delete Bucket through Doggie API.",
@@ -167,13 +180,13 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  async archive(request: ArchiveRequest) {
+  async archive(request: ArchiveRequest): Promise<ArchiveResponse> {
     return this.#projectExecution(
       await this.#runtime.archiveText(request.text, request.focus_bucket_id),
     );
   }
 
-  async chat(request: ChatRequest) {
+  async chat(request: ChatRequest): Promise<HttpChatResponse> {
     const userMessage = this.#store.appendChatMessage({
       role: "user",
       content: request.message,
@@ -255,7 +268,9 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  async confirmChat(request: ChatConfirmationRequest) {
+  async confirmChat(
+    request: ChatConfirmationRequest,
+  ): Promise<ChatConfirmationResponse> {
     const confirmationText = confirmationUserText(request);
     this.#validateConfirmationBoundary(request);
     const userMessage = this.#store.appendChatMessage({
@@ -313,7 +328,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
 
   async appendConfirmed(
     request: ArchiveRequest & { readonly bucket_id: string },
-  ) {
+  ): Promise<ArchiveResponse> {
     return this.#projectExecution(
       await this.#runtime.appendConfirmed(
         request.text,
@@ -328,7 +343,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       readonly title: string;
       readonly bucket_type: Parameters<ArchiveRuntime["createConfirmed"]>[2];
     },
-  ) {
+  ): Promise<ArchiveResponse> {
     return this.#projectExecution(
       await this.#runtime.createConfirmed(
         request.text,
@@ -339,7 +354,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     );
   }
 
-  moveEntry(request: MoveEntryRequest) {
+  moveEntry(request: MoveEntryRequest): MoveEntryResponse {
     const result = this.#correction.moveEntry(
       request.entry_id,
       request.target_bucket_id,
@@ -354,7 +369,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  setBucketStatus(request: BucketStatusRequest) {
+  setBucketStatus(request: BucketStatusRequest): BucketStatusResponse {
     const bucket = this.#status.setStatus(request.bucket_id, request.status);
     return {
       ok: true,

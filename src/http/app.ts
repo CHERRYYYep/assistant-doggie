@@ -1,6 +1,7 @@
 /** Hono routing surface for the local Doggie HTTP service. */
 
 import { readFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 
 import { Hono } from "hono";
 import { z } from "zod";
@@ -138,17 +139,22 @@ const FRONTEND_FILES = [
 ] as const;
 
 export function loadFrontendAssets(): readonly StaticAsset[] {
-  return FRONTEND_FILES.map(([path, relativePath, contentType]) => ({
-    path,
-    contentType,
-    body: readFileSync(
+  return FRONTEND_FILES.map(([path, relativePath, contentType]) => {
+    const source = readFileSync(
       new URL(
         `../../apps/doggie-local-web/frontend/${relativePath}`,
         import.meta.url,
       ),
       "utf8",
-    ),
-  }));
+    );
+    return {
+      path,
+      contentType,
+      body: relativePath.endsWith(".ts")
+        ? stripTypeScriptTypes(source, { mode: "strip" })
+        : source,
+    };
+  });
 }
 
 export function createDoggieApp(

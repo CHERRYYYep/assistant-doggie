@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { DoggieHttpApi } from "./app.ts";
-import { createDoggieApp } from "./app.ts";
+import { createDoggieApp, loadFrontendAssets } from "./app.ts";
 import { HttpBoundaryError } from "./contracts.ts";
 
 function fakeApi(calls: string[]): DoggieHttpApi {
@@ -67,6 +67,20 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
   });
   assert.equal(head.status, 200);
   assert.equal(await head.text(), "");
+});
+
+test("frontend TypeScript assets are stripped into browser JavaScript", () => {
+  const scripts = loadFrontendAssets().filter(({ path }) =>
+    path.endsWith(".ts"),
+  );
+
+  assert.equal(scripts.length, 10);
+  for (const script of scripts) {
+    assert.equal(script.contentType, "text/javascript; charset=utf-8");
+    assert.doesNotMatch(script.body, /\b(?:import|export)\s+type\b/u);
+    assert.doesNotMatch(script.body, /\bsatisfies\s+[A-Za-z_$]/u);
+    assert.match(script.body, /\S/u);
+  }
 });
 
 test("Hono routes decoded query, path and strict JSON DTOs to the API", async () => {
