@@ -58,6 +58,17 @@ class FakeModel implements MemoryModel {
   }
 }
 
+function localRequest(
+  app: ReturnType<typeof createDoggieApp>,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Host")) headers.set("Host", "127.0.0.1:8787");
+  const url = path.startsWith("http") ? path : `http://127.0.0.1:8787${path}`;
+  return Promise.resolve(app.request(url, { ...init, headers }));
+}
+
 function setup(options: { chatResponder?: ChatResponder } = {}) {
   const clock = steppingClock();
   const store = new Store(openDatabase(":memory:"), clock);
@@ -305,7 +316,7 @@ test("classification and extraction failures preserve accepted chat messages", a
       model.extractionError = llmError;
     }
 
-    const response = await app.request("/api/chat", {
+    const response = await localRequest(app, "/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: `${failure} 输入` }),
@@ -322,7 +333,10 @@ test("classification and extraction failures preserve accepted chat messages", a
       /暂时无法完成这次归档/u,
     );
 
-    const historyResponse = await app.request("/api/chat/history?limit=40");
+    const historyResponse = await localRequest(
+      app,
+      "/api/chat/history?limit=40",
+    );
     const history = (await historyResponse.json()) as {
       messages: readonly unknown[];
     };
@@ -348,7 +362,7 @@ test("confirmation execution failures preserve the accepted confirmation message
     false,
   );
 
-  const response = await app.request("/api/chat/confirm", {
+  const response = await localRequest(app, "/api/chat/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -443,7 +457,7 @@ test("inactive and deleted confirmation targets fail without resolving attempts"
     status: BucketStatus.Done,
   });
 
-  const inactiveResponse = await app.request("/api/chat/confirm", {
+  const inactiveResponse = await localRequest(app, "/api/chat/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -461,7 +475,7 @@ test("inactive and deleted confirmation targets fail without resolving attempts"
   );
 
   api.deleteBucket(inactive.bucketId);
-  const deletedResponse = await app.request("/api/chat/confirm", {
+  const deletedResponse = await localRequest(app, "/api/chat/confirm", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -481,7 +495,7 @@ test("inactive and deleted confirmation targets fail without resolving attempts"
 
 test("POST memory query accepts filters and projects structured_filters", async () => {
   const { app } = setup();
-  const response = await app.request("/api/memory/query", {
+  const response = await localRequest(app, "/api/memory/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -496,7 +510,7 @@ test("POST memory query accepts filters and projects structured_filters", async 
     [{ field: "memory.kind", value: "evidence" }],
   );
 
-  const legacyField = await app.request("/api/memory/query", {
+  const legacyField = await localRequest(app, "/api/memory/query", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query: "接口", structured_filters: [] }),

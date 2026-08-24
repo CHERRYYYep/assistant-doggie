@@ -28,6 +28,17 @@ function fakeApi(calls: string[]): DoggieHttpApi {
   };
 }
 
+function localRequest(
+  app: ReturnType<typeof createDoggieApp>,
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (!headers.has("Host")) headers.set("Host", "127.0.0.1:8787");
+  const url = path.startsWith("http") ? path : `http://127.0.0.1:8787${path}`;
+  return Promise.resolve(app.request(url, { ...init, headers }));
+}
+
 async function body(response: Response): Promise<Record<string, unknown>> {
   return (await response.json()) as Record<string, unknown>;
 }
@@ -46,12 +57,12 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
     },
   ]);
 
-  const index = await app.request("http://127.0.0.1:8787/");
+  const index = await localRequest(app, "http://127.0.0.1:8787/");
   assert.equal(index.status, 200);
   assert.equal(index.headers.get("content-type"), "text/html; charset=utf-8");
   assert.equal(await index.text(), "<main>Doggie</main>");
 
-  const head = await app.request("http://127.0.0.1:8787/assets/app.js", {
+  const head = await localRequest(app, "http://127.0.0.1:8787/assets/app.js", {
     method: "HEAD",
   });
   assert.equal(head.status, 200);
@@ -62,7 +73,8 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
   const calls: string[] = [];
   const app = createDoggieApp(fakeApi(calls), []);
 
-  const query = await app.request(
+  const query = await localRequest(
+    app,
     "http://127.0.0.1:8787/api/memory/query?q=%E6%8E%A5%E5%8F%A3%20A&limit=10",
   );
   assert.equal(query.status, 200);
@@ -72,7 +84,8 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
     value: { query: "接口 A", limit: 10 },
   });
 
-  const detail = await app.request(
+  const detail = await localRequest(
+    app,
     "http://127.0.0.1:8787/api/buckets/%E6%A1%B6-1",
   );
   assert.equal(detail.status, 200);
@@ -82,7 +95,7 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
     value: "桶-1",
   });
 
-  const chat = await app.request("http://127.0.0.1:8787/api/chat", {
+  const chat = await localRequest(app, "http://127.0.0.1:8787/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message: " 事实 " }),
@@ -104,7 +117,7 @@ test("all declared write routes dispatch and DELETE remains bodyless", async () 
   const calls: string[] = [];
   const app = createDoggieApp(fakeApi(calls), []);
   const post = (path: string, value: unknown) =>
-    app.request(`http://127.0.0.1:8787${path}`, {
+    localRequest(app, `http://127.0.0.1:8787${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(value),
@@ -124,7 +137,7 @@ test("all declared write routes dispatch and DELETE remains bodyless", async () 
       command_text: "移到目标",
     }),
     post("/api/buckets/status", { bucket_id: "b1", status: "done" }),
-    app.request("http://127.0.0.1:8787/api/buckets/b1", {
+    localRequest(app, "http://127.0.0.1:8787/api/buckets/b1", {
       method: "DELETE",
     }),
   ]);
@@ -144,7 +157,7 @@ test("malformed inputs and thrown handlers keep the stable JSON error shape", as
   };
   const app = createDoggieApp(api, []);
 
-  const malformed = await app.request("http://127.0.0.1:8787/api/chat", {
+  const malformed = await localRequest(app, "http://127.0.0.1:8787/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: "{",
@@ -155,7 +168,8 @@ test("malformed inputs and thrown handlers keep the stable JSON error shape", as
     error: "request body must be valid JSON",
   });
 
-  const conflict = await app.request(
+  const conflict = await localRequest(
+    app,
     "http://127.0.0.1:8787/api/buckets/active",
   );
   assert.equal(conflict.status, 409);
@@ -164,7 +178,7 @@ test("malformed inputs and thrown handlers keep the stable JSON error shape", as
     error: "fixture conflict",
   });
 
-  const missing = await app.request("http://127.0.0.1:8787/not-found");
+  const missing = await localRequest(app, "http://127.0.0.1:8787/not-found");
   assert.equal(missing.status, 404);
   assert.deepEqual(await body(missing), {
     ok: false,

@@ -25,6 +25,11 @@ import {
   type MemoryQueryRequest,
   type MoveEntryRequest,
 } from "./contracts.ts";
+import {
+  assertSecureRequest,
+  AuthorityPolicy,
+  setSecurityResponseHeaders,
+} from "./security.ts";
 
 export type DoggieHttpApi = {
   readonly activeBuckets: (limit: number) => unknown | Promise<unknown>;
@@ -149,8 +154,22 @@ export function loadFrontendAssets(): readonly StaticAsset[] {
 export function createDoggieApp(
   api: DoggieHttpApi,
   assets: readonly StaticAsset[] = loadFrontendAssets(),
+  additionalAllowedAuthorities: readonly string[] = [],
 ): Hono {
   const app = new Hono();
+  const authorityPolicy = new AuthorityPolicy(additionalAllowedAuthorities);
+
+  app.use("*", async (context, next) => {
+    try {
+      assertSecureRequest(context.req.raw, authorityPolicy);
+      await next();
+    } catch (error) {
+      const failure = stableError(error);
+      context.res = context.json(failure.body, httpStatus(failure.status));
+    } finally {
+      setSecurityResponseHeaders(context.res.headers);
+    }
+  });
 
   for (const asset of assets) {
     app.get(asset.path, (context) =>
@@ -296,12 +315,13 @@ function json(
   return context.json(value as never);
 }
 
-function httpStatus(status: number): 400 | 403 | 404 | 409 | 500 {
+function httpStatus(status: number): 400 | 403 | 404 | 409 | 415 | 500 {
   switch (status) {
     case 400:
     case 403:
     case 404:
     case 409:
+    case 415:
     case 500:
       return status;
     default:
