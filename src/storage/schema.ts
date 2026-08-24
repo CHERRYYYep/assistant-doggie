@@ -19,7 +19,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -167,8 +167,18 @@ CREATE INDEX ix_conversation_messages_created
     ON conversation_messages(created_at ASC, sequence ASC);
 `;
 
+const ADD_PENDING_SUGGESTIONS_V2 = `
+ALTER TABLE archive_attempts ADD COLUMN suggested_bucket_type TEXT;
+ALTER TABLE archive_attempts ADD COLUMN suggested_title TEXT;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
+  {
+    version: 2,
+    name: "add_pending_archive_suggestions_v2",
+    sql: ADD_PENDING_SUGGESTIONS_V2,
+  },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */

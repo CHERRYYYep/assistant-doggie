@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -69,6 +72,26 @@ test("ask_user preserves a suggested new Bucket without writing formal memory", 
     )
     .get() as Record<string, number>;
   assert.deepEqual({ ...counts }, { buckets: 0, entries: 0, memories: 0 });
+});
+
+test("pending new-Bucket suggestion survives reopening the database", () => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-t4-"));
+  const path = join(directory, "doggie.db");
+  try {
+    const database = openDatabase(path);
+    const store = new Store(database, steppingClock());
+    const service = new ArchiveService(store);
+    const result = pending(service);
+    database.close();
+
+    const reopened = openDatabase(path);
+    const attempt = new Store(reopened).getArchiveAttempt(result.attemptId)!;
+    assert.equal(attempt.suggestedBucketType, BucketType.Experiment);
+    assert.equal(attempt.suggestedTitle, "接口 B 压测");
+    reopened.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("automatic actions require extraction and ask_user rejects it", () => {

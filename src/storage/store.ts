@@ -97,6 +97,8 @@ export type ArchiveAttemptRow = {
   readonly confidence: number;
   readonly reason: string;
   readonly question: string | null;
+  readonly suggestedBucketType: BucketType | null;
+  readonly suggestedTitle: string | null;
   readonly candidateBucketIds: readonly string[];
   readonly focusBucketId: string | null;
   readonly promptVersion: string;
@@ -559,9 +561,10 @@ export class Store {
       .prepare(
         `INSERT INTO archive_attempts
            (id, raw_text, action, archive_state, bucket_id, entry_id, confidence,
-            reason, question, candidate_bucket_ids_json, focus_bucket_id,
-            prompt_version, model_name, created_at, resolved_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            reason, question, suggested_bucket_type, suggested_title,
+            candidate_bucket_ids_json, focus_bucket_id, prompt_version,
+            model_name, created_at, resolved_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         attemptId,
@@ -573,6 +576,8 @@ export class Store {
         decision.confidence,
         decision.reason,
         optionalField(decision.question),
+        decision.bucketType ?? null,
+        optionalField(decision.title),
         JSON.stringify(candidateBucketIds),
         optionalField(audit.focusBucketId),
         context.promptVersion,
@@ -607,8 +612,9 @@ export class Store {
     const row = this.#database
       .prepare(
         `SELECT id, raw_text, action, archive_state, bucket_id, entry_id,
-                confidence, reason, question, candidate_bucket_ids_json,
-                focus_bucket_id, prompt_version, model_name, corrected,
+                confidence, reason, question, suggested_bucket_type,
+                suggested_title, candidate_bucket_ids_json, focus_bucket_id,
+                prompt_version, model_name, corrected,
                 created_at, resolved_at
          FROM archive_attempts WHERE id = ?`,
       )
@@ -624,6 +630,8 @@ export class Store {
       confidence: row.confidence,
       reason: row.reason,
       question: row.question,
+      suggestedBucketType: row.suggested_bucket_type,
+      suggestedTitle: row.suggested_title,
       candidateBucketIds: JSON.parse(row.candidate_bucket_ids_json) as string[],
       focusBucketId: row.focus_bucket_id,
       promptVersion: row.prompt_version,
@@ -1105,6 +1113,8 @@ type ArchiveAttemptColumns = {
   confidence: number;
   reason: string;
   question: string | null;
+  suggested_bucket_type: BucketType | null;
+  suggested_title: string | null;
   candidate_bucket_ids_json: string;
   focus_bucket_id: string | null;
   prompt_version: string;
