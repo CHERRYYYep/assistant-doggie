@@ -396,7 +396,7 @@ export function projectChatMessage(message: ChatMessageRow) {
     content: message.content,
     tool_name: message.toolName,
     tool_call_id: message.toolCallId,
-    details: message.details ?? null,
+    details: jsonDetails(message.details) ?? null,
     created_at: message.createdAt,
   } as const;
 }

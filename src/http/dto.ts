@@ -137,16 +137,13 @@ export type DiscardedArchiveDto = {
   readonly memory_item_ids: readonly string[];
   readonly source_attempt_id: string;
   readonly result_attempt_id: null;
+  readonly bucket?: BucketDto | null;
+  readonly reason?: string;
 };
 
 export type ArchiveDto = ArchiveProjectionDto | DiscardedArchiveDto;
 
-export type ChatMessageDetailsDto = {
-  readonly archive?: ArchiveDto;
-  readonly source_text?: string;
-  readonly pending_confirmation?: boolean;
-  readonly [key: string]: JsonValue | ArchiveDto | undefined;
-};
+export type ChatMessageDetailsDto = JsonValue;
 
 export type ChatMessageDto = {
   readonly id: string;

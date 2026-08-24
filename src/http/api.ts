@@ -39,6 +39,7 @@ import {
 } from "./contracts.ts";
 import type {
   ActiveBucketsResponse,
+  ArchiveDto,
   ArchiveResponse,
   BucketDetailResponse,
   BucketSearchResponse,
@@ -456,9 +457,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
   #projectConfirmation(
     execution: ConfirmationExecution,
     sourceAttemptId: string,
-  ): Readonly<Record<string, unknown>> & {
-    readonly archive_state: string;
-  } {
+  ): ArchiveDto {
     if ("attemptId" in execution.result) {
       const archiveExecution: ArchiveExecution = {
         result: execution.result,
@@ -697,10 +696,10 @@ function projectChatToolMessage(message: ChatToolMessage) {
   } as const;
 }
 
-function cloneRecord(value: unknown): Record<string, unknown> | undefined {
+function cloneRecord(value: unknown): { [key: string]: JsonValue } | undefined {
   const json = jsonDetails(value);
   return json !== null && typeof json === "object" && !Array.isArray(json)
-    ? ({ ...json } as Record<string, unknown>)
+    ? ({ ...json } as { [key: string]: JsonValue })
     : undefined;
 }
 

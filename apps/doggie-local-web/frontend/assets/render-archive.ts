@@ -5,6 +5,7 @@
  * written an Entry, the card must say so and offer all four choices.
  */
 
+import type { ArchiveDto } from "../../../../src/http/dto.ts";
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import {
   bucketLabel,
@@ -14,22 +15,31 @@ import {
 } from "./render-bucket.ts";
 import { bucketById, state } from "./state.ts";
 
-export function renderMoveEntryCard(archive) {
+type ArchiveCardData = ArchiveDto & {
+  readonly source_text?: string;
+};
+
+export function renderMoveEntryCard(archive: ArchiveCardData): string {
   if (!archive.entry_id) return "";
   const options = renderBucketOptions(archive.bucket_id);
   const hasTarget = state.activeBuckets.some((bucket) => bucket.id !== archive.bucket_id);
   return `<div class="move-entry"><h4>修改 Bucket</h4>${hasTarget ? `<select data-role="move-target">${options}</select><button data-action="move-entry" data-entry-id="${escapeHtml(archive.entry_id)}">修改 Bucket</button>` : '<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<div data-role="move-status" class="muted"></div></div>`;
 }
 
-export function renderArchiveCard(archive, sourceText) {
+export function renderArchiveCard(
+  archive: ArchiveDto | null | undefined,
+  sourceText: string,
+): string {
   if (!archive || !archive.archive_state) return "";
-  const state = archive.archive_state;
+  const stateName = archive.archive_state;
   const cardClass =
-    state === "needs_confirmation" ? "archive-card needs-confirmation" : "archive-card";
-  let html = `<div class="${cardClass}" data-source-text="${escapeHtml(sourceText || archive.source_text || "")}" data-attempt-id="${escapeHtml(archive.attempt_id || "")}"><h3>${state === "needs_confirmation" ? "需要确认归档" : "归档结果"}</h3>`;
-  if (archive.reason)
+    stateName === "needs_confirmation" ? "archive-card needs-confirmation" : "archive-card";
+  const cardData = archive as ArchiveCardData;
+  let html = `<div class="${cardClass}" data-source-text="${escapeHtml(sourceText || cardData.source_text || "")}" data-attempt-id="${escapeHtml(archive.attempt_id || "")}"><h3>${stateName === "needs_confirmation" ? "需要确认归档" : "归档结果"}</h3>`;
+  if (archive.reason) {
     html += `<div class="archive-reason"><b>模型判断理由：</b>${renderMarkdown(archive.reason)}</div>`;
-  if (state === "needs_confirmation") {
+  }
+  if (stateName === "needs_confirmation") {
     const candidates = candidateBuckets(archive);
     const recommendedId =
       archive.recommended_bucket_id || archive.recommended_bucket?.id || candidates[0]?.id || "";
@@ -49,15 +59,17 @@ export function renderArchiveCard(archive, sourceText) {
       "meeting",
       "knowledge",
       "draft",
-    ];
+    ] as const;
     html += `<div class="archive-group"><h4>创建新 Bucket</h4><input data-role="create-title" value="${escapeHtml(archive.bucket_title || "")}" placeholder="例如：接口 A 压测"><select data-role="create-type">${types.map((type) => `<option value="${type}"${type === (archive.bucket_type || "task") ? " selected" : ""}>${type}</option>`).join("")}</select><div class="archive-actions"><button data-action="chat-confirm" data-confirm-action="create">3. 创建新的 Bucket</button><button data-action="chat-confirm" data-confirm-action="discard">4. 不保存</button></div></div><p class="muted">如已保存后仍需调整，可使用“修改 Bucket”入口。</p>`;
-  } else if (state === "archived") {
-    const bucket = archive.bucket || bucketById(archive.bucket_id);
-    html += `<p class="success"><b>已归档到：</b>${bucketLabel(bucket || { id: archive.bucket_id })}</p>`;
-    if (archive.extraction?.summary)
+  } else if (stateName === "archived") {
+    const bucket =
+      archive.bucket || (archive.bucket_id ? bucketById(archive.bucket_id) : undefined);
+    html += `<p class="success"><b>已归档到：</b>${bucketLabel(bucket || { id: archive.bucket_id || "" })}</p>`;
+    if (archive.extraction?.summary) {
       html += `<p><b>摘要：</b>${escapeHtml(archive.extraction.summary)}</p>`;
-    html += renderMoveEntryCard(archive);
-  } else if (state === "discarded") {
+    }
+    html += renderMoveEntryCard(cardData);
+  } else if (stateName === "discarded") {
     html += '<p class="muted">这条内容没有保存为正式 Entry。</p>';
   }
   html += "</div>";

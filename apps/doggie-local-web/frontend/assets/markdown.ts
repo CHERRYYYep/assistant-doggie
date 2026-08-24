@@ -14,7 +14,7 @@
  * payloads each rule exists to stop.
  */
 
-const HTML_ESCAPES = {
+const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
   ">": "&gt;",
@@ -22,9 +22,18 @@ const HTML_ESCAPES = {
   "'": "&#39;",
 };
 
+type Fence = {
+  char: string;
+  length: number;
+  info: string;
+  lines: string[];
+};
+
 /** Escape the five characters that can break out of text or an attribute. */
-export function escapeHtml(value) {
-  return String(value ?? "").replace(/[&<>"']/g, (character) => HTML_ESCAPES[character]);
+export function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => {
+    return HTML_ESCAPES[character] ?? character;
+  });
 }
 
 /**
@@ -35,7 +44,7 @@ export function escapeHtml(value) {
  * avoids relying on an escape sequence surviving every tool that edits this
  * file.
  */
-function hasControlCharacter(value) {
+function hasControlCharacter(value: string): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
     if (code < 0x20 || code === 0x7f) return true;
@@ -49,29 +58,29 @@ function hasControlCharacter(value) {
  * Only http(s), mailto, fragments, root-relative paths and queries pass.
  * Protocol-relative `//host` is rejected along with `javascript:` and `data:`.
  */
-export function safeHref(value) {
+export function safeHref(value: unknown): string {
   const href = String(value ?? "").trim();
   if (hasControlCharacter(href)) return "";
   return /^(?:https?:\/\/|mailto:|#|\/(?!\/)|\?)/i.test(href) ? href : "";
 }
 
 /** Reduce a fence info string to a token safe to interpolate into a class. */
-export function codeLanguage(value) {
+export function codeLanguage(value: unknown): string {
   const token =
     String(value ?? "")
       .trim()
-      .split(/\s+/, 1)[0] || "";
+      .split(/\s+/, 1)[0] ?? "";
   return token.replace(/[^A-Za-z0-9_+#.-]/g, "").slice(0, 32);
 }
 
 /** Render inline spans: code, strong, emphasis and links. */
-export function renderInline(value) {
+export function renderInline(value: unknown): string {
   const source = String(value ?? "");
   let html = "";
   let plain = "";
   let index = 0;
 
-  const flushPlain = () => {
+  const flushPlain = (): void => {
     if (plain) {
       html += escapeHtml(plain).replace(/\n/g, "<br>");
       plain = "";
@@ -79,7 +88,8 @@ export function renderInline(value) {
   };
 
   while (index < source.length) {
-    if (source[index] === "`") {
+    const character = source[index];
+    if (character === "`") {
       let run = 1;
       while (source[index + run] === "`") run += 1;
       const marker = source.slice(index, index + run);
@@ -103,12 +113,11 @@ export function renderInline(value) {
       }
     }
 
-    if (source[index] === "*" || source[index] === "_") {
-      const marker = source[index];
+    if (character === "*" || character === "_") {
       // `snake_case` must not turn into emphasis.
-      const isWordUnderscore = marker === "_" && index > 0 && /\w/.test(source[index - 1]);
+      const isWordUnderscore = character === "_" && index > 0 && /\w/.test(source[index - 1] ?? "");
       if (!isWordUnderscore) {
-        const end = source.indexOf(marker, index + 1);
+        const end = source.indexOf(character, index + 1);
         if (end > index + 1) {
           flushPlain();
           html += `<em>${renderInline(source.slice(index + 1, end))}</em>`;
@@ -118,26 +127,28 @@ export function renderInline(value) {
       }
     }
 
-    if (source[index] === "[") {
+    if (character === "[") {
       const link = source
         .slice(index)
         .match(/^\[([^\]\n]+)\]\(([^)\s]+)(?:\s+["']([^"']*)["'])?\)/);
-      if (link) {
-        const href = safeHref(link[2]);
+      const label = link?.[1];
+      const rawHref = link?.[2];
+      if (link && label !== undefined && rawHref !== undefined) {
+        const href = safeHref(rawHref);
         // A rejected URL falls through to plain text, so the label survives.
         if (href) {
           flushPlain();
           const title = link[3] ? ` title="${escapeHtml(link[3])}"` : "";
           html +=
             `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener"${title}>` +
-            `${renderInline(link[1])}</a>`;
+            `${renderInline(label)}</a>`;
           index += link[0].length;
           continue;
         }
       }
     }
 
-    plain += source[index];
+    plain += character ?? "";
     index += 1;
   }
 
@@ -146,7 +157,7 @@ export function renderInline(value) {
 }
 
 /** Render one fenced block. Contents are escaped, never re-parsed. */
-export function renderCodeBlock(lines, info) {
+export function renderCodeBlock(lines: readonly string[], info: unknown): string {
   const language = codeLanguage(info);
   const className = language ? ` class="language-${escapeHtml(language)}"` : "";
   return (
@@ -157,38 +168,38 @@ export function renderCodeBlock(lines, info) {
 }
 
 /** Render a Markdown document to HTML. */
-export function renderMarkdown(value) {
+export function renderMarkdown(value: unknown): string {
   const lines = String(value ?? "")
     .replace(/\r\n?/g, "\n")
     .split("\n");
 
   let html = "";
-  let paragraph = [];
-  let listType = null;
-  let listItems = [];
-  let quoteLines = [];
-  let fence = null;
+  let paragraph: string[] = [];
+  let listType: "ul" | "ol" | null = null;
+  let listItems: string[] = [];
+  let quoteLines: string[] = [];
+  let fence: Fence | null = null;
 
-  const flushParagraph = () => {
+  const flushParagraph = (): void => {
     if (paragraph.length) {
       html += `<p>${renderInline(paragraph.join("\n"))}</p>`;
       paragraph = [];
     }
   };
-  const flushList = () => {
+  const flushList = (): void => {
     if (listType) {
       html += `<${listType}>${listItems.map((item) => `<li>${item}</li>`).join("")}</${listType}>`;
       listType = null;
       listItems = [];
     }
   };
-  const flushQuote = () => {
+  const flushQuote = (): void => {
     if (quoteLines.length) {
       html += `<blockquote>${renderInline(quoteLines.join("\n"))}</blockquote>`;
       quoteLines = [];
     }
   };
-  const flushBlocks = () => {
+  const flushBlocks = (): void => {
     flushParagraph();
     flushList();
     flushQuote();
@@ -197,7 +208,12 @@ export function renderMarkdown(value) {
   for (const line of lines) {
     if (fence) {
       const close = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
-      if (close && close[1][0] === fence.char && close[1].length >= fence.length) {
+      const closeMarker = close?.[1];
+      if (
+        closeMarker !== undefined &&
+        closeMarker[0] === fence.char &&
+        closeMarker.length >= fence.length
+      ) {
         html += renderCodeBlock(fence.lines, fence.info);
         fence = null;
       } else {
@@ -207,12 +223,13 @@ export function renderMarkdown(value) {
     }
 
     const opening = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (opening) {
+    const openingMarker = opening?.[1];
+    if (opening && openingMarker !== undefined) {
       flushBlocks();
       fence = {
-        char: opening[1][0],
-        length: opening[1].length,
-        info: opening[2],
+        char: openingMarker[0] ?? "",
+        length: openingMarker.length,
+        info: opening[2] ?? "",
         lines: [],
       };
       continue;
@@ -224,10 +241,12 @@ export function renderMarkdown(value) {
     }
 
     const heading = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
-    if (heading) {
+    const headingMarks = heading?.[1];
+    const headingText = heading?.[2];
+    if (heading && headingMarks !== undefined && headingText !== undefined) {
       flushBlocks();
-      const level = heading[1].length;
-      html += `<h${level}>${renderInline(heading[2])}</h${level}>`;
+      const level = headingMarks.length;
+      html += `<h${level}>${renderInline(headingText)}</h${level}>`;
       continue;
     }
 
@@ -238,33 +257,36 @@ export function renderMarkdown(value) {
     }
 
     const quote = line.match(/^ {0,3}>\s?(.*)$/);
-    if (quote) {
+    const quoteText = quote?.[1];
+    if (quote && quoteText !== undefined) {
       flushParagraph();
       flushList();
-      quoteLines.push(quote[1]);
+      quoteLines.push(quoteText);
       continue;
     }
     if (quoteLines.length) flushQuote();
 
     const unordered = line.match(/^ {0,3}[-+*]\s+(.+)$/);
-    if (unordered) {
+    const unorderedText = unordered?.[1];
+    if (unordered && unorderedText !== undefined) {
       flushParagraph();
       if (listType !== "ul") {
         flushList();
         listType = "ul";
       }
-      listItems.push(renderInline(unordered[1]));
+      listItems.push(renderInline(unorderedText));
       continue;
     }
 
     const ordered = line.match(/^ {0,3}\d+[.)]\s+(.+)$/);
-    if (ordered) {
+    const orderedText = ordered?.[1];
+    if (ordered && orderedText !== undefined) {
       flushParagraph();
       if (listType !== "ol") {
         flushList();
         listType = "ol";
       }
-      listItems.push(renderInline(ordered[1]));
+      listItems.push(renderInline(orderedText));
       continue;
     }
 

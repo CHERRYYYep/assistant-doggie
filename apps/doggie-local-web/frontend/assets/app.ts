@@ -28,52 +28,71 @@ import {
   showBucket,
 } from "./views.ts";
 
-chatMessages.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-action]");
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function closestActionButton(event: Event): HTMLButtonElement | null {
+  return event.target instanceof Element
+    ? event.target.closest<HTMLButtonElement>("button[data-action]")
+    : null;
+}
+
+chatMessages.addEventListener("click", async (event: MouseEvent) => {
+  const button = closestActionButton(event);
   if (!button) return;
   try {
-    if (button.dataset.action === "chat-confirm") await confirmArchive(button);
-    else if (button.dataset.action === "move-entry") await moveEntry(button);
-    else if (button.dataset.action === "show-bucket") await showBucket(button.dataset.bucketId);
+    if (button.dataset["action"] === "chat-confirm") await confirmArchive(button);
+    else if (button.dataset["action"] === "move-entry") await moveEntry(button);
+    else if (button.dataset["action"] === "show-bucket") {
+      await showBucket(button.dataset["bucketId"]);
+    }
   } catch (error) {
-    setStatus(error.message, "warning");
+    setStatus(errorMessage(error), "warning");
   }
 });
-buckets.addEventListener("click", (event) => {
-  const button = event.target.closest('button[data-action="show-bucket"]');
-  if (button) showBucket(button.dataset.bucketId);
+
+buckets.addEventListener("click", (event: MouseEvent) => {
+  const button = closestActionButton(event);
+  if (button?.dataset["action"] === "show-bucket") {
+    void showBucket(button.dataset["bucketId"]).catch((error: unknown) =>
+      setStatus(errorMessage(error), "warning"),
+    );
+  }
 });
-detail.addEventListener("click", async (event) => {
-  const button = event.target.closest('button[data-action="delete-bucket"]');
-  if (!button) return;
+
+detail.addEventListener("click", async (event: MouseEvent) => {
+  const button = closestActionButton(event);
+  if (button?.dataset["action"] !== "delete-bucket") return;
   try {
-    await deleteBucket(button.dataset.bucketId);
+    await deleteBucket(button.dataset["bucketId"]);
   } catch (error) {
-    setStatus(error.message, "warning");
+    setStatus(errorMessage(error), "warning");
   }
 });
-chatSend.addEventListener("click", sendMessage);
-chatInput.addEventListener("keydown", (event) => {
+
+chatSend.addEventListener("click", () => void sendMessage());
+chatInput.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
-    sendMessage();
+    void sendMessage();
   }
 });
 chatInput.addEventListener("input", () => {
   chatInput.style.height = "auto";
-  chatInput.style.height = Math.min(chatInput.scrollHeight, 180) + "px";
+  chatInput.style.height = `${Math.min(chatInput.scrollHeight, 180)}px`;
 });
 newChatButton.addEventListener("click", () => {
   chatInput.value = "";
   chatInput.focus();
   setStatus("");
 });
-refreshBucketsButton.addEventListener("click", refreshBuckets);
-memoryQueryButton.addEventListener("click", runMemoryQuery);
-memoryQueryInput.addEventListener("keydown", (event) => {
+refreshBucketsButton.addEventListener("click", () => void refreshBuckets());
+memoryQueryButton.addEventListener("click", () => void runMemoryQuery());
+memoryQueryInput.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.key === "Enter") {
     event.preventDefault();
-    runMemoryQuery();
+    void runMemoryQuery();
   }
 });
-Promise.all([refreshBuckets(), loadHistory()]);
+void Promise.all([refreshBuckets(), loadHistory()]);
