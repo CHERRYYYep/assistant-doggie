@@ -67,7 +67,11 @@ export function resolveLlmEndpoint(input: {
   const site =
     requestedSite ?? (requestedBaseUrl === undefined ? "official" : "custom");
 
-  if (site.length > 100 || site.includes("\r") || site.includes("\n")) {
+  if (
+    Buffer.byteLength(site, "utf8") > 100 ||
+    site.includes("\r") ||
+    site.includes("\n")
+  ) {
     throw new LlmConfigurationError(
       "invalid_site",
       "OPENAI_SITE must be a short single-line name",
@@ -80,13 +84,13 @@ export function resolveLlmEndpoint(input: {
     ? OFFICIAL_OPENAI_BASE_URL
     : normalizeCustomBaseUrl(requestedBaseUrl);
 
-  return {
+  return Object.freeze({
     site: isOfficial ? "official" : site,
     baseUrl,
     apiMode,
     isOfficial,
     requestUrl: `${baseUrl}/${apiModePath(apiMode)}`,
-  };
+  });
 }
 
 function normalizedOptional(value?: string | undefined): string | undefined {
@@ -119,16 +123,24 @@ function normalizeCustomBaseUrl(value: string | undefined): string {
       "OPENAI_BASE_URL must be an absolute http(s) URL, usually ending in /v1",
     );
   }
+  // WHATWG URL erases the distinction between no query/fragment and an
+  // explicitly empty `?`/`#`. Inspect the cleaned source as well so request
+  // paths cannot accidentally become query or fragment text.
+  if (
+    cleaned.includes("?") ||
+    cleaned.includes("#") ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    throw new LlmConfigurationError(
+      "query_or_fragment_in_base_url",
+      "OPENAI_BASE_URL must not contain query or fragment",
+    );
+  }
   if (parsed.username !== "" || parsed.password !== "") {
     throw new LlmConfigurationError(
       "credentials_in_base_url",
       "OPENAI_BASE_URL must not contain credentials",
-    );
-  }
-  if (parsed.search !== "" || parsed.hash !== "") {
-    throw new LlmConfigurationError(
-      "query_or_fragment_in_base_url",
-      "OPENAI_BASE_URL must not contain query or fragment",
     );
   }
 

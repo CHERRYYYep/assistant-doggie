@@ -6,6 +6,7 @@ import {
   FetchStructuredOutputTransport,
   LlmTransportConfigurationError,
   LlmTransportError,
+  MAX_LLM_HTTP_TIMEOUT_MS,
   type LlmHttpRequest,
 } from "./transport.ts";
 
@@ -144,12 +145,32 @@ test("transport configuration rejects empty keys and invalid timeouts", () => {
       error instanceof LlmTransportConfigurationError &&
       error.kind === "missing_api_key",
   );
-  assert.throws(
-    () => new FetchStructuredOutputTransport("key", { timeoutMs: 0 }),
-    (error: unknown) =>
-      error instanceof LlmTransportConfigurationError &&
-      error.kind === "invalid_timeout",
+  for (const timeoutMs of [
+    0,
+    -1,
+    0.5,
+    1.5,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    MAX_LLM_HTTP_TIMEOUT_MS + 1,
+    Number.MAX_SAFE_INTEGER,
+  ]) {
+    assert.throws(
+      () => new FetchStructuredOutputTransport("key", { timeoutMs }),
+      (error: unknown) =>
+        error instanceof LlmTransportConfigurationError &&
+        error.kind === "invalid_timeout",
+    );
+  }
+  const maximumTimeoutTransport = new FetchStructuredOutputTransport("key", {
+    timeoutMs: MAX_LLM_HTTP_TIMEOUT_MS,
+  });
+  assert.equal(maximumTimeoutTransport.timeoutMs, MAX_LLM_HTTP_TIMEOUT_MS);
+  assert.equal(
+    Reflect.set(maximumTimeoutTransport, "timeoutMs", Number.POSITIVE_INFINITY),
+    false,
   );
+  assert.equal(maximumTimeoutTransport.timeoutMs, MAX_LLM_HTTP_TIMEOUT_MS);
   assert.throws(
     () => FetchStructuredOutputTransport.fromEnv({}, {}),
     (error: unknown) =>

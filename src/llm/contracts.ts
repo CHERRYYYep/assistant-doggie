@@ -26,6 +26,11 @@ export type StructuredOutputContract<T> = {
 };
 
 const nullableString = z.string().nullable().optional();
+const defaultedNullableStringArray = z
+  .array(z.string())
+  .nullable()
+  .optional()
+  .transform((value) => value ?? []);
 
 const classificationInputSchema = z
   .object({
@@ -53,10 +58,7 @@ const classificationInputSchema = z
     reason: z.string(),
     should_ask_user: z.boolean().optional().default(false),
     question: nullableString,
-    candidate_bucket_ids: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
+    candidate_bucket_ids: defaultedNullableStringArray,
   })
   .strict();
 
@@ -70,34 +72,16 @@ const timelineEventInputSchema = z
 const extractionInputSchema = z
   .object({
     summary: z.string(),
-    todos: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
-    evidences: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
+    todos: defaultedNullableStringArray,
+    evidences: defaultedNullableStringArray,
     timeline_events: z
       .array(timelineEventInputSchema)
       .optional()
       .default(() => []),
-    decisions: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
-    hypotheses: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
-    entities: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
-    tags: z
-      .array(z.string())
-      .optional()
-      .default(() => []),
+    decisions: defaultedNullableStringArray,
+    hypotheses: defaultedNullableStringArray,
+    entities: defaultedNullableStringArray,
+    tags: defaultedNullableStringArray,
   })
   .strict();
 

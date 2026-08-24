@@ -95,3 +95,44 @@ test("endpoint configuration preserves secure official and compatible URL policy
     "invalid_site",
   );
 });
+
+test("endpoint configuration locks UTF-8 site and empty URL delimiter boundaries", () => {
+  const endpoint = resolveLlmEndpoint({});
+  assert.equal(Object.isFrozen(endpoint), true);
+  assert.equal(
+    Reflect.set(endpoint, "requestUrl", "http://attacker.example/steal"),
+    false,
+  );
+  assert.equal(endpoint.requestUrl, "https://api.openai.com/v1/responses");
+
+  assert.equal(
+    resolveLlmEndpoint({
+      site: "a".repeat(100),
+      baseUrl: "https://relay.example/v1",
+    }).site.length,
+    100,
+  );
+  for (const site of ["a".repeat(101), "界".repeat(34)]) {
+    assert.equal(
+      configKind(() =>
+        resolveLlmEndpoint({
+          site,
+          baseUrl: "https://relay.example/v1",
+        }),
+      ),
+      "invalid_site",
+    );
+  }
+
+  for (const baseUrl of [
+    "https://relay.example/v1?",
+    "https://relay.example/v1#",
+    "https://relay.example/v1/?",
+    "https://relay.example/v1/#",
+  ]) {
+    assert.equal(
+      configKind(() => resolveLlmEndpoint({ site: "relay", baseUrl })),
+      "query_or_fragment_in_base_url",
+    );
+  }
+});

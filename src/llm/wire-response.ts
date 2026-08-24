@@ -167,7 +167,14 @@ function parseResponses(body: unknown): WireResponse {
       continue;
     }
 
-    if (!KNOWN_NON_MESSAGE_OUTPUT_TYPES.has(type)) {
+    if (UNSUPPORTED_TOOL_OUTPUT_TYPES.has(type)) {
+      throw new WireResponseError(
+        "invalid_tool_call",
+        `model response contained an invalid tool call: unsupported Responses output type ${type}`,
+        `unsupported Responses output type ${type}`,
+      );
+    }
+    if (!KNOWN_IGNORED_OUTPUT_TYPES.has(type)) {
       throw invalidResponse(`unknown Responses output type: ${type}`);
     }
   }
@@ -183,8 +190,9 @@ function parseResponses(body: unknown): WireResponse {
   );
 }
 
-const KNOWN_NON_MESSAGE_OUTPUT_TYPES = new Set([
-  "reasoning",
+const KNOWN_IGNORED_OUTPUT_TYPES = new Set(["reasoning"]);
+
+const UNSUPPORTED_TOOL_OUTPUT_TYPES = new Set([
   "file_search_call",
   "web_search_call",
   "computer_call",
@@ -286,9 +294,18 @@ function parseChatCompletions(body: unknown): WireResponse {
     };
   }
 
+  if (finishReason === "tool_calls") {
+    throw new WireResponseError(
+      "invalid_tool_call",
+      "model response contained an invalid tool call: finish_reason was tool_calls but no valid tool call was present",
+      "finish_reason was tool_calls but no valid tool call was present",
+    );
+  }
+
   if (
-    message["function_call"] !== undefined &&
-    message["function_call"] !== null
+    finishReason === "function_call" ||
+    (message["function_call"] !== undefined &&
+      message["function_call"] !== null)
   ) {
     throw new WireResponseError(
       "invalid_tool_call",

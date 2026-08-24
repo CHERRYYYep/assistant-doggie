@@ -1,7 +1,7 @@
 /** Transport-independent strict structured-output calls with bounded retries. */
 
 import type { LlmEndpointConfig } from "./config.ts";
-import { LlmApiMode } from "./config.ts";
+import { LlmApiMode, resolveLlmEndpoint } from "./config.ts";
 import type { StructuredOutputContract } from "./contracts.ts";
 import type { LlmHttpRequest, StructuredOutputTransport } from "./transport.ts";
 import { LlmTransportError } from "./transport.ts";
@@ -99,15 +99,30 @@ export class LlmError extends Error {
 }
 
 export class StructuredOutputAdapter {
-  readonly endpoint: LlmEndpointConfig;
-  readonly transport: StructuredOutputTransport;
+  readonly #endpoint: LlmEndpointConfig;
+  readonly #transport: StructuredOutputTransport;
 
   constructor(
     endpoint: LlmEndpointConfig,
     transport: StructuredOutputTransport,
   ) {
-    this.endpoint = endpoint;
-    this.transport = transport;
+    // Re-resolve even a structurally forged or later-mutated object. TypeScript
+    // `readonly` is not a runtime security boundary, while this adapter will
+    // eventually hand a bearer token to its transport.
+    this.#endpoint = resolveLlmEndpoint({
+      site: endpoint.site,
+      baseUrl: endpoint.baseUrl,
+      apiMode: endpoint.apiMode,
+    });
+    this.#transport = transport;
+  }
+
+  get endpoint(): LlmEndpointConfig {
+    return this.#endpoint;
+  }
+
+  get transport(): StructuredOutputTransport {
+    return this.#transport;
   }
 
   /** Parse one strict contract with bounded retries and no model fallback. */
@@ -145,7 +160,7 @@ export class StructuredOutputAdapter {
     }
 
     const request = requestForContract(
-      this.endpoint,
+      this.#endpoint,
       contract,
       cleanedModel,
       systemPrompt,
@@ -155,9 +170,9 @@ export class StructuredOutputAdapter {
     for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex += 1) {
       const attempt = attemptIndex + 1;
       try {
-        const response = await this.transport.send(request);
+        const response = await this.#transport.send(request);
         return parseStructuredResponse(
-          this.endpoint.apiMode,
+          this.#endpoint.apiMode,
           contract,
           response.body,
         );

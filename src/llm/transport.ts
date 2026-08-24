@@ -3,6 +3,7 @@
 import { inspect } from "node:util";
 
 export const DEFAULT_LLM_HTTP_TIMEOUT_MS = 30_000;
+export const MAX_LLM_HTTP_TIMEOUT_MS = 2_147_483_647;
 
 export type LlmHttpRequest = {
   readonly url: string;
@@ -76,7 +77,7 @@ export class LlmTransportConfigurationError extends Error {
  * omitted from inspection, and never copied into an error message.
  */
 export class FetchStructuredOutputTransport implements StructuredOutputTransport {
-  readonly timeoutMs: number;
+  readonly #timeoutMs: number;
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
 
@@ -94,16 +95,24 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
     }
 
     const timeoutMs = config.timeoutMs ?? DEFAULT_LLM_HTTP_TIMEOUT_MS;
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    if (
+      !Number.isSafeInteger(timeoutMs) ||
+      timeoutMs <= 0 ||
+      timeoutMs > MAX_LLM_HTTP_TIMEOUT_MS
+    ) {
       throw new LlmTransportConfigurationError(
         "invalid_timeout",
-        "LLM HTTP timeout must be greater than zero",
+        `LLM HTTP timeout must be an integer between 1 and ${MAX_LLM_HTTP_TIMEOUT_MS} milliseconds`,
       );
     }
 
     this.#apiKey = cleanedApiKey;
     this.#fetch = fetchImplementation;
-    this.timeoutMs = timeoutMs;
+    this.#timeoutMs = timeoutMs;
+  }
+
+  get timeoutMs(): number {
+    return this.#timeoutMs;
   }
 
   static fromEnv(
@@ -119,12 +128,12 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
   }
 
   [inspect.custom](): string {
-    return `FetchStructuredOutputTransport { apiKey: '<redacted>', timeoutMs: ${this.timeoutMs} }`;
+    return `FetchStructuredOutputTransport { apiKey: '<redacted>', timeoutMs: ${this.#timeoutMs} }`;
   }
 
   async send(request: LlmHttpRequest): Promise<LlmHttpResponse> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     timeout.unref();
 
     try {

@@ -152,3 +152,40 @@ test("extraction requires summary and valid timeline text", () => {
     "滚动摘要",
   );
 });
+
+test("runtime contract defaults preserve Rust nullable-list compatibility", () => {
+  const classification = classificationContract.parse({
+    action: "create_new",
+    bucket_type: "task",
+    title: "Rust 重构",
+    confidence: 0.9,
+    reason: "新任务。",
+    candidate_bucket_ids: null,
+  });
+  assert.deepEqual(classification.candidateBucketIds, []);
+
+  const nullableLists = [
+    "todos",
+    "evidences",
+    "decisions",
+    "hypotheses",
+    "entities",
+    "tags",
+  ] as const;
+  for (const field of nullableLists) {
+    const parsed = extractionContract.parse({ summary: "摘要", [field]: null });
+    const projected = {
+      todos: parsed.todos,
+      evidences: parsed.evidences,
+      decisions: parsed.decisions,
+      hypotheses: parsed.hypotheses,
+      entities: parsed.entities,
+      tags: parsed.tags,
+    };
+    assert.deepEqual(projected[field], [], field);
+  }
+
+  assert.throws(() =>
+    extractionContract.parse({ summary: "摘要", timeline_events: null }),
+  );
+});

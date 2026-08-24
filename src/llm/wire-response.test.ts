@@ -261,3 +261,38 @@ test("Chat Completions preserves modern calls and rejects legacy function_call",
     "invalid_tool_call",
   );
 });
+
+test("wire parsing never accepts text while tool-call state is unresolved", () => {
+  assert.equal(
+    errorKind(() =>
+      parseWireResponse(LlmApiMode.Responses, {
+        status: "completed",
+        output: [
+          { type: "custom_tool_call", name: "do_it", input: "{}" },
+          responseMessage('{"summary":"must not win"}', "final_answer"),
+        ],
+      }),
+    ),
+    "invalid_tool_call",
+  );
+
+  for (const finish_reason of ["tool_calls", "function_call"]) {
+    assert.equal(
+      errorKind(() =>
+        parseWireResponse(LlmApiMode.ChatCompletions, {
+          choices: [
+            {
+              finish_reason,
+              message: {
+                role: "assistant",
+                content: '{"summary":"must not win"}',
+                ...(finish_reason === "tool_calls" ? { tool_calls: [] } : {}),
+              },
+            },
+          ],
+        }),
+      ),
+      "invalid_tool_call",
+    );
+  }
+});

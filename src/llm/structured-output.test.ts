@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { LlmApiMode, resolveLlmEndpoint } from "./config.ts";
+import {
+  LlmApiMode,
+  LlmConfigurationError,
+  type LlmEndpointConfig,
+  resolveLlmEndpoint,
+} from "./config.ts";
 import { bucketSummaryContract } from "./contracts.ts";
 import { LlmError, StructuredOutputAdapter } from "./structured-output.ts";
 import type {
@@ -404,4 +409,113 @@ test("attempt exhaustion reports the exact count and sanitized last failure", as
   assert.doesNotMatch(error.message, new RegExp(secretPrompt));
   assert.doesNotMatch(error.lastError?.message ?? "", new RegExp(secretPrompt));
   assert.equal(transport.requests.length, 2);
+});
+
+test("adapter revalidates structurally forged endpoint configuration", () => {
+  const forged = {
+    site: "relay",
+    baseUrl: "http://attacker.example/v1",
+    apiMode: LlmApiMode.Responses,
+    isOfficial: false,
+    requestUrl: "http://attacker.example/v1/responses",
+  } as LlmEndpointConfig;
+
+  assert.throws(
+    () => new StructuredOutputAdapter(forged, new FakeTransport()),
+    (error: unknown) =>
+      error instanceof LlmConfigurationError &&
+      error.kind === "insecure_remote_base_url",
+  );
+
+  const safeBaseWithForgedRequest = {
+    site: "relay",
+    baseUrl: "https://relay.example/v1",
+    apiMode: LlmApiMode.Responses,
+    isOfficial: false,
+    requestUrl: "http://attacker.example/steal",
+  } as LlmEndpointConfig;
+  const safeTransport = new FakeTransport();
+  const adapter = new StructuredOutputAdapter(
+    safeBaseWithForgedRequest,
+    safeTransport,
+  );
+  assert.equal(
+    adapter.endpoint.requestUrl,
+    "https://relay.example/v1/responses",
+  );
+  assert.equal(Object.isFrozen(adapter.endpoint), true);
+  assert.equal(
+    Reflect.set(adapter, "endpoint", {
+      ...safeBaseWithForgedRequest,
+      baseUrl: "http://attacker.example/v1",
+      requestUrl: "http://attacker.example/steal",
+    }),
+    false,
+  );
+  assert.equal(
+    adapter.endpoint.requestUrl,
+    "https://relay.example/v1/responses",
+  );
+  assert.equal(Reflect.set(adapter, "transport", new FakeTransport()), false);
+  assert.equal(adapter.transport, safeTransport);
+});
+
+test("unsupported or malformed tool-call states are non-retryable structured failures", async () => {
+  const scenarios: ReadonlyArray<{
+    endpoint: LlmEndpointConfig;
+    response: LlmHttpResponse;
+  }> = [
+    {
+      endpoint: resolveLlmEndpoint({}),
+      response: {
+        body: {
+          status: "completed",
+          output: [
+            { type: "custom_tool_call", name: "do_it", input: "{}" },
+            {
+              type: "message",
+              phase: "final_answer",
+              content: [
+                {
+                  type: "output_text",
+                  text: '{"summary":"must not win"}',
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    ...["tool_calls", "function_call"].map((finishReason) => ({
+      endpoint: resolveLlmEndpoint({
+        site: "relay",
+        baseUrl: "https://relay.example/v1",
+        apiMode: "chat",
+      }),
+      response: {
+        body: {
+          choices: [
+            {
+              finish_reason: finishReason,
+              message: {
+                role: "assistant",
+                content: '{"summary":"must not win"}',
+                ...(finishReason === "tool_calls" ? { tool_calls: [] } : {}),
+              },
+            },
+          ],
+        },
+      },
+    })),
+  ];
+
+  for (const scenario of scenarios) {
+    const transport = new FakeTransport([scenario.response]);
+    const adapter = new StructuredOutputAdapter(scenario.endpoint, transport);
+    await expectAttemptError(
+      adapter.parse(bucketSummaryContract, "model", "system", "user", 3),
+      { attempts: 1, kind: "invalid_tool_call", retryable: false },
+    );
+    assert.equal(transport.requests.length, 1);
+  }
 });
