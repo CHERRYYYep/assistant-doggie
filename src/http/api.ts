@@ -16,6 +16,7 @@ import {
 import { MemoryQueryService } from "../application/query.ts";
 import { BucketStatusService } from "../application/status.ts";
 import type { JsonValue } from "../storage/store.ts";
+import { BucketStatus } from "../domain/types.ts";
 import { StorageError } from "../storage/database.ts";
 import type { ChatMessageRow, Store } from "../storage/store.ts";
 import type { DoggieHttpApi } from "./app.ts";
@@ -134,7 +135,8 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
         hasStart && hasEnd
           ? createTimeRange(request.start_at!, request.end_at!, "explicit")
           : base.timeRange,
-      statuses: request.statuses.length === 0 ? base.statuses : request.statuses,
+      statuses:
+        request.statuses.length === 0 ? base.statuses : request.statuses,
       structuredFilters: request.filters.map((filter) =>
         createStructuredFieldFilter(filter.field, filter.value),
       ),
@@ -254,9 +256,8 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
   }
 
   async confirmChat(request: ChatConfirmationRequest) {
-    const execution = await this.#runtime.confirm(toRuntimeConfirmation(request));
-    const archive = this.#projectConfirmation(execution, request.attempt_id);
-    const confirmationText = confirmationUserText(request, archive);
+    const confirmationText = confirmationUserText(request);
+    this.#validateConfirmationBoundary(request);
     const userMessage = this.#store.appendChatMessage({
       role: "user",
       content: confirmationText,
@@ -268,10 +269,18 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
         source_attempt_id: request.attempt_id,
       },
     });
+
+    let execution: ConfirmationExecution;
+    try {
+      execution = await this.#runtime.confirm(toRuntimeConfirmation(request));
+    } catch (error) {
+      this.#throwConfirmationFailure(request, userMessage, error);
+    }
+    const archive = this.#projectConfirmation(execution!, request.attempt_id);
     const resultAttemptId =
-      execution.result.archiveState === "discarded"
+      execution!.result.archiveState === "discarded"
         ? null
-        : execution.result.attemptId;
+        : execution!.result.attemptId;
     const assistantMessage = this.#store.appendChatMessage({
       role: "assistant",
       content: confirmationAssistantText(request.action, archive),
@@ -354,6 +363,63 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
+  #validateConfirmationBoundary(request: ChatConfirmationRequest): void {
+    const attempt = this.#store.getArchiveAttempt(request.attempt_id);
+    if (attempt === undefined) {
+      throw StorageError.archiveAttemptNotFound(request.attempt_id);
+    }
+    if (attempt.rawText !== request.text) {
+      throw StorageError.archiveAttemptTextMismatch(request.attempt_id);
+    }
+    if (
+      attempt.archiveState !== "needs_confirmation" ||
+      attempt.resolvedAt !== null ||
+      attempt.corrected
+    ) {
+      throw StorageError.archiveAttemptNotPending(request.attempt_id);
+    }
+    if (request.action === "append") {
+      const bucket = this.#store.getBucket(request.bucket_id);
+      if (bucket === undefined) {
+        throw StorageError.missingRecord("buckets", request.bucket_id);
+      }
+      if (bucket.lifecycle !== BucketStatus.Active) {
+        throw StorageError.inactiveBucket(request.bucket_id);
+      }
+    }
+  }
+
+  #throwConfirmationFailure(
+    request: ChatConfirmationRequest,
+    userMessage: ChatMessageRow,
+    error: unknown,
+  ): never {
+    const normalized = normalizeHttpError(error);
+    const assistantText = `我暂时无法完成这次确认：${normalized.message}`;
+    let assistantMessage: ChatMessageRow | undefined;
+    try {
+      assistantMessage = this.#store.appendChatMessage({
+        role: "assistant",
+        content: assistantText,
+        details: {
+          kind: "chat_error",
+          confirmation_action: request.action,
+          source_text: request.text,
+          attempt_id: request.attempt_id,
+          error: normalized.message,
+        },
+      });
+    } catch {
+      // Keep the accepted confirmation user message as the hard invariant.
+    }
+    throw new HttpBoundaryError(500, normalized.message, {
+      user_message: projectChatMessage(userMessage),
+      ...(assistantMessage === undefined
+        ? {}
+        : { assistant_message: projectChatMessage(assistantMessage) }),
+    });
+  }
+
   #projectExecution(execution: ArchiveExecution) {
     const memoryItemIds =
       execution.result.bucketId === undefined ||
@@ -430,8 +496,10 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       const detail = this.#store.getBucketDetail(attempt.bucketId);
       if (detail !== undefined) {
         archive["bucket"] = projectBucket(detail.bucket);
+        archive["available_actions"] = ["move_entry"];
+      } else {
+        delete archive["available_actions"];
       }
-      archive["available_actions"] = ["move_entry"];
     } else {
       delete archive["available_actions"];
       delete archive["confirmation_options"];
@@ -480,6 +548,9 @@ function toRuntimeConfirmation(request: ChatConfirmationRequest) {
         attemptId: request.attempt_id,
         rawText: request.text,
         targetBucketId: request.bucket_id,
+        ...(request.focus_bucket_id === undefined
+          ? {}
+          : { focusBucketId: request.focus_bucket_id }),
       };
     case "create":
       return {
@@ -488,6 +559,9 @@ function toRuntimeConfirmation(request: ChatConfirmationRequest) {
         rawText: request.text,
         title: request.title,
         bucketType: request.bucket_type,
+        ...(request.focus_bucket_id === undefined
+          ? {}
+          : { focusBucketId: request.focus_bucket_id }),
       };
     case "discard":
       return {
@@ -524,7 +598,9 @@ function decorateChatArchive<T extends Readonly<Record<string, unknown>>>(
   return archive;
 }
 
-function archiveAssistantText(archive: Readonly<Record<string, unknown>>): string {
+function archiveAssistantText(
+  archive: Readonly<Record<string, unknown>>,
+): string {
   switch (archive["archive_state"]) {
     case "archived": {
       const bucket = cloneRecord(archive["bucket"]);
@@ -569,15 +645,10 @@ function archiveAssistantText(archive: Readonly<Record<string, unknown>>): strin
   }
 }
 
-function confirmationUserText(
-  request: ChatConfirmationRequest,
-  archive: Readonly<Record<string, unknown>>,
-): string {
+function confirmationUserText(request: ChatConfirmationRequest): string {
   switch (request.action) {
-    case "append": {
-      const bucket = cloneRecord(archive["bucket"]);
-      return `确认保存到「${stringValue(bucket?.["title"]) ?? request.bucket_id}」`;
-    }
+    case "append":
+      return `确认保存到 Bucket ${request.bucket_id}`;
     case "create":
       return `确认创建新 Bucket「${request.title}」`;
     case "discard":

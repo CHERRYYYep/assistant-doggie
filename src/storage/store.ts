@@ -1125,11 +1125,13 @@ export class Store {
     for (const bucket of this.listBuckets()) {
       const detail = this.getBucketDetail(bucket.id);
       if (detail === undefined) continue;
-      const bucketText = `${bucket.title} ${bucket.summary} ${bucket.tags.join(" ")}`.toLowerCase();
+      const bucketText =
+        `${bucket.title} ${bucket.summary} ${bucket.tags.join(" ")}`.toLowerCase();
       let score = tokenScore(needle, bucketText);
       let matchedEntryCount = 0;
       for (const entry of detail.entries) {
-        const entryText = `${entry.rawText} ${entry.summary ?? ""}`.toLowerCase();
+        const entryText =
+          `${entry.rawText} ${entry.summary ?? ""}`.toLowerCase();
         const entryScore = tokenScore(needle, entryText);
         if (entryScore > 0) {
           matchedEntryCount += 1;
@@ -1141,8 +1143,11 @@ export class Store {
     hits.sort(
       (left, right) =>
         right.score - left.score ||
-        right.bucket.lastActiveAt.localeCompare(left.bucket.lastActiveAt) ||
-        left.bucket.id.localeCompare(right.bucket.id),
+        compareStableStrings(
+          right.bucket.lastActiveAt,
+          left.bucket.lastActiveAt,
+        ) ||
+        compareStableStrings(left.bucket.id, right.bucket.id),
     );
     hits.splice(limit);
     return hits;
@@ -1409,6 +1414,10 @@ type ArchiveAttemptColumns = {
   created_at: string;
   resolved_at: string | null;
 };
+
+function compareStableStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
 
 function tokenScore(needle: string, haystack: string): number {
   let score = haystack.includes(needle) ? 3 : 0;

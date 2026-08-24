@@ -42,7 +42,9 @@ class FakeModel implements MemoryModel {
   extractionError: Error | undefined;
 
   async classify(text: string, candidates: readonly { id: string }[]) {
-    this.calls.push(`classify:${text}:${candidates.map(({ id }) => id).join(",")}`);
+    this.calls.push(
+      `classify:${text}:${candidates.map(({ id }) => id).join(",")}`,
+    );
     if (this.classificationError !== undefined) {
       throw this.classificationError;
     }
@@ -104,7 +106,10 @@ test("concrete API archives a complete graph and projects query-compatible JSON"
   assert.equal(archive.archive_state, "archived");
   assert.equal(archive.bucket?.title, "支付故障");
   assert.equal(archive.memory_item_ids.length, 1);
-  assert.equal(store.getEntry(archive.entry_id!)?.rawText, "支付错误率升到 12%");
+  assert.equal(
+    store.getEntry(archive.entry_id!)?.rawText,
+    "支付错误率升到 12%",
+  );
 
   const getQuery = api.memoryQuery("支付", 20);
   const postQuery = api.memoryQueryJson({
@@ -121,6 +126,7 @@ test("concrete API archives a complete graph and projects query-compatible JSON"
 test("chat confirmation card exposes all choices and hydrated history becomes non-actionable", async () => {
   const { store, model, api } = setup();
   const target = await createBucket(api, model, "接口 A");
+  const focus = await createBucket(api, model, "当前工作区");
   model.classification = askUser(
     BucketType.Task,
     undefined,
@@ -140,7 +146,9 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
   ]);
   assert.equal(chat.archive.recommended_bucket?.id, target.bucketId);
   assert.equal(
-    (chat.archive["candidate_buckets"] as readonly Record<string, unknown>[])[0]?.["id"],
+    (
+      chat.archive["candidate_buckets"] as readonly Record<string, unknown>[]
+    )[0]?.["id"],
     target.bucketId,
   );
   assert.equal(store.getBucketDetail(target.bucketId)?.entries.length, 1);
@@ -165,11 +173,20 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
     attempt_id: chat.archive.attempt_id,
     text: "接口 A 更新了",
     bucket_id: target.bucketId,
+    focus_bucket_id: focus.bucketId,
   });
   assert.equal(confirmed.archive_state, "archived");
   assert.equal(confirmed.source_attempt_id, chat.archive.attempt_id);
   assert.equal(confirmed.result_attempt_id, confirmed.archive["attempt_id"]);
   assert.notEqual(confirmed.result_attempt_id, confirmed.source_attempt_id);
+  assert.equal(
+    store.getArchiveAttempt(confirmed.result_attempt_id!)?.focusBucketId,
+    focus.bucketId,
+  );
+  assert.equal(
+    confirmed.user_message.content,
+    `确认保存到 Bucket ${target.bucketId}`,
+  );
 
   const history = api.chatHistory(40);
   const originalCard = history.messages.find(
@@ -200,7 +217,8 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
 });
 
 test("create and discard confirmations have explicit result attempt semantics", async () => {
-  const { model, api } = setup();
+  const { store, model, api } = setup();
+  const focus = await createBucket(api, model, "实验工作区");
   model.classification = askUser(
     BucketType.Experiment,
     "新实验",
@@ -216,10 +234,18 @@ test("create and discard confirmations have explicit result attempt semantics", 
     text: "实验数据有更新",
     title: "新实验",
     bucket_type: BucketType.Experiment,
+    focus_bucket_id: focus.bucketId,
   });
   assert.equal(created.archive_state, "archived");
-  assert.equal((created.archive["bucket"] as Record<string, unknown>)["title"], "新实验");
+  assert.equal(
+    (created.archive["bucket"] as Record<string, unknown>)["title"],
+    "新实验",
+  );
   assert.equal(created.result_attempt_id, created.archive["attempt_id"]);
+  assert.equal(
+    store.getArchiveAttempt(created.result_attempt_id!)?.focusBucketId,
+    focus.bucketId,
+  );
 
   model.classification = askUser(
     undefined,
@@ -242,7 +268,8 @@ test("create and discard confirmations have explicit result attempt semantics", 
 
   const history = api.chatHistory(40);
   const discardedCard = history.messages.find((message) => {
-    if (typeof message.details !== "object" || message.details === null) return false;
+    if (typeof message.details !== "object" || message.details === null)
+      return false;
     const archive = (message.details as Record<string, unknown>)["archive"];
     return (
       typeof archive === "object" &&
@@ -301,6 +328,54 @@ test("classification and extraction failures preserve accepted chat messages", a
     };
     assert.equal(history.messages.length, 2);
   }
+});
+
+test("confirmation execution failures preserve the accepted confirmation messages", async () => {
+  const { store, model, api, app } = setup();
+  const target = await createBucket(api, model, "确认失败目标");
+  model.classification = askUser(
+    BucketType.Task,
+    undefined,
+    0.5,
+    "需要确认",
+    "保存到哪里？",
+    [target.bucketId],
+  );
+  const pending = await api.chat({ message: "确认失败输入" });
+  model.extractionError = LlmError.response(
+    "invalid_response",
+    "confirmation extraction failed safely",
+    false,
+  );
+
+  const response = await app.request("/api/chat/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      confirmation_granted: true,
+      action: "append",
+      attempt_id: pending.archive.attempt_id,
+      text: "确认失败输入",
+      bucket_id: target.bucketId,
+    }),
+  });
+  assert.equal(response.status, 500);
+  const body = (await response.json()) as Record<string, unknown>;
+  assert.equal(
+    (body["user_message"] as Record<string, unknown>)["content"],
+    `确认保存到 Bucket ${target.bucketId}`,
+  );
+  assert.match(
+    String((body["assistant_message"] as Record<string, unknown>)["content"]),
+    /暂时无法完成这次确认/u,
+  );
+  assert.equal(
+    store.getArchiveAttempt(pending.archive.attempt_id)?.archiveState,
+    "needs_confirmation",
+  );
+  const history = api.chatHistory(40);
+  assert.equal(history.messages.at(-2)?.role, "user");
+  assert.equal(history.messages.at(-1)?.role, "assistant");
 });
 
 test("chat tool messages round-trip through persistence and history", async () => {

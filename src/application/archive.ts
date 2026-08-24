@@ -47,6 +47,7 @@ export type ConfirmationRequest =
       readonly attemptId: string;
       readonly rawText: string;
       readonly targetBucketId: string;
+      readonly focusBucketId?: string;
       readonly extraction: ExtractionResult;
       readonly confidence?: number;
       readonly reason?: string;
@@ -58,6 +59,7 @@ export type ConfirmationRequest =
       readonly rawText: string;
       readonly title: string;
       readonly bucketType: BucketType;
+      readonly focusBucketId?: string;
       readonly extraction: ExtractionResult;
       readonly confidence?: number;
       readonly reason?: string;
@@ -172,7 +174,7 @@ export class ArchiveService {
         {
           ...auditBase,
           candidateBucketIds: [targetBucketId],
-          focusBucketId: targetBucketId,
+          focusBucketId: request.focusBucketId ?? targetBucketId,
         },
       );
     }
@@ -187,7 +189,11 @@ export class ArchiveService {
           request.reason ?? "用户明确确认创建新 Bucket。",
         ),
         request.extraction,
-        { ...auditBase, candidateBucketIds: [] },
+        {
+          ...auditBase,
+          candidateBucketIds: [],
+          focusBucketId: request.focusBucketId,
+        },
       );
     }
 

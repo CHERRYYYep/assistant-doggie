@@ -114,6 +114,7 @@ export type RuntimeConfirmationRequest =
       readonly attemptId: string;
       readonly rawText: string;
       readonly targetBucketId: string;
+      readonly focusBucketId?: string;
     }
   | {
       readonly action: "create";
@@ -121,6 +122,7 @@ export type RuntimeConfirmationRequest =
       readonly rawText: string;
       readonly title: string;
       readonly bucketType: BucketType;
+      readonly focusBucketId?: string;
     }
   | {
       readonly action: "discard";
@@ -232,29 +234,37 @@ export class ArchiveRuntime {
         ? this.#requireActiveBucket(request.targetBucketId)
         : undefined;
     const extraction = await this.#model.extract(request.rawText);
-    const result =
-      request.action === "append"
-        ? this.#service.confirm({
-            action: "append",
-            attemptId: attempt.id,
-            rawText: request.rawText,
-            targetBucketId: targetBucket!.id,
-            extraction,
-            confidence: attempt.confidence,
-            reason: attempt.reason,
-            modelName: attempt.modelName,
-          })
-        : this.#service.confirm({
-            action: "create",
-            attemptId: attempt.id,
-            rawText: request.rawText,
-            title: request.title,
-            bucketType: request.bucketType,
-            extraction,
-            confidence: attempt.confidence,
-            reason: attempt.reason,
-            modelName: attempt.modelName,
-          });
+    let result: ArchiveResult;
+    if (request.action === "append") {
+      result = this.#service.confirm({
+        action: "append",
+        attemptId: attempt.id,
+        rawText: request.rawText,
+        targetBucketId: targetBucket!.id,
+        ...(request.focusBucketId === undefined
+          ? {}
+          : { focusBucketId: request.focusBucketId }),
+        extraction,
+        confidence: attempt.confidence,
+        reason: attempt.reason,
+        modelName: attempt.modelName,
+      });
+    } else {
+      result = this.#service.confirm({
+        action: "create",
+        attemptId: attempt.id,
+        rawText: request.rawText,
+        title: request.title,
+        bucketType: request.bucketType,
+        ...(request.focusBucketId === undefined
+          ? {}
+          : { focusBucketId: request.focusBucketId }),
+        extraction,
+        confidence: attempt.confidence,
+        reason: attempt.reason,
+        modelName: attempt.modelName,
+      });
+    }
     return {
       result,
       candidates,
