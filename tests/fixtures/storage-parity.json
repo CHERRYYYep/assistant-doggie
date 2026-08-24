@@ -1,0 +1,219 @@
+{
+  "buckets": [
+    {
+      "name": "bucket:接口 A 压测",
+      "title": "接口 A 压测",
+      "kind": "experiment",
+      "lifecycle": "active",
+      "summary": "p99 从 320ms 升到 620ms\np99 回到 340ms\n误建摘要",
+      "tags": ["Payments", "Rust"]
+    }
+  ],
+  "entries": [
+    {
+      "name": "entry:复测后 p99 回到 340ms",
+      "bucket": "bucket:接口 A 压测",
+      "rawText": "复测后 p99 回到 340ms",
+      "summary": "p99 回到 340ms",
+      "contentType": "note",
+      "confidence": 0.95,
+      "reason": "同一实验。",
+      "movedFromBucket": null,
+      "archiveState": "archived"
+    },
+    {
+      "name": "entry:接口 A 压测 p99 620ms",
+      "bucket": "bucket:接口 A 压测",
+      "rawText": "接口 A 压测 p99 620ms",
+      "summary": "p99 从 320ms 升到 620ms",
+      "contentType": "note",
+      "confidence": 0.99,
+      "reason": "新实验。",
+      "movedFromBucket": null,
+      "archiveState": "archived"
+    },
+    {
+      "name": "entry:这条应该进接口 A 压测",
+      "bucket": "bucket:接口 A 压测",
+      "rawText": "这条应该进接口 A 压测",
+      "summary": "误建摘要",
+      "contentType": "note",
+      "confidence": 0.99,
+      "reason": "误判。",
+      "movedFromBucket": "deleted-bucket:1",
+      "archiveState": "archived"
+    }
+  ],
+  "memories": [
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:复测后 p99 回到 340ms",
+      "kind": "tag",
+      "text": "Rust",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "decision",
+      "text": "先回滚",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "entity",
+      "text": "接口 A",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "evidence",
+      "text": "压测报告 #12",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": "llm",
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "hypothesis",
+      "text": "连接池退化",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "tag",
+      "text": "Payments",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "timeline",
+      "text": "回归出现",
+      "status": null,
+      "dueAt": null,
+      "occurredAt": "2026-08-20",
+      "source": null,
+      "reason": null
+    },
+    {
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "kind": "todo",
+      "text": "定位回归 commit",
+      "status": "open",
+      "dueAt": null,
+      "occurredAt": null,
+      "source": null,
+      "reason": null
+    }
+  ],
+  "archiveAttempts": [
+    {
+      "rawText": "复测后 p99 回到 340ms",
+      "action": "append_existing",
+      "archiveState": "archived",
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:复测后 p99 回到 340ms",
+      "confidence": 0.95,
+      "reason": "同一实验。",
+      "question": null,
+      "candidateBuckets": ["bucket:接口 A 压测"],
+      "focusBucket": null,
+      "promptVersion": "doggie-v1",
+      "modelName": "test-model",
+      "corrected": false,
+      "resolved": true
+    },
+    {
+      "rawText": "它现在正常了",
+      "action": "ask_user",
+      "archiveState": "needs_confirmation",
+      "bucket": null,
+      "entry": null,
+      "confidence": 0.4,
+      "reason": "信息不足。",
+      "question": "请选择归档目标。",
+      "candidateBuckets": [],
+      "focusBucket": null,
+      "promptVersion": "doggie-v1",
+      "modelName": "test-model",
+      "corrected": false,
+      "resolved": false
+    },
+    {
+      "rawText": "接口 A 压测 p99 620ms",
+      "action": "create_new",
+      "archiveState": "archived",
+      "bucket": "bucket:接口 A 压测",
+      "entry": "entry:接口 A 压测 p99 620ms",
+      "confidence": 0.99,
+      "reason": "新实验。",
+      "question": null,
+      "candidateBuckets": [],
+      "focusBucket": null,
+      "promptVersion": "doggie-v1",
+      "modelName": "test-model",
+      "corrected": false,
+      "resolved": true
+    },
+    {
+      "rawText": "这条应该进接口 A 压测",
+      "action": "create_new",
+      "archiveState": "corrected",
+      "bucket": null,
+      "entry": "entry:这条应该进接口 A 压测",
+      "confidence": 0.99,
+      "reason": "误判。",
+      "question": null,
+      "candidateBuckets": [],
+      "focusBucket": null,
+      "promptVersion": "doggie-v1",
+      "modelName": "test-model",
+      "corrected": true,
+      "resolved": true
+    }
+  ],
+  "corrections": [
+    {
+      "commandText": "移到接口 A 压测。",
+      "action": "move_entry",
+      "targetType": "entry",
+      "target": "entry:这条应该进接口 A 压测",
+      "before": {
+        "bucket_id": "deleted-bucket:1"
+      },
+      "after": {
+        "bucket_id": "bucket:接口 A 压测",
+        "reason": "user_correction"
+      }
+    }
+  ],
+  "conversationMessages": []
+}

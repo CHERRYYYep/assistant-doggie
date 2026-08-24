@@ -587,6 +587,15 @@ test("appending updates the bucket activity timestamp", () => {
   const after = store.getBucket(first.bucketId!)!.lastActiveAt;
 
   assert.ok(after > before, `${after} should be later than ${before}`);
+  const attempt = store.database
+    .prepare(
+      `SELECT candidate_bucket_ids_json FROM archive_attempts
+       WHERE action = 'append_existing'`,
+    )
+    .get() as { candidate_bucket_ids_json: string };
+  assert.deepEqual(JSON.parse(attempt.candidate_bucket_ids_json), [
+    first.bucketId,
+  ]);
 });
 
 // ── §4.13 ids / §4.15 listing ──────────────────────────────────────────────

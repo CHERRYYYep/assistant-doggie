@@ -493,6 +493,14 @@ export class Store {
       modelName: string;
     },
   ): void {
+    const candidateBucketIds = [...audit.candidateBucketIds];
+    if (
+      decision.bucketId !== undefined &&
+      !candidateBucketIds.includes(decision.bucketId)
+    ) {
+      candidateBucketIds.push(decision.bucketId);
+    }
+
     this.#database
       .prepare(
         `INSERT INTO archive_attempts
@@ -511,7 +519,7 @@ export class Store {
         decision.confidence,
         decision.reason,
         optionalField(decision.question),
-        JSON.stringify(audit.candidateBucketIds),
+        JSON.stringify(candidateBucketIds),
         optionalField(audit.focusBucketId),
         context.promptVersion,
         context.modelName,
