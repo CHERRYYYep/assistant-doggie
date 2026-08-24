@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T7 已完成
+> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T8 已完成
 
 ---
 
@@ -9,8 +9,8 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 15,483 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **165 个测试声明通过** |
-| 前端测试 | **16 个测试声明通过** |
+| TS 测试 | **166 个测试声明通过** |
+| 前端测试 | **23 个测试声明通过** |
 | Rust 参考实现 | **124 通过**（完好保留，可随时对拍） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
 | 已覆盖 | **76 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 + §6 全部 12 + §8 全部 10 条） |
@@ -167,6 +167,20 @@ T7 阶段门禁已通过：`npm run check`、`cargo fmt --all -- --check`、`car
 
 提交链：`3842bc2` → `da755f9` → `2da2e3f` → `186306b` → `5d03523` → `531bd05` → `4d1caca`。未跟踪的 PDF 文件保留，未纳入提交。
 
+**T8 — 前端接入**
+
+T8 已完成：S2/S3 前端资产已全部迁移为严格 TypeScript，并与后端 HTTP DTO 共享类型。
+
+- 10 个前端 TypeScript 模块和前端测试入口均已切换为 `.ts`，保留原生 ES module 和无第三方 bundler 的架构；
+- 前端 API client 复用 `src/http/contracts.ts` 与 `src/http/dto.ts`，Bucket、Entry、Memory、归档、确认、聊天历史、查询和状态响应不再重复声明；
+- Node 24 HTTP runtime 在响应 `/assets/*.ts` 前使用 `stripTypeScriptTypes`，Rust `build.rs` 在 Cargo 编译时使用同一原生能力，把临时剥离结果嵌入二进制；生成 JavaScript 不提交；
+- 浏览器继续请求 `/assets/*.ts` 路径，但服务端响应体已是可执行 JavaScript，并保持 `text/javascript; charset=utf-8`；
+- DOM 类型守卫、事件类型收窄、JSON-safe details、Markdown 输入边界和归档确认判别联合均已完成严格类型化。
+
+T8 阶段门禁已通过：`npm run typecheck`、`npm run test:web`（23 个通过）、`npm test`（166 个通过）、`cargo fmt --all -- --check`、`cargo check --workspace --offline`、`cargo clippy --workspace --all-targets --offline -- -D warnings`、`cargo test --workspace --offline`、`git diff --check`。Rust `doggie-local-web` UI contract 测试 9 个全部通过；真实浏览器 smoke test 在 T8 收口阶段补做。
+
+提交链：`fe66410` → `459e4e4` → `f729bc4` → `2339bd3` → `315de89`。未跟踪的 PDF 文件保留，未纳入提交。
+
 ---
 
 ## 三、待完成
@@ -189,7 +203,7 @@ M4  日常长期助手                  T14 → T17
 | **T5** ✅ | 查询 | `MemoryQuery` 解析、检索、重排、evidence 去重 | §5 全部 11 条 | T3 |
 | **T6** ✅ | LLM 适配 | 端点配置、结构化输出、重试策略 | §6 全部 12 条 | T2 |
 | **T7** ✅ | HTTP 服务 | Hono 路由 + **S1 安全边界重建** | §8 全部 10 条 | T4 T5 T6 |
-| **T8** | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
+| **T8** ✅ | 前端接入 | S2/S3 成果改 `.ts`、前后端共享 DTO 类型 | — | T7 |
 | **T8b** | **CI** | GitHub Actions 跑 `npm run check` | — | T8 |
 
 **T3 约束（按 Q3 调整）**：**不做 legacy 导入，不兼容现有 `doggie.db`**。物理 schema 自由设计，但必须保留 §4 全部 15 条事务语义，且为 T17 导出/导入预留：业务 ID 稳定、无隐藏状态、派生数据可从原文重建。WAL + `busy_timeout` 从一开始就配好（T12 后台执行器的前置）。
