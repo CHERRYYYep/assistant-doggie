@@ -770,3 +770,55 @@ test("the schema records its version", () => {
     { version: 2, name: "add_pending_archive_suggestions_v2" },
   ]);
 });
+
+// ── §5.6 / §5.11 query retrieval ──────────────────────────────────────────
+
+test("query candidates cover stored fields and escape LIKE literals", () => {
+  const store = freshStore();
+  const literal = store.archive(
+    "发布值 100%_ready/path 已确认",
+    createNew("特殊 / 路径"),
+    createExtraction({
+      summary: "字面量检索",
+      entities: ["服务 Straße"],
+      tags: ["release_100%"],
+      evidences: ["artifact/path"],
+    }),
+    AUDIT,
+  );
+  store.archive(
+    "发布值 100XXready/path 仅作干扰",
+    createNew("普通路径"),
+    minimalExtraction("不应被百分号或下划线当通配符命中"),
+    AUDIT,
+  );
+
+  const exact = store.searchEntryCandidates(["100%_ready/path"]);
+  assert.deepEqual(exact.map((candidate) => candidate.entry.id), [literal.entryId]);
+
+  const bucket = store.searchEntryCandidates(["特殊 / 路径"]);
+  assert.deepEqual(bucket.map((candidate) => candidate.entry.id), [literal.entryId]);
+
+  const tag = store.searchEntryCandidates(["release_100%"]);
+  assert.deepEqual(tag.map((candidate) => candidate.entry.id), [literal.entryId]);
+
+  const evidence = store.searchEntryCandidates(["artifact/path"]);
+  assert.deepEqual(evidence.map((candidate) => candidate.entry.id), [literal.entryId]);
+
+  const folded = store.searchEntryCandidates(["STRASSE"]);
+  assert.deepEqual(folded.map((candidate) => candidate.entry.id), [literal.entryId]);
+});
+
+test("query candidate reads do not refresh Bucket activity", () => {
+  const store = freshStore();
+  const outcome = store.archive(
+    "接口 A 压测",
+    createNew("接口 A"),
+    minimalExtraction("压测摘要"),
+    AUDIT,
+  );
+  const before = store.getBucket(outcome.bucketId!)!;
+
+  assert.equal(store.searchEntryCandidates(["压测"]).length, 1);
+  assert.deepEqual(store.getBucket(outcome.bucketId!), before);
+});

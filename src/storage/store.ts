@@ -18,7 +18,7 @@ import {
   extractionToMemoryRows,
   type ExtractionResult,
 } from "../domain/memory.ts";
-import { mergeTags, normalizedKey } from "../domain/text.ts";
+import { mergeTags, normalizedKey, unicodeCaseFold } from "../domain/text.ts";
 import {
   DEFAULT_REBUILD_ENTRY_LIMIT,
   DEFAULT_SUMMARY_LIMIT,
@@ -69,8 +69,19 @@ export type MemoryRow = {
   readonly kind: string;
   readonly text: string;
   readonly status: string | null;
+  readonly dueAt: string | null;
   readonly occurredAt: string | null;
+  readonly source: string | null;
+  readonly reason: string | null;
   readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+};
+
+export type QueryEntryCandidate = {
+  readonly bucket: BucketRow;
+  readonly entry: EntryRow;
+  readonly memories: readonly MemoryRow[];
 };
 
 export type BucketDetail = {
@@ -1060,6 +1071,92 @@ export class Store {
     return rows.map((row) => this.#toBucketRow(row));
   }
 
+  /**
+   * Return Entry-level query candidates without mutating activity timestamps.
+   *
+   * SQLite narrows ordinary literal matches, while the folded in-memory pass
+   * preserves the repository's Unicode identity rule (for example Straße /
+   * STRASSE). LIKE metacharacters and the slash escape character are always
+   * escaped before binding; user text is never interpolated into SQL.
+   */
+  searchEntryCandidates(terms: readonly string[]): QueryEntryCandidate[] {
+    const normalizedTerms = [...new Set(
+      terms.map((term) => term.trim()).filter((term) => term !== ""),
+    )];
+    const sqlMatchedIds = new Set<string>();
+
+    if (normalizedTerms.length > 0) {
+      const clauses = normalizedTerms.map(
+        () => `(
+          b.title LIKE ? ESCAPE '/' OR b.summary LIKE ? ESCAPE '/'
+          OR e.raw_text LIKE ? ESCAPE '/' OR COALESCE(e.summary, '') LIKE ? ESCAPE '/'
+          OR e.content_type LIKE ? ESCAPE '/'
+          OR EXISTS (
+            SELECT 1 FROM bucket_tags bt
+            WHERE bt.bucket_id = b.id AND bt.tag LIKE ? ESCAPE '/'
+          )
+          OR EXISTS (
+            SELECT 1 FROM memory_items mi
+            WHERE mi.entry_id = e.id AND (
+              mi.text LIKE ? ESCAPE '/' OR mi.kind LIKE ? ESCAPE '/'
+              OR COALESCE(mi.status, '') LIKE ? ESCAPE '/'
+              OR COALESCE(mi.source, '') LIKE ? ESCAPE '/'
+              OR mi.metadata_json LIKE ? ESCAPE '/'
+            )
+          )
+        )`,
+      );
+      const parameters = normalizedTerms.flatMap((term) => {
+        const pattern = `%${escapeLikeLiteral(term)}%`;
+        return Array.from({ length: 11 }, () => pattern);
+      });
+      const rows = this.#database
+        .prepare(
+          `SELECT e.id
+           FROM entries e JOIN buckets b ON b.id = e.bucket_id
+           WHERE ${clauses.join(" OR ")}
+           ORDER BY e.created_at ASC, e.id ASC`,
+        )
+        .all(...parameters) as { id: string }[];
+      for (const row of rows) sqlMatchedIds.add(row.id);
+    }
+
+    const foldedTerms = normalizedTerms.map(unicodeCaseFold);
+    const candidates: QueryEntryCandidate[] = [];
+    for (const bucket of this.listBuckets()) {
+      const detail = this.getBucketDetail(bucket.id);
+      if (detail === undefined) continue;
+      for (const entry of detail.entries) {
+        const memories = detail.memories.filter(
+          (memory) => memory.entryId === entry.id,
+        );
+        const corpus = unicodeCaseFold([
+          bucket.title,
+          bucket.summary,
+          ...bucket.tags,
+          entry.rawText,
+          entry.summary ?? "",
+          entry.contentType,
+          ...memories.flatMap((memory) => [
+            memory.kind,
+            memory.text,
+            memory.status ?? "",
+            memory.source ?? "",
+            JSON.stringify(memory.metadata),
+          ]),
+        ].join(" "));
+        if (
+          foldedTerms.length === 0 ||
+          sqlMatchedIds.has(entry.id) ||
+          foldedTerms.some((term) => corpus.includes(term))
+        ) {
+          candidates.push({ bucket, entry, memories });
+        }
+      }
+    }
+    return candidates;
+  }
+
   getBucketDetail(bucketId: string): BucketDetail | undefined {
     const bucket = this.getBucket(bucketId);
     if (bucket === undefined) return undefined;
@@ -1074,7 +1171,8 @@ export class Store {
 
     const memories = this.#database
       .prepare(
-        `SELECT id, bucket_id, entry_id, kind, text, status, occurred_at, created_at
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, occurred_at,
+                source, reason, created_at, updated_at, metadata_json
          FROM memory_items WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
       )
       .all(bucketId) as MemoryColumns[];
@@ -1089,8 +1187,13 @@ export class Store {
         kind: row.kind,
         text: row.text,
         status: row.status,
+        dueAt: row.due_at,
         occurredAt: row.occurred_at,
+        source: row.source,
+        reason: row.reason,
         createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        metadata: parseMetadata(row.metadata_json),
       })),
     };
   }
@@ -1148,9 +1251,25 @@ type MemoryColumns = {
   kind: string;
   text: string;
   status: string | null;
+  due_at: string | null;
   occurred_at: string | null;
+  source: string | null;
+  reason: string | null;
   created_at: string;
+  updated_at: string;
+  metadata_json: string;
 };
+
+function escapeLikeLiteral(value: string): string {
+  return value.replaceAll("/", "//").replaceAll("%", "/%").replaceAll("_", "/_");
+}
+
+function parseMetadata(value: string): Readonly<Record<string, unknown>> {
+  const parsed: unknown = JSON.parse(value);
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : {};
+}
 
 function toEntryRow(row: EntryColumns): EntryRow {
   return {
