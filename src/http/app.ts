@@ -95,7 +95,7 @@ const confirmedCreateRequestSchema = z
   })
   .strict();
 
-type StaticAsset = {
+export type StaticAsset = {
   readonly path: string;
   readonly contentType: string;
   readonly body: string;
