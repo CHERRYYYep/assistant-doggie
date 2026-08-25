@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-24 · 当前分支 `dev_ts` · T9 已完成（M2 进行中）
+> 最后更新：2026-08-25 · 当前分支 `dev_ts` · 当前提交 `a8e03f3`
 
 ---
 
@@ -8,17 +8,20 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | 15,483 行（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **166 个测试声明通过** |
-| 前端测试 | **23 个测试声明通过** |
-| Rust 参考实现 | **124 通过**（完好保留，可随时对拍） |
+| TS 代码 | **18,824 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **180 通过** |
+| 前端测试 | **23 通过** |
+| Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **76 条**（§1 全部 13 + §2 全部 7 + §3 全部 8 + §4 全部 15 + §5 全部 11 + §6 全部 12 + §8 全部 10 条） |
-| 剩余 | **9 条** |
+| 已覆盖 | **76 条**（§1–§6 + §8 全部） |
+| 剩余 | **9 条**（**只剩 §7 Agent Harness 边界**） |
 
 ```
 进度  ███████████████████████████░░░  76 / 85
 ```
+
+**M1（功能对等）已完成**：T3–T8b 全部落地，`npm run check` 全绿。剩下的 9 条不变量全部属于 §7，
+将由 T10（MCP server）和 T13（Agent 编排）覆盖——**这也决定了 Rust 何时可以删除**（第九章）。
 
 ### 分支布局
 
@@ -210,10 +213,13 @@ T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d90
 ### 里程碑
 
 ```
-M1  TS 与 Rust 功能对等           T7 → T8b ✅  ← CI 已就位，协作者可加入
-M2  记忆开始被日常消费             T9 ✅ → T10     ← 最高杠杆，产品开始有价值
-M3  Doggie 成为 Agent 控制面      T11 → T13
-M4  日常长期助手                  T14 → T17
+M1  TS 与 Rust 功能对等         T3 ✅ → T8b ✅   ← 已完成，CI 就位
+M2  记忆开始被日常消费           T9 ✅ → T9b → T10  ← 最高杠杆，产品开始有价值
+M3  Doggie 成为 Agent 控制面    T11 → T12 → T13   ← §7 在此覆盖完
+       ↓
+    ⚑ 删除 Rust workspace（前置条件见第九章）
+       ↓
+M4  日常长期助手                T14 → T17
 ```
 
 ### M1 — 功能对等
@@ -234,14 +240,19 @@ M4  日常长期助手                  T14 → T17
 
 **T8b 存在的理由**：协作者在重写完成后加入（Q1）。CI 防的是"别人推了坏代码"，所以必须**赶在他加入之前**就位，而不是之后。
 
-**M1 完成后**：删除 `crates/`、`apps/`、`Cargo.*`，把前端从 `apps/doggie-local-web/frontend/` 移到 `web/`。
+**关于删除 Rust**：原计划写的是"M1 完成后就删"。**这个判断已修正**——M1 完成时 §7 还没覆盖，
+而 §7 的行为唯一活的参考就在 `crates/doggie-agent-runtime`。完整的前置条件和执行清单见**第九章**。
 
 ### M2 — 记忆被消费
 
 | # | 阶段 | 交付 | 说明 |
 |---|---|---|---|
 | **T9** ✅ | 评测 harness 恢复 | 分类准确率 + 提取忠实度 + live 报告 | 已补回规格 §9 标 `[!]` 的能力；人工标注 fixture 已从 `dev` 分支复用 |
-| **T10** | **MCP server** | 只读工具 + `propose_entry` | **最高杠杆** |
+| **T9b** | HTTP 资源上限 | `maxConnections` + 收紧 `headersTimeout` / `requestTimeout` | 约 10 行，见 D11 |
+| **T10** | **MCP server** | 只读工具 + `propose_entry` | **最高杠杆**，开始覆盖 §7 |
+
+**T9b 的范围刻意很小**。已实测确认（见 D11）：TS 版的 HTTP 层**不存在** Rust 版那种"慢请求占用整个服务循环"的问题，
+所以这里只补真正缺的资源上限。**请求级取消不在 T9b**——它属于 T12，理由见 D11。
 
 **T10 为什么最高杠杆**：它让已有的存储+查询层**每天在你用 Claude Code 工作时被调用**，而不是只有侧边栏在用。`AGENT_TOOL_DEFINITIONS` 已经是 JSON Schema 形状，MCP 的 `tools/list` 返回的就是这个——缺的只是协议传输层。
 
@@ -258,7 +269,7 @@ claude mcp add doggie -s user -- <doggie-mcp 路径>
 | # | 阶段 | 交付 |
 |---|---|---|
 | **T11** | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
-| **T12** | 任务队列 + 后台执行器 + SSE | Node 原生 async，不需要 tokio 那种重构 |
+| **T12** | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
 | **T13** | Agent 编排 | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
 
 **T11 的关键洞察**：`ask_user` → 确认卡片 → 服务端执行，**已经是 agent action approval 的正确形态**。扩展不需要发明新安全模型，只需泛化：
@@ -270,6 +281,11 @@ PendingAction
   ├─ payload / binding（防伪造）
   └─ status: pending | approved | rejected | executed | failed
 ```
+
+**T12 必须包含取消传播**：目前客户端断开连接后，服务端 handler 仍会跑完全程（已实测）。
+现在影响有限——LLM 有 30s 超时兜着。但 T13 之后 agent 任务要跑几分钟，
+"用户关了页面而 agent 还在烧 token"就不可接受了。因此把 `AbortSignal` 从 HTTP 请求
+一路传到 LLM transport 和任务执行器，是 T12 的验收项之一，而不是 T9b 的补丁。
 
 **T13 数据模型**（已在对话中确认）：
 
@@ -326,14 +342,69 @@ claude -p "指令" --output-format stream-json --include-partial-messages \
 |---|---|---|
 | D1 | **换 TypeScript**，不是 Python | 与前端同语言可共享 DTO 类型；插件 = `import()`；保住最多类型纪律；Node 已在工具链里 |
 | D2 | 基分支选 `dev_rust` | S2/S3 前端是唯一可直接复用的完整资产 |
-| D3 | Rust 代码**暂不删除** | 作为可运行参考做差分测试，M1 完成后统一删 |
+| D3 | Rust 代码**暂不删除** | ~~M1 完成后统一删~~ → **已修正**：改为按 §7 覆盖情况判定，见第九章 |
 | D4 | 依赖保持极少 | 延续原项目原则；去掉的是生态税不是纪律 |
 | D5 | 无构建步骤 | `erasableSyntaxOnly` 由编译器强制 |
 | D6 | 错误用 `throw` 不用 `Result` | 保留可穷尽 `kind` 判别式供 HTTP 映射；Result 在 TS 里与生态冲突 |
 | D7 | 品牌类型 | 复现 Rust "验证过的值才能存在" |
 | D8 | 候选构造**忽略 UI 选中项** | 跟随 Rust 而非 Python；`focus_bucket_id` 仅作兼容/审计 |
 | D9 | `*.md` 排除出 Prettier | 它按 UTF-16 码元补齐表格，CJK 双宽会歪 |
+| **D11** | **HTTP adapter 保持自研，不换 `@hono/node-server`** | 见下方展开 |
+| **D12** | **排序一律用码点比较，禁用 `localeCompare`** | 见下方展开 |
 | D10 | 先 MCP server 再 orchestrator | B 方向 1–2 天且已完成 80%；A 方向数周。且 B 是 A 的组件 |
+
+---
+
+### D11 展开 — HTTP 层的六个担心，实测后只剩三个
+
+2026-08-25 对当前 TS 实现做了实测（不是推断）：
+
+| 担心 | 实测 | 判定 |
+|---|---|---|
+| 一个 LLM 慢请求占用整个服务循环 | 1.5s 慢请求在飞时，并发读 **16ms 返回** | ❌ 不成立 |
+| 慢客户端影响后续请求 | 同上，`node:http` 事件驱动 | ❌ 不成立 |
+| 并发能力很弱 | 单进程 Node 对单用户本地应用够用 | ❌ 不成立 |
+| 没有请求级取消 | 客户端 abort 后 handler 仍跑完全程 | ✅ 成立 → **T12** |
+| 没有连接数限制 | `maxConnections` 未设置 | ✅ 成立 → **T9b** |
+| 没有限流 | 无 | ✅ 成立 → 见下 |
+
+前三条在 **Rust 版是真问题**（`for stream in listener.incoming()` 串行 + `ureq` 阻塞式 HTTP），
+换到 `node:http` + `await fetch` 之后自动消失。**这是换语言一个此前未记录的收益。**
+
+Node 默认值已提供部分保护：`headersTimeout` 60s（基本 slowloris 防护）、
+`requestTimeout` 300s，代码另外显式设了 `maxRequestsPerSocket = 1`。
+
+**是否造轮子——分三层看：**
+
+| 层 | 判定 |
+|---|---|
+| Hono 路由 / 中间件 | ✅ 没造轮子，`app.ts` 在用 |
+| `node:http` | ✅ 不是造轮子，它是标准库，所有框架底下都是它 |
+| adapter 层（`server.ts` 361 行） | ⚠️ **约一半重复了 `@hono/node-server`** |
+
+重复的是 `toFetchRequest` / `writeFetchResponse` / `readRequestBody`。
+**另一半是 S1 安全边界特有的**，官方 adapter 不提供：重复 `Host`/`Origin` 检测（请求走私信号）、
+头部大小上限、HEAD 响应在 socket 错误路径上也不能带 body。
+
+**决定不换**，三个理由：它能工作且有 37 个 HTTP 测试覆盖边界；换 adapter 要把安全规则
+重新嫁接到中间件层，是**有风险的改动而收益只是代码变少**；当前瓶颈在 T10 而不在这里。
+
+**限流为什么也推迟**：对 loopback 单用户，限流真正防的是"前端 bug 导致的请求风暴"，不是攻击。
+等 T12 有了任务队列，配额应该落在**队列层**而不是 HTTP 层——现在在 HTTP 层加限流，T12 要拆一遍。
+
+### D12 展开 — 排序必须与 locale 无关
+
+`tests/storage-parity-snapshot.ts` 曾用 `localeCompare` 给快照记录排序。本机 locale 是 `zh-CN`，
+它把两条 CJK 记录判成与码点顺序**相反**，导致 parity 测试红灯——而两边内容其实完全一致。
+
+**真正的问题不是测试红了，是测试结果取决于机器**：CI runner 的 locale 通常是 `C`/`en_US`，
+会得到与本地不同的排序。刚加的 CI（T8b）本会因此与本地长期不一致。
+
+**规则**：任何进入断言、快照或稳定排序的比较，一律用码点比较（`a < b ? -1 : a > b ? 1 : 0`）。
+`localeCompare` 只允许用于**面向用户展示**的排序。已修三处并在 `C` / `en_US` / `zh-CN` 三种
+locale 下验证（提交 `8d8f3ae`）。
+
+> 附带教训：UUID 也不能用 `localeCompare` 做 tiebreak——某些 collation 会忽略标点，而 UUID 全是 `-`。
 
 ---
 
@@ -357,7 +428,17 @@ claude -p "指令" --output-format stream-json --include-partial-messages \
 
 ---
 
-## 六、工作方式约定
+## 六、风险登记
+
+| # | 风险 | 当前影响 | 何时会变严重 | 应对 |
+|---|---|---|---|---|
+| R1 | **`node:sqlite` 是同步的**，查询期间阻塞事件循环 | 微秒级，无影响 | T5 查询在真实数据量下变慢时——它会同时拖慢所有并发请求，且**不像 LLM 调用那样能 await 让出** | 有真实数据后测一次 p99；必要时把重查询移进 worker thread |
+| R2 | Rust oracle 已冻结、CI 不跑，会静默腐烂 | 无 | 拖太久之后 `cargo test` 跑不起来，删除前的最后一次对拍就做不成了 | 第九章条件 1/4 满足即删，不无限期留 |
+| R3 | 删除 Rust 后 parity fixture 不可自动再生 | 无 | 需要有意修改被冻结的行为时 | fixture 保持人类可读；改动必须在提交信息里写明理由（见 9.5） |
+| R4 | 协作者加入时仓库里有两套实现 | 无 | 他加入那天 | 尽量在他加入前完成删除；否则第九章 9.2 的"允许/不允许"表要先给他 |
+| R5 | 前端目录耦合在 Rust crate 下 | 无 | 删除 Rust 时 | 与删除同批 `git mv` 到 `web/`（见 9.4 步骤 ②） |
+
+## 七、工作方式约定
 
 沿用至今的做法，如需调整请指出：
 
@@ -376,10 +457,93 @@ cargo test --workspace --offline    # M1 期间保持 Rust 参考可运行
 
 ---
 
-## 七、参考实现随时可查
+## 八、参考实现随时可查
 
 ```bash
 git show dev_rust:crates/doggie-domain/tests/classification.rs   # Rust 行为
 git show dev:app/services/archive_service.py                     # Python 行为
 git stash && git checkout dev && .venv/bin/python -m pytest tests -q   # 跑 Python
 ```
+
+---
+
+## 九、Rust 版本的冻结与删除
+
+### 9.1 为什么不是"M1 完成就删"
+
+原计划（D3）写的是"M1 完成后统一删"。**这个判断错了**，有两个具体原因：
+
+1. **§7 的 9 条不变量还没覆盖**，而它们唯一活的参考实现就是 `crates/doggie-agent-runtime`
+   （工具 allow-list、非法参数数据化、tool round 上限、写工具过滤）。T10/T13 要照着它做。
+2. **Rust oracle 仍在抓真 bug**。2026-08-25 那次 `localeCompare` 排序不确定性（见 D12），
+   就是靠 `crates/doggie-storage-sqlite/examples/scenario.rs` 重新生成 fixture 才定位并验证的。
+
+### 9.2 现在的状态：**已冻结，未删除**
+
+从现在到删除之前，Rust 代码的定位是**只读 oracle**：
+
+| 允许 | 不允许 |
+|---|---|
+| 跑 `cargo test` 回答"Rust 到底怎么做的" | 加新功能 |
+| 跑 `examples/` 重新生成 parity fixture | 修 clippy 警告（除非影响 `cargo test`） |
+| 读源码作为移植依据 | 跟着 TS 侧的改动同步修改 |
+
+**CI 不跑 Rust**（`ci.yml` 只跑 `npm run check`）。这是有意的——它已经不是目标实现，
+但也意味着**它会静默腐烂**，这正是不能无限期留着它的理由。
+
+### 9.3 删除的前置条件（全部满足才动手）
+
+| # | 条件 | 当前 |
+|---|---|---|
+| 1 | **§7 全部 9 条在 TS 侧有可执行测试** | ⬜ 等 T10 + T13 |
+| 2 | 所有 parity fixture 已提交，且文件头记录了再生成命令 | ✅ `low-information-gate.tsv`、`storage-parity.json` 都有 |
+| 3 | 前端已从 `apps/doggie-local-web/frontend/` 移到 `web/`，TS server 与 CI 通过 | ⬜ 与删除同批做 |
+| 4 | 最近连续两个阶段都没有需要 `cargo test` 来裁决行为 | ⬜ 观察中 |
+
+> **条件 3 是硬耦合**：前端现在住在 `apps/doggie-local-web/frontend/`，
+> 而那是 Rust crate 的目录。删 `apps/` 就必须同时搬前端，不能分两次。
+
+### 9.4 执行清单
+
+```bash
+# ① 最后一次全量对拍，确认两边仍一致
+cargo test --workspace --offline
+npm run check
+
+# ② 搬前端（条件 3）
+git mv apps/doggie-local-web/frontend web
+#    改 src/http/app.ts 的 loadFrontendAssets() 路径
+#    改 package.json 的 test:web glob
+#    改 tsconfig.json 的 include
+
+# ③ 删 Rust
+git rm -r crates apps Cargo.toml Cargo.lock
+#    删 .gitignore 里的 /target/
+#    删 AGENTS.md 里的 cargo 门禁段落
+
+# ④ 验证
+npm run check
+```
+
+### 9.5 删除之后会发生什么变化（必须提前接受）
+
+**parity fixture 变成不可再生。** `tests/fixtures/low-information-gate.tsv`（919 行）
+和 `tests/fixtures/storage-parity.json` 在 Rust 消失后无法重新生成。后果：
+
+- 这些 fixture 从"Rust 权威判定的快照"降级为"**历史行为的冻结记录**"；
+- 之后要有意改这些行为，只能**手工编辑 fixture 并在提交信息里写明为什么**；
+- 因此 fixture 必须保持人类可读（TSV / 格式化 JSON），**不能压缩或二进制化**。
+
+这是可接受的——T2 的 low-information fixture 从写下来那天起就是这个定位。
+但它意味着**删除是不可逆的**，所以条件 1 和 4 不能通融。
+
+### 9.6 其他两个分支
+
+| 分支 | 处理 |
+|---|---|
+| `dev`（Python + Rust，128 测试） | **永久保留**。它是 §9 评测 fixture 的来源，也是唯一还能跑的 Python 参考 |
+| `dev_rust`（纯 Rust） | **永久保留**。删除发生在 `dev_ts` 上，历史仍可 `git show dev_rust:...` 取回 |
+
+**删除 `dev_ts` 上的 Rust 代码 ≠ 丢失 Rust 实现。** 两个参考分支都不动，
+所以 9.5 里"不可再生"的准确含义是"**不能在 CI/日常流程里自动再生**"，
+真要考古仍可 `git checkout dev_rust` 重建环境——只是成本从"一条命令"变成"一次切分支"。
