@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-25 · 当前分支 `dev_ts` · 当前任务 T10b（TypeScript Local Web 启动与浏览器端到端收口）
+> 最后更新：2026-08-25 · 当前分支 `dev_ts` · T10b 已完成，下一阶段 T11（`PendingAction` 泛化）
 
 ---
 
@@ -8,8 +8,8 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | **19,505 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **188 通过** |
+| TS 代码 | **21,021 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **204 通过** |
 | 前端测试 | **23 通过** |
 | Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
@@ -20,7 +20,7 @@
 进度  ███████████████████████████░░░  76 / 85
 ```
 
-**M1 的代码迁移和 M2 的 MCP 能力已经落地，但本地可运行产品仍缺一个 T10b 收口阶段**：T3–T10 的模块与测试均已完成，然而 T8 只证明了 HTTP/前端组件和浏览器资源可用，没有提供 TypeScript 生产 bootstrap、`.env` 组装、`npm start` 和从真实进程到浏览器的端到端验收。T10b 必须补齐该缺口后，M2 才能按“用户可启动、MCP proposal 可在 UI 确认”的产品标准关闭。§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
+**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。下一步进入 M3 的 T11；§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
 
 ### 分支布局
 
@@ -59,7 +59,7 @@
 
 415 行 `app.js` → 10 个模块。契约测试升级为真实结构不变量：每个 `import` 必须能路由到、只有 `dom.js` 能碰 DOM、只有 `api.js` 能 `fetch`、路由只在一处声明。用 stub DOM 的 Node harness 真实执行了模块图，确认无循环 import 与缺失导出。
 
-### 阶段 B — TypeScript 重写（T8/T8b 已完成）
+### 阶段 B — TypeScript 重写与本地产品收口（T1–T10b 已完成）
 
 | # | 提交 | 内容 |
 |---|---|---|
@@ -72,6 +72,10 @@
 | **T7** | `4d1caca` | HTTP 合同、Hono API、S1 安全边界和 Node loopback server |
 | **T8** | `fe66410` → `2339bd3` | 前端 TypeScript、共享 HTTP DTO、Node/Rust 类型剥离与浏览器 smoke test |
 | **T8b** | `6c9e8eb` | GitHub Actions：Node 24 + `npm ci` + `npm run check` |
+| **T9** | `d2fdf0e` | 分类/提取评测 harness 与 live 报告 |
+| **T9b** | `fb79763` | HTTP 连接、header 和 request 资源上限 |
+| **T10** | `ac0dbd8` | MCP 只读工具与待确认 `propose_entry` |
+| **T10b** | `4bc7b69` | TypeScript Web production bootstrap 与浏览器/MCP 共库 E2E |
 
 **T1 — 骨架与规格**
 
@@ -249,7 +253,7 @@ M4  日常长期助手                T14 → T17
 | **T9** ✅ | 评测 harness 恢复 | 分类准确率 + 提取忠实度 + live 报告 | 已补回规格 §9 标 `[!]` 的能力；人工标注 fixture 已从 `dev` 分支复用 |
 | **T9b** ✅ | HTTP 资源上限 | `maxConnections` + 收紧 `headersTimeout` / `requestTimeout` | `fb79763`，见 D11 |
 | **T10** ✅ | **MCP server** | 只读工具 + `propose_entry` | `ac0dbd8`，开始覆盖 §7 |
-| **T10b** ⬜ | **TypeScript Local Web 收口** | 生产 bootstrap + `.env` + `npm start` + 浏览器/MCP 共库 E2E | 修复 T8 只完成组件接入、未形成可启动产品的缺口 |
+| **T10b** ✅ | **TypeScript Local Web 收口** | 生产 bootstrap + `.env` + `npm start` + 浏览器/MCP 共库 E2E | `4bc7b69`；M2 产品链路闭环 |
 
 **T9b 的范围刻意很小**。已实测确认（见 D11）：TS 版的 HTTP 层**不存在** Rust 版那种"慢请求占用整个服务循环"的问题，
 所以这里只补真正缺的资源上限。**请求级取消不在 T9b**——它属于 T12，理由见 D11。
@@ -280,9 +284,9 @@ claude mcp add doggie -s user -- <doggie-mcp 路径>
 
 T10 提供的是 MCP 工具边界，不是完整的多轮模型 Harness：tool round、上下文/历史预算和 Responses/Chat parity 仍属于 T13。因此 §7 仍保持“未全部完成”，不能提前删除 Rust oracle。
 
-**T10b — TypeScript Local Web 启动与浏览器端到端收口（待完成）**
+**T10b — TypeScript Local Web 启动与浏览器端到端收口（已完成，`4bc7b69`）**
 
-T8 已经完成前端 TypeScript 化、共享 DTO、静态资源 type stripping 和 headless Chrome 资源 smoke test；T7 也已经完成 Hono API 与 Node HTTP adapter。但两者之间缺少生产进程的 composition root，因此当前仓库不能用 TypeScript 命令启动完整 Web MVP。T10b 是对 M1/M2 产品验收的纠偏，不扩展 T11–T13 的 Agent 控制面范围。
+T8 已完成前端 TypeScript 化、共享 DTO、静态资源 type stripping 和 headless Chrome 资源 smoke test；T7 已完成 Hono API 与 Node HTTP adapter。T10b 现已补齐两者之间的 production composition root，使仓库可直接启动完整 TypeScript Web MVP；该阶段只收口 M1/M2 产品验收，不扩展 T11–T13 的 Agent 控制面范围。
 
 交付范围：
 
@@ -299,12 +303,21 @@ T10b 的完成标准：
 ```text
 npm ci
 cp .env.example .env
+chmod 600 .env
 # 填写 OPENAI_API_KEY / OPENAI_MODEL
 npm start
 # 浏览器打开 http://127.0.0.1:8787/
 ```
 
 在该流程下，用户可以完成聊天归档、低信息确认、Bucket/Entry 查看与纠错、自然语言查询，并处理 Claude/Codex 通过同一数据库提交的 MCP pending proposal。模型回答阶段的完整只读工具循环、上下文预算和 Claude/Codex 任务编排仍分别属于 T13，不在 T10b 提前实现。
+
+T10b 最终实现与验证：
+
+- `src/main.ts`、`src/runtime/config.ts`、`src/runtime/local-web.ts` 形成 production 启动、配置和生命周期边界；
+- 监听仅接受字面量 `127.0.0.1` / `[::1]`，绑定后再次验证实际地址；模型 timeout 限制为 1–300 秒，API Key 在配置对象检查输出中脱敏；
+- 进程关闭会取消生产模型请求、停止 HTTP server 后再关闭 SQLite；重复 `close()` 共享同一个 Promise，监听失败会释放数据库；
+- SQLite 启动先验证数据库所有权再切换 WAL，校验 schema identity/shape/migration ledger，并用 `BEGIN IMMEDIATE` 序列化 Web/MCP 首次并发迁移；
+- `npm run check` 通过：204 个 TypeScript 测试 + 23 个前端测试，共 227 个；独立 `npm start` smoke、真实浏览器 HTTP 链路、进程关闭和 MCP→Web 共库确认均已覆盖。
 
 ### M3 — Agent 控制面
 
