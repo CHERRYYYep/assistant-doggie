@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-25 · 当前分支 `dev_ts` · 当前提交 `a8e03f3`
+> 最后更新：2026-08-25 · 当前分支 `dev_ts` · T10 实现提交 `ac0dbd8`
 
 ---
 
@@ -8,8 +8,8 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | **18,824 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **180 通过** |
+| TS 代码 | **19,505 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
+| TS 测试 | **188 通过** |
 | 前端测试 | **23 通过** |
 | Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
@@ -20,8 +20,7 @@
 进度  ███████████████████████████░░░  76 / 85
 ```
 
-**M1（功能对等）已完成**：T3–T8b 全部落地，`npm run check` 全绿。剩下的 9 条不变量全部属于 §7，
-将由 T10（MCP server）和 T13（Agent 编排）覆盖——**这也决定了 Rust 何时可以删除**（第九章）。
+**M1（功能对等）和 M2（记忆被消费）已完成**：T3–T10 全部落地，`npm run check` 全绿。§7 的 9 条不变量仍需在 T13 的完整 Agent Harness 中统一收口；T10 已先覆盖 MCP 工具注册、严格参数、未知工具拒绝、只读边界和 pending proposal，但不把 MCP transport 误记成完整多轮 Harness。
 
 ### 分支布局
 
@@ -214,7 +213,7 @@ T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d90
 
 ```
 M1  TS 与 Rust 功能对等         T3 ✅ → T8b ✅   ← 已完成，CI 就位
-M2  记忆开始被日常消费           T9 ✅ → T9b → T10  ← 最高杠杆，产品开始有价值
+M2  记忆开始被日常消费           T9 ✅ → T9b ✅ → T10 ✅  ← 已完成
 M3  Doggie 成为 Agent 控制面    T11 → T12 → T13   ← §7 在此覆盖完
        ↓
     ⚑ 删除 Rust workspace（前置条件见第九章）
@@ -248,8 +247,8 @@ M4  日常长期助手                T14 → T17
 | # | 阶段 | 交付 | 说明 |
 |---|---|---|---|
 | **T9** ✅ | 评测 harness 恢复 | 分类准确率 + 提取忠实度 + live 报告 | 已补回规格 §9 标 `[!]` 的能力；人工标注 fixture 已从 `dev` 分支复用 |
-| **T9b** | HTTP 资源上限 | `maxConnections` + 收紧 `headersTimeout` / `requestTimeout` | 约 10 行，见 D11 |
-| **T10** | **MCP server** | 只读工具 + `propose_entry` | **最高杠杆**，开始覆盖 §7 |
+| **T9b** ✅ | HTTP 资源上限 | `maxConnections` + 收紧 `headersTimeout` / `requestTimeout` | `fb79763`，见 D11 |
+| **T10** ✅ | **MCP server** | 只读工具 + `propose_entry` | `ac0dbd8`，开始覆盖 §7 |
 
 **T9b 的范围刻意很小**。已实测确认（见 D11）：TS 版的 HTTP 层**不存在** Rust 版那种"慢请求占用整个服务循环"的问题，
 所以这里只补真正缺的资源上限。**请求级取消不在 T9b**——它属于 T12，理由见 D11。
@@ -263,6 +262,22 @@ claude mcp add doggie -s user -- <doggie-mcp 路径>
 > **安全约束**：第一版只暴露只读工具。写操作走 `propose_entry` → 返回"已提交待确认" → 你在 Doggie UI 里批准。**agent 不得绕过确认门控直接写。**
 
 > **必须尽早加 `propose_entry`**：否则 MCP 越好用，记忆越贫瘠——你和 agent 的整段对话对 Doggie 不可见，长期记忆会退化成只读档案馆。
+
+**T9b 已完成**（`fb79763`）：`src/http/server.ts` 现在默认限制 32 个连接，将 header timeout 从 Node 默认 60 秒收紧到 10 秒，将 request timeout 从 300 秒收紧到 120 秒；保留 `maxRequestsPerSocket = 1`。配置只接受正安全整数，测试不需要真实监听端口即可固定这些资源属性。请求级取消仍按计划留给 T12。
+
+**T10 已完成**（`ac0dbd8`）：
+
+- 使用官方 `@modelcontextprotocol/server` v2 和 stdio transport，入口为 `bin/doggie-mcp` / `npm run mcp`；
+- 暴露 `list_active_buckets`、`search_memory`、`get_bucket_detail` 三个只读工具；
+- 暴露 `propose_entry`，但只创建 durable `needs_confirmation` attempt，不创建正式 Bucket、Entry 或 memory；
+- proposal 同时写入一张聊天历史确认卡片，Web UI 刷新后继续复用现有 `/api/chat/confirm` 四分支确认流程；
+- MCP schema 严格拒绝未知字段，限制 query 500 字符、Bucket ID 200 字符、proposal 16,000 字符、stdio 消息和工具输出 64 KiB；
+- 未注册的直接写工具不在 `tools/list` 中，并由官方协议层拒绝；
+- `@modelcontextprotocol/client` 仅作为 devDependency，通过官方 in-memory transport 验证 `tools/list` / `tools/call`；
+- `package-lock.json` 已纳入版本控制，使 T8b 的 `npm ci` 具备可复现输入；
+- 使用说明见 `docs/MCP_SERVER.md`。
+
+T10 提供的是 MCP 工具边界，不是完整的多轮模型 Harness：tool round、上下文/历史预算和 Responses/Chat parity 仍属于 T13。因此 §7 仍保持“未全部完成”，不能提前删除 Rust oracle。
 
 ### M3 — Agent 控制面
 
@@ -365,7 +380,7 @@ claude -p "指令" --output-format stream-json --include-partial-messages \
 | 慢客户端影响后续请求 | 同上，`node:http` 事件驱动 | ❌ 不成立 |
 | 并发能力很弱 | 单进程 Node 对单用户本地应用够用 | ❌ 不成立 |
 | 没有请求级取消 | 客户端 abort 后 handler 仍跑完全程 | ✅ 成立 → **T12** |
-| 没有连接数限制 | `maxConnections` 未设置 | ✅ 成立 → **T9b** |
+| 没有连接数限制 | `maxConnections` 未设置 | ✅ **T9b 已修复**：默认 32 |
 | 没有限流 | 无 | ✅ 成立 → 见下 |
 
 前三条在 **Rust 版是真问题**（`for stream in listener.incoming()` 串行 + `ureq` 阻塞式 HTTP），

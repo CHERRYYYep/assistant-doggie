@@ -132,6 +132,8 @@
 | 7.8 | 同一轮 `archive` 返回 needs_confirmation 后，**不得再执行写工具** | `[P]` `test_harness_blocks_same_turn_write_after_archive_needs_confirmation` — Rust 用「写工具不在回答阶段 allow-list」从结构上解决 |
 | 7.9 | Responses 和 Chat Completions 两条路径行为一致 | `[RP]` parity tests |
 
+**T10 当前覆盖（不是 §7 全部完成）**：`src/mcp/server.test.ts` 已验证官方 MCP server 的显式工具列表、未知直接写工具拒绝和未知字段在执行前拒绝；`src/mcp/tools.test.ts` 已验证三个读取工具无写副作用、`propose_entry` 只能产生 `needs_confirmation` attempt、参数上限和 64 KiB 输出上限。7.4 的多轮循环、7.7 的上下文/历史预算以及 7.9 的双模型 API Harness parity 仍由 T13 完成。
+
 ## 8. HTTP 边界（S1 已在 Rust 侧实现，需在 TS 重建）
 
 | # | 不变量 | 来源 |
