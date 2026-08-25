@@ -15,8 +15,19 @@ function rows<T extends object>(database: DatabaseSync, sql: string): T[] {
   return database.prepare(sql).all() as T[];
 }
 
+/**
+ * Order two records deterministically by their serialized form.
+ *
+ * Code-point comparison, deliberately **not** `localeCompare`: that consults
+ * the runtime's collation, so the same two CJK records sort one way under a
+ * `zh-CN` default locale and the other way under `C`/`en-US`. A snapshot
+ * comparison sorted that way passes on the author's machine and fails in CI
+ * for reasons that have nothing to do with the storage layer.
+ */
 function compareJson(left: unknown, right: unknown): number {
-  return JSON.stringify(left).localeCompare(JSON.stringify(right));
+  const a = JSON.stringify(left);
+  const b = JSON.stringify(right);
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export function snapshotStorage(database: DatabaseSync): object {
@@ -72,9 +83,10 @@ export function snapshotStorage(database: DatabaseSync): object {
   };
 
   // Discover deleted Bucket ids in deterministic Entry order before any JSON
-  // snapshot references them.
+  // snapshot references them. Code-point order, not collation — see
+  // `compareJson`.
   for (const entry of [...entries].sort((a, b) =>
-    a.raw_text.localeCompare(b.raw_text),
+    a.raw_text < b.raw_text ? -1 : a.raw_text > b.raw_text ? 1 : 0,
   )) {
     bucketName(entry.moved_from_bucket_id);
   }

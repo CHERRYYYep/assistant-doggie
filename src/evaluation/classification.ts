@@ -362,7 +362,14 @@ export function keywordBaselinePredictions(
       scores.sort(
         (left, right) =>
           right.score - left.score ||
-          right.bucketId.localeCompare(left.bucketId),
+          // Code-point order, not collation: some collations ignore
+          // punctuation, which makes the dashes in a UUID tiebreak
+          // differently depending on the runtime locale.
+          (right.bucketId < left.bucketId
+            ? -1
+            : right.bucketId > left.bucketId
+              ? 1
+              : 0),
       );
       const first = scores[0];
       if (first === undefined) throw new Error("candidate scoring invariant");
