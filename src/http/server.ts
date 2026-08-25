@@ -18,10 +18,16 @@ import {
 import { SECURITY_RESPONSE_HEADERS } from "./security.ts";
 
 export const MAX_HTTP_REQUEST_BYTES = 1024 * 1024;
+export const DEFAULT_MAX_HTTP_CONNECTIONS = 32;
+export const DEFAULT_HTTP_HEADERS_TIMEOUT_MS = 10_000;
+export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 120_000;
 
 export type DoggieNodeServerOptions = {
   readonly assets?: readonly StaticAsset[];
   readonly maxRequestBytes?: number;
+  readonly maxConnections?: number;
+  readonly headersTimeoutMs?: number;
+  readonly requestTimeoutMs?: number;
 };
 
 type RequestFailure = {
@@ -41,6 +47,18 @@ export function createDoggieNodeServer(
 ): Server {
   const assets = options.assets ?? loadFrontendAssets();
   const maxRequestBytes = options.maxRequestBytes ?? MAX_HTTP_REQUEST_BYTES;
+  const maxConnections = positiveInteger(
+    options.maxConnections ?? DEFAULT_MAX_HTTP_CONNECTIONS,
+    "maxConnections",
+  );
+  const headersTimeoutMs = positiveInteger(
+    options.headersTimeoutMs ?? DEFAULT_HTTP_HEADERS_TIMEOUT_MS,
+    "headersTimeoutMs",
+  );
+  const requestTimeoutMs = positiveInteger(
+    options.requestTimeoutMs ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
+    "requestTimeoutMs",
+  );
   let app: ReturnType<typeof createDoggieApp> | undefined;
   let appAuthority: string | undefined;
 
@@ -66,6 +84,12 @@ export function createDoggieNodeServer(
     },
   );
 
+  // Keep the local MVP bounded even when a browser tab or a faulty client
+  // opens many sockets. Node's parser still owns HTTP framing; these are
+  // service-level resource limits rather than a second HTTP implementation.
+  server.maxConnections = maxConnections;
+  server.headersTimeout = headersTimeoutMs;
+  server.requestTimeout = requestTimeoutMs;
   server.maxRequestsPerSocket = 1;
   server.on("clientError", (error, socket) => {
     writeSocketError(
@@ -107,6 +131,13 @@ export function createDoggieNodeServer(
   }
 
   return server;
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`${name} must be a positive safe integer`);
+  }
+  return value;
 }
 
 function validateRawHeaders(rawHeaders: readonly string[]): void {
