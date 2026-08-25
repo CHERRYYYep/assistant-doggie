@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-25 · 当前分支 `dev_ts` · T10 实现提交 `ac0dbd8`
+> 最后更新：2026-08-25 · 当前分支 `dev_ts` · 当前任务 T10b（TypeScript Local Web 启动与浏览器端到端收口）
 
 ---
 
@@ -20,7 +20,7 @@
 进度  ███████████████████████████░░░  76 / 85
 ```
 
-**M1（功能对等）和 M2（记忆被消费）已完成**：T3–T10 全部落地，`npm run check` 全绿。§7 的 9 条不变量仍需在 T13 的完整 Agent Harness 中统一收口；T10 已先覆盖 MCP 工具注册、严格参数、未知工具拒绝、只读边界和 pending proposal，但不把 MCP transport 误记成完整多轮 Harness。
+**M1 的代码迁移和 M2 的 MCP 能力已经落地，但本地可运行产品仍缺一个 T10b 收口阶段**：T3–T10 的模块与测试均已完成，然而 T8 只证明了 HTTP/前端组件和浏览器资源可用，没有提供 TypeScript 生产 bootstrap、`.env` 组装、`npm start` 和从真实进程到浏览器的端到端验收。T10b 必须补齐该缺口后，M2 才能按“用户可启动、MCP proposal 可在 UI 确认”的产品标准关闭。§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
 
 ### 分支布局
 
@@ -249,6 +249,7 @@ M4  日常长期助手                T14 → T17
 | **T9** ✅ | 评测 harness 恢复 | 分类准确率 + 提取忠实度 + live 报告 | 已补回规格 §9 标 `[!]` 的能力；人工标注 fixture 已从 `dev` 分支复用 |
 | **T9b** ✅ | HTTP 资源上限 | `maxConnections` + 收紧 `headersTimeout` / `requestTimeout` | `fb79763`，见 D11 |
 | **T10** ✅ | **MCP server** | 只读工具 + `propose_entry` | `ac0dbd8`，开始覆盖 §7 |
+| **T10b** ⬜ | **TypeScript Local Web 收口** | 生产 bootstrap + `.env` + `npm start` + 浏览器/MCP 共库 E2E | 修复 T8 只完成组件接入、未形成可启动产品的缺口 |
 
 **T9b 的范围刻意很小**。已实测确认（见 D11）：TS 版的 HTTP 层**不存在** Rust 版那种"慢请求占用整个服务循环"的问题，
 所以这里只补真正缺的资源上限。**请求级取消不在 T9b**——它属于 T12，理由见 D11。
@@ -278,6 +279,32 @@ claude mcp add doggie -s user -- <doggie-mcp 路径>
 - 使用说明见 `docs/MCP_SERVER.md`。
 
 T10 提供的是 MCP 工具边界，不是完整的多轮模型 Harness：tool round、上下文/历史预算和 Responses/Chat parity 仍属于 T13。因此 §7 仍保持“未全部完成”，不能提前删除 Rust oracle。
+
+**T10b — TypeScript Local Web 启动与浏览器端到端收口（待完成）**
+
+T8 已经完成前端 TypeScript 化、共享 DTO、静态资源 type stripping 和 headless Chrome 资源 smoke test；T7 也已经完成 Hono API 与 Node HTTP adapter。但两者之间缺少生产进程的 composition root，因此当前仓库不能用 TypeScript 命令启动完整 Web MVP。T10b 是对 M1/M2 产品验收的纠偏，不扩展 T11–T13 的 Agent 控制面范围。
+
+交付范围：
+
+- 新增 TypeScript production bootstrap，组装 SQLite、LLM endpoint/transport、`StructuredMemoryModel`、`ArchiveRuntime`、`ConcreteDoggieHttpApi` 和 Node HTTP server；
+- 使用 Node 24 标准能力加载当前工作目录 `.env`，保持进程环境变量优先，并严格校验必填模型配置、timeout、数据库路径和 loopback 监听地址；
+- 在 `package.json` 提供稳定的 `npm start`，启动后输出实际 loopback URL，支持 SIGINT/SIGTERM 有界关闭并关闭数据库；
+- Web 与 MCP 使用同一个 canonical SQLite 路径；`propose_entry` 产生的 durable confirmation card 必须能从 Web `/api/chat/history` 恢复并通过现有确认路由处理；
+- 普通测试只用 fake model/transport 和临时数据库，覆盖配置优先级/脱敏、真实 Node socket、前端静态资源、归档写入、重启恢复及 MCP→Web 共库链路；
+- 增加独立进程 smoke test，证明 `npm start` 能读取 `.env`、监听 loopback、响应 `/health`，且测试不调用真实模型；
+- 更新 README、`.env.example`、`AGENTS.md` 和 MCP 文档，删除“TS Web 尚无入口”以及 Rust 仍是产品启动方式的过时描述。
+
+T10b 的完成标准：
+
+```text
+npm ci
+cp .env.example .env
+# 填写 OPENAI_API_KEY / OPENAI_MODEL
+npm start
+# 浏览器打开 http://127.0.0.1:8787/
+```
+
+在该流程下，用户可以完成聊天归档、低信息确认、Bucket/Entry 查看与纠错、自然语言查询，并处理 Claude/Codex 通过同一数据库提交的 MCP pending proposal。模型回答阶段的完整只读工具循环、上下文预算和 Claude/Codex 任务编排仍分别属于 T13，不在 T10b 提前实现。
 
 ### M3 — Agent 控制面
 
