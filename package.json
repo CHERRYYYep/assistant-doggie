@@ -13,15 +13,21 @@
     "test:web": "node --test --test-isolation=none 'apps/doggie-local-web/frontend/tests/**/*.test.ts'",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run typecheck && npm test && npm run test:web"
+    "check": "npm run format:check && npm run typecheck && npm test && npm run test:web",
+    "mcp": "node src/mcp/main.ts"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.2.0",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "hono": "^4.13.3",
     "zod": "^4.4.3"
+  },
+  "bin": {
+    "doggie-mcp": "bin/doggie-mcp"
   }
 }
