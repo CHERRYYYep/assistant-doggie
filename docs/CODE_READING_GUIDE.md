@@ -1,5 +1,7 @@
 # Doggie 当前架构代码阅读指南
 
+> **迁移说明（2026-08-25）**：本文主体记录冻结的 Rust oracle，路径和启动命令不再代表当前 `dev_ts` 产品实现。TypeScript 的实际启动方式是 `npm start`；当前模块地图请优先阅读 `docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`、`docs/PLAN.md` 和根目录 `README.md`。Rust 内容仅用于裁决迁移前行为。
+
 本文面向第一次接手当前代码库的开发者，目标是说明：**在当前 Cargo workspace 与本地 Web UI 架构下，应该按什么顺序阅读全部生产代码、测试代码和关键文档**。本文不替代源码；当行为存在疑问时，以 `crates/`、`apps/` 下当前代码和测试为准。
 
 当前阶段只考虑本地 Web UI：`doggie-local-web` 是唯一应用入口，同源提供静态 HTML/CSS/JS 和本地 HTTP API；没有 Node/npm/Vite 构建步骤，也没有旧版非 Rust 生产路径。

@@ -5,12 +5,11 @@
 每次提交前运行：
 
 ```bash
-cargo fmt --all -- --check
-cargo check --workspace --offline
-cargo clippy --workspace --all-targets --offline -- -D warnings
-cargo test --workspace --offline
+npm run check
 git diff --check
 ```
+
+Rust workspace 只在需要裁决迁移前行为或重新生成 parity fixture 时运行，不属于 TypeScript 产品的日常门禁。
 
 ## 2. 测试分层
 
@@ -39,15 +38,17 @@ git diff --check
 
 ### Local Web UI
 
-覆盖健康检查、静态 UI、API 参数校验、UTF-8 query 解码、归档 projection、确认卡片字段、四种确认选项、修改 Bucket 入口和稳定错误 JSON。静态前端资源还要检查 Markdown 渲染契约：代码围栏（含 `bash` 语言标签）、段落/列表/标题/引用/链接、代码换行保留、危险 URL 拒绝、HTML 转义以及渲染器不能被重复声明覆盖。
+覆盖 `.env` 与 shell 优先级、配置脱敏、loopback 监听限制、生产 bootstrap、健康检查、静态 UI、API 参数校验、UTF-8 query 解码、归档 projection、确认卡片字段、四种确认选项、修改 Bucket 入口和稳定错误 JSON。使用 fake model + 临时文件数据库运行真实 Node socket，验证重启恢复和 MCP proposal → Web history → confirmation 共库链路。静态前端资源还要检查 Markdown 渲染契约：代码围栏（含 `bash` 语言标签）、段落/列表/标题/引用/链接、代码换行保留、危险 URL 拒绝、HTML 转义以及渲染器不能被重复声明覆盖。
 
 ## 3. 手工验收
 
 启动：
 
 ```bash
+npm ci
 cp .env.example .env
-cargo run -p doggie-local-web
+# 填写 OPENAI_API_KEY 和 OPENAI_MODEL
+npm start
 ```
 
 依次验证：

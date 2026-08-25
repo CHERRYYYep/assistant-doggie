@@ -22,46 +22,58 @@
 - **可纠错**：归档结果提供修改 Bucket 的入口，也支持通过 API 移动 Entry、修改 Bucket 状态。
 - **自然语言记忆查询**：支持 Bucket 名称、Entry 原文、summary、tag、entity、时间范围、状态和结构化字段筛选。
 - **查询聚合**：关键词与结构化条件组合，按结果质量重排，去重 evidence，并可合并多个 Bucket 的结果。
-- **历史数据导入**：`doggie-storage-admin` 以 Rust 实现只读校验和一次性导入，将旧 schema 导入新的 canonical 数据库。
 
 ## 快速开始
 
-需要 Rust 1.85 或更新版本，以及一个支持 Structured Outputs 的模型端点。
+需要 Node.js 24 或更新版本，以及一个支持严格结构化输出的 OpenAI 或 OpenAI-compatible 模型端点。
 
 ```bash
+npm ci
 cp .env.example .env
+chmod 600 .env
 # 编辑 .env，至少填写 OPENAI_API_KEY 和 OPENAI_MODEL
-cargo run -p doggie-local-web
+npm start
 ```
 
-服务启动后打开 `http://127.0.0.1:8787/`。程序会自动读取当前工作目录的 `.env`；shell 环境变量优先。
+启动成功后终端会输出实际地址，默认是：
 
-本地 Web UI 源文件位于 `apps/doggie-local-web/frontend/`，由 `doggie-local-web` 同源提供 `/`、`/assets/styles.css` 和 `/assets/app.js`；当前不需要 Node/npm 构建步骤。
+```text
+http://127.0.0.1:8787/
+```
+
+程序自动读取**当前工作目录**的 `.env`，shell 环境变量优先。相对数据库路径也相对于当前工作目录解析；若要让 Web、Claude 和 Codex 的 MCP 共享记忆，推荐统一填写绝对路径：
+
+```dotenv
+DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
+```
+
+本地 Web UI 源文件位于 `apps/doggie-local-web/frontend/`，由 TypeScript `node:http` + Hono server 同源提供。Node 24 在启动时剥离浏览器资源中的 TypeScript 类型，不需要 Vite、Webpack 或 JavaScript 构建产物。
 
 检查代码与测试：
 
 ```bash
-cargo fmt --all -- --check
-cargo check --workspace --offline
-cargo clippy --workspace --all-targets --offline -- -D warnings
-cargo test --workspace --offline
+npm run check
 ```
+
+当前 Web MVP 的 assistant 回复聚焦归档状态、确认和确定性记忆查询。带只读工具循环的完整模型回答以及 Claude/Codex 任务编排仍属于计划中的 T13，不在 T10b 提前实现。
 
 ## 配置
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DOGGIE_DATABASE_PATH` | `doggie.db` | canonical SQLite 文件路径 |
-| `DOGGIE_SERVER_ADDRESS` | `127.0.0.1:8787` | HTTP 监听地址 |
+| `DOGGIE_DATABASE_PATH` | `doggie.db` | canonical SQLite 文件路径；相对路径基于启动工作目录 |
+| `DOGGIE_SERVER_ADDRESS` | `127.0.0.1:8787` | 只接受字面量 `127.0.0.1` 或 `[::1]` 的监听地址 |
 | `RUST_DATABASE_PATH` / `RUST_SERVER_ADDRESS` | 无 | 旧变量名兼容读取；新配置请使用 `DOGGIE_*` |
-| `OPENAI_SITE` | 无 | `official` 或自定义站点名称 |
-| `OPENAI_BASE_URL` | 无 | 兼容端点的 API 根地址；官方站点可留空 |
-| `OPENAI_API_MODE` | 无 | `responses` 或 `chat_completions` |
-| `OPENAI_API_KEY` | 无 | 模型端点 API Key |
-| `OPENAI_MODEL` | 无 | 分类、提取和回答使用的模型名 |
-| `OPENAI_TIMEOUT_SECONDS` | `30` | 单次模型请求超时 |
+| `OPENAI_SITE` | `official` | `official` 或自定义站点名称 |
+| `OPENAI_BASE_URL` | 官方为 `https://api.openai.com/v1` | OpenAI-compatible API 根地址；官方站点留空 |
+| `OPENAI_API_MODE` | `responses` | `responses` 或 `chat_completions` |
+| `OPENAI_API_KEY` | 无 | 必填；模型端点 API Key |
+| `OPENAI_MODEL` | 无 | 必填；分类和提取使用的模型名 |
+| `OPENAI_TIMEOUT_SECONDS` | `30` | 单次模型 HTTP 请求超时，范围 1–300 秒 |
 
-不要把 API Key、本地数据库或构建产物提交到 Git。
+自定义远程 endpoint 必须使用 HTTPS；HTTP 只允许指向本机 loopback。`OPENAI_SITE=official` 时 `OPENAI_BASE_URL` 必须留空。`OPENAI_BASE_URL` 应填写 API 根地址（通常以 `/v1` 结尾），不要附加 `/responses` 或 `/chat/completions`。
+
+不要把 API Key、本地数据库、日志或 `node_modules/` 提交到 Git。
 
 ## HTTP API
 
@@ -111,27 +123,26 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 
 系统会把查询拆成实体、主题、相对时间和可选状态/字段条件。结果以 Entry 为基本证据单元，因此同一问题可以跨多个 Bucket 返回，并在最终回答中标注来源。
 
-## Workspace
+## TypeScript 目录
 
-| crate | 职责 |
+| 路径 | 职责 |
 |---|---|
-| `doggie-domain` | 领域模型、分类结果、低信息和置信度门控 |
-| `doggie-protocol` | 严格 JSON 契约和模型输出校验 |
-| `doggie-llm` | 模型端点配置、HTTP transport、Structured Outputs 适配和 response 归一化 |
-| `doggie-agent-runtime` | 受控工具 Harness、工具轮次/参数/输出限制和对话上下文组装 |
-| `doggie-storage-sqlite` | canonical SQLite、事务、查询和历史导入 |
-| `doggie-application` | 归档、查询、纠错、状态和对话服务 |
-| `doggie-engine` | 组合模型与服务，生成产品投影 |
-| `doggie-local-web` | HTTP 路由、静态前端资源托管和进程入口 |
+| `src/main.ts` | TypeScript Web 生产入口、启动日志和信号关闭 |
+| `src/runtime/` | `.env`/运行配置、composition root 和生命周期 |
+| `src/domain/` | 领域模型、分类后处理和低信息安全门控 |
+| `src/application/` | 归档、确认、查询、纠错和 Bucket 状态服务 |
+| `src/storage/` | `node:sqlite` canonical schema、迁移、事务和查询 |
+| `src/llm/` | endpoint、HTTP transport、结构化输出和 wire response |
+| `src/http/` | Hono API、DTO、安全边界和 Node HTTP adapter |
+| `src/mcp/` | Doggie MCP stdio server 和受控记忆工具 |
+| `apps/doggie-local-web/frontend/` | 无 bundler 的浏览器 TypeScript UI |
+
+Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品启动路径。
 
 更多说明见：
 
-- [`docs/CODE_READING_GUIDE.md`](docs/CODE_READING_GUIDE.md)：当前架构下的代码阅读路径和模块索引
-- [`docs/PROJECT_GUIDE.md`](docs/PROJECT_GUIDE.md)：当前项目详解、关键流程和后续提升指南
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/AGENT_HARNESS.md`](docs/AGENT_HARNESS.md)
-- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md)
-- [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md)
-- [`docs/SQLITE_MIGRATIONS.md`](docs/SQLITE_MIGRATIONS.md)
-- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)
-- [`docs/PROMPTS.md`](docs/PROMPTS.md)
+- [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)：TypeScript 项目拆解和阅读路径
+- [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)：Claude/Codex MCP 接入
+- [`docs/PLAN.md`](docs/PLAN.md)：阶段计划和当前状态
+- [`docs/INVARIANTS.md`](docs/INVARIANTS.md)：可执行行为规格
+- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)：测试与人工验收

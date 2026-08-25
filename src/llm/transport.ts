@@ -60,6 +60,8 @@ export interface StructuredOutputTransport {
 
 export type LlmHttpTransportConfig = {
   readonly timeoutMs?: number | undefined;
+  /** Optional process-level cancellation. Request-level cancellation is T12. */
+  readonly signal?: AbortSignal | undefined;
 };
 
 export class LlmTransportConfigurationError extends Error {
@@ -80,6 +82,7 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
   readonly #timeoutMs: number;
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
+  readonly #signal: AbortSignal | undefined;
 
   constructor(
     apiKey: string,
@@ -109,6 +112,7 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
     this.#apiKey = cleanedApiKey;
     this.#fetch = fetchImplementation;
     this.#timeoutMs = timeoutMs;
+    this.#signal = config.signal;
   }
 
   get timeoutMs(): number {
@@ -135,8 +139,13 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     timeout.unref();
+    const signal =
+      this.#signal === undefined
+        ? controller.signal
+        : AbortSignal.any([controller.signal, this.#signal]);
 
     try {
+      if (signal.aborted) throw LlmTransportError.request();
       const response = await this.#fetch(request.url, {
         method: "POST",
         headers: {
@@ -144,7 +153,7 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
           "content-type": "application/json",
         },
         body: JSON.stringify(request.body),
-        signal: controller.signal,
+        signal,
       });
       if (!response.ok) {
         throw LlmTransportError.httpStatus(response.status);

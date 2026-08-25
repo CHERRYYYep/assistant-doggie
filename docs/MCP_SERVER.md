@@ -60,10 +60,22 @@ MCP 使用标准输入/输出传输。标准输出只用于 MCP JSON-RPC；错�
 2. 兼容变量 `RUST_DATABASE_PATH`；
 3. 仓库根目录的 `doggie.db`。
 
-如果 Web UI 使用了自定义数据库路径，MCP 进程也必须指向同一个文件：
+如果 Web UI 使用了自定义数据库路径，MCP 进程也必须指向同一个文件。建议 Web 的 `.env` 和 MCP 客户端注册都使用绝对路径：
+
+```dotenv
+DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
+```
+
+Web 启动：
 
 ```bash
-DOGGIE_DATABASE_PATH=/absolute/path/doggie.db npm run mcp
+npm start
+```
+
+手工启动 MCP：
+
+```bash
+DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db npm run mcp
 ```
 
 SQLite 已配置 WAL 和 `busy_timeout`，允许本地 Web 与 MCP 进程共享同一 canonical database。
@@ -79,12 +91,27 @@ claude mcp add doggie -s user -- /home/cherry/assistant-doggie/bin/doggie-mcp
 如果需要指定其他数据库，可以把 `env` 作为 stdio 命令：
 
 ```bash
-claude mcp add doggie -s user -- \
-  env DOGGIE_DATABASE_PATH=/absolute/path/doggie.db \
-  /home/cherry/assistant-doggie/bin/doggie-mcp
+claude mcp add doggie -s user \
+  -e DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db \
+  -- /home/cherry/assistant-doggie/bin/doggie-mcp
 ```
 
 注册后可使用 Claude CLI 自带的 MCP 查看命令确认 `doggie` 已加载，并检查四个工具是否可见。
+
+## 注册到 Codex
+
+```bash
+codex mcp add doggie \
+  --env DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db \
+  -- /home/cherry/assistant-doggie/bin/doggie-mcp
+```
+
+验证：
+
+```bash
+codex mcp list
+codex mcp get doggie --json
+```
 
 ## 资源上限
 

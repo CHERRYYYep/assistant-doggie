@@ -1,5 +1,7 @@
 # 当前项目详解与后续提升指南
 
+> **迁移说明（2026-08-25）**：本文主体记录冻结的 Rust oracle，路径和启动命令不再代表当前 `dev_ts` 产品实现。TypeScript 的实际启动方式是 `npm start`；当前模块地图请优先阅读 `docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`、`docs/PLAN.md` 和根目录 `README.md`。Rust 内容仅用于裁决迁移前行为。
+
 本文档面向后续开发者和产品迭代者，用仓库当前实现解释 Doggie 的整体结构、关键数据流、模块职责、API 行为、测试地图以及可继续提升的方向。它不是替代源码的接口规范；当行为存在疑问时，以 `crates/` 和 `apps/` 下当前源码和测试为准。
 
 ## 1. 项目定位与核心心智模型
@@ -38,40 +40,26 @@
 
 ## 2. 运行入口与配置
 
-唯一应用入口是 `doggie-local-web`：
+当前 TypeScript 应用入口是 `src/main.ts`：
 
 ```bash
+npm ci
 cp .env.example .env
 # 编辑 .env：至少配置 OPENAI_API_KEY 和 OPENAI_MODEL
-cargo run -p doggie-local-web
+npm start
 ```
 
 默认行为：
 
-- HTTP 地址：`127.0.0.1:8787`
-- 数据库：`doggie.db`
-- 运行时：Doggie canonical SQLite schema
-- 模型端点：官方 OpenAI 或兼容 Responses / Chat Completions 的 endpoint
+- HTTP 地址：`127.0.0.1:8787`，只允许 loopback；
+- 数据库：启动工作目录下的 `doggie.db`；
+- 存储：Node 24 内置 `node:sqlite` + Doggie canonical schema；
+- 模型端点：官方 OpenAI 或兼容 Responses / Chat Completions 的 endpoint；
+- 前端：Hono/Node HTTP 同源提供，启动时使用 Node 24 原生 type stripping。
 
-主要环境变量：
+`src/runtime/config.ts` 负责 `.env`、shell 优先级、模型 endpoint、timeout、绝对数据库路径和监听地址校验；`src/runtime/local-web.ts` 负责组装 Store、模型、ArchiveRuntime、HTTP API 和 server；`src/main.ts` 负责生产启动与 SIGINT/SIGTERM 关闭。
 
-| 变量 | 说明 |
-|---|---|
-| `DOGGIE_DATABASE_PATH` | canonical SQLite 文件路径 |
-| `DOGGIE_SERVER_ADDRESS` | HTTP 监听地址 |
-| `OPENAI_SITE` | `official` 或自定义站点名称 |
-| `OPENAI_BASE_URL` | 兼容端点根地址；官方站点可留空 |
-| `OPENAI_API_MODE` | `responses` 或 `chat_completions` |
-| `OPENAI_API_KEY` | 模型 API Key |
-| `OPENAI_MODEL` | 分类、提取和回答使用的模型名 |
-| `OPENAI_TIMEOUT_SECONDS` | 单次模型 HTTP 请求超时 |
-
-`apps/doggie-local-web/src/main.rs` 负责：
-
-1. 读取 `.env` 和环境变量；shell 环境优先。
-2. 构造 `LlmEndpointConfig`、HTTP transport、`StructuredOutputAdapter`。
-3. 构造 `StructuredMemoryModel`、`CanonicalService`、`CanonicalRuntime`。
-4. 构造 `AgentChatResponder` 并启动 HTTP server。
+主要环境变量以根目录 `.env.example` 和 `README.md` 为准。Web 与 Claude/Codex MCP 应显式使用同一个绝对 `DOGGIE_DATABASE_PATH`。
 
 ## 3. Workspace 分层地图
 

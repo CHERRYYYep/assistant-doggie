@@ -178,3 +178,36 @@ test("transport configuration rejects empty keys and invalid timeouts", () => {
       error.kind === "missing_api_key",
   );
 });
+
+test("process-level cancellation aborts an in-flight model request without leaking credentials", async () => {
+  const controller = new AbortController();
+  let observedSignal: AbortSignal | undefined;
+  const transport = new FetchStructuredOutputTransport(
+    "cancel-secret",
+    { timeoutMs: 30_000, signal: controller.signal },
+    fakeFetch(async (_input, init) => {
+      const signal = init?.signal as AbortSignal;
+      observedSignal = signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    }),
+  );
+  const pending = transport.send({
+    url: "http://localhost/v1/responses",
+    body: {},
+  });
+  controller.abort();
+  await assert.rejects(
+    pending,
+    (error: unknown) =>
+      error instanceof LlmTransportError &&
+      error.kind === "request" &&
+      !error.message.includes("cancel-secret"),
+  );
+  assert.equal(observedSignal?.aborted, true);
+});

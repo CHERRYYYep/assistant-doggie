@@ -61,7 +61,16 @@ npm run mcp
 
 MCP 使用 stdio；stdout 只能输出 MCP 协议数据，诊断日志必须写入 stderr。
 
-当前仓库尚未提供完整的 TypeScript Web 进程 bootstrap/package script。不得虚构 `npm start`、`npm run dev` 或 `node src/main.ts`。实现 Web 启动入口时，应组装 `src/storage`、`src/llm`、`src/application` 和 `src/http`，并在 `package.json` 中提供明确脚本，同时更新 README 和本文件。
+启动 TypeScript Web MVP：
+
+```bash
+cp .env.example .env
+chmod 600 .env
+# 填写 OPENAI_API_KEY 和 OPENAI_MODEL
+npm start
+```
+
+生产入口是 `src/main.ts`，配置和 composition root 位于 `src/runtime/`。Web 只允许监听 loopback；不得把 `DOGGIE_SERVER_ADDRESS` 放宽到 `0.0.0.0` 或 `::`。Web 与 MCP 必须显式使用同一个 `DOGGIE_DATABASE_PATH`。
 
 本地数据库、`.env`、API Key、`node_modules/`、日志、评测输出和构建产物不得提交。
 
