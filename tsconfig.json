@@ -1,0 +1,38 @@
+{
+  "compilerOptions": {
+    // Node 24 strips types at runtime rather than compiling, so `tsc` is only
+    // ever a checker. `erasableSyntaxOnly` makes the compiler reject any
+    // construct that cannot be stripped (enums, namespaces, parameter
+    // properties), which keeps `node src/main.ts` working by construction.
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+
+    "target": "esnext",
+    "lib": ["esnext", "dom"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "types": ["node"],
+
+    // Maximum strictness. The Rust implementation this replaces got its
+    // safety from the compiler; this is the closest equivalent.
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "isolatedModules": true
+  },
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "apps/doggie-local-web/frontend/**/*.ts"
+  ],
+  "exclude": ["node_modules", "target", "crates"]
+}

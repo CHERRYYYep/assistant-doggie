@@ -5,4 +5,6 @@
 # What changed?
 
 # Tests:
-# - pytest
+# - cargo fmt --all -- --check
+# - cargo clippy --workspace --all-targets --offline -- -D warnings
+# - cargo test --workspace --offline

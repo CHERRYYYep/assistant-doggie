@@ -1,306 +1,63 @@
-# 测试与验收计划
+# Doggie 测试与验收计划
 
-## 1. 测试目标
+## 1. 固定门槛
 
-MVP 的测试重点不是覆盖所有代码，而是验证核心闭环稳定：
+每次提交前运行：
 
-```text
-单会话输入 → 直接回答或工具调用 → 记忆读取/写入 → 历史展示
-归档输入 → 分类 → 提取 → 保存 → 展示 → 纠错 → 搜索
+```bash
+npm run check
+git diff --check
 ```
 
-## 2. 测试类型
+Rust workspace 只在需要裁决迁移前行为或重新生成 parity fixture 时运行，不属于 TypeScript 产品的日常门禁。
 
-### 2.1 单元测试
+## 2. 测试分层
+
+### Core
+
+覆盖 Bucket 类型/状态、分类 action、候选排序、confidence 门控、低信息输入、时间解析和查询计划边界。
+
+### Protocol、LLM 与 Agent Runtime
+
+覆盖严格 JSON 字段、未知字段、长度限制、Responses/Chat Completions 请求体、拒绝/截断/非法 JSON、网络错误分类、重试上限、工具 allow-list 和上下文资源上限。
+
+### Store
+
+覆盖 canonical schema 初始化/重开、外键、事务提交和回滚、归档图、对话消息、纠错、状态变化、关键词查询、结构化字段查询和 evidence 去重。所有数据库使用临时文件。
+
+### Application 与 Engine
 
 覆盖：
 
-- 数据库 CRUD。
-- bucket_service。
-- search_service。
-- correction_service 的规则部分。
-- schema 校验。
-- Agent 工具参数解析、工具白名单和历史消息装配。
+- 自动追加、新建和 `ask_user` 不写 Entry；
+- 低信息输入即使高 confidence 也要求确认；
+- 确认必须绑定 pending attempt 和原文；
+- 多 Entry、多 Bucket、时间/状态/结构化筛选的自然语言查询；
+- 失败不产生部分写入；
+- 重启后对话和归档状态可恢复。
 
-### 2.2 集成测试
+### Local Web UI
 
-覆盖：
+覆盖 `.env` 与 shell 优先级、配置脱敏、loopback 监听限制、生产 bootstrap、健康检查、静态 UI、API 参数校验、UTF-8 query 解码、归档 projection、确认卡片字段、四种确认选项、修改 Bucket 入口和稳定错误 JSON。使用 fake model + 临时文件数据库运行真实 Node socket，验证重启恢复和 MCP proposal → Web history → confirmation 共库链路。静态前端资源还要检查 Markdown 渲染契约：代码围栏（含 `bash` 语言标签）、段落/列表/标题/引用/链接、代码换行保留、危险 URL 拒绝、HTML 转义以及渲染器不能被重复声明覆盖。
 
-- archive_user_input 完整流程。
-- LLM mock 后的分类和提取。
-- 创建 bucket + entry + structured records。
-- Responses API 与 Chat Completions 的多轮工具调用。
-- 单一对话在多次请求之间的上下文复用。
+## 3. 手工验收
 
-### 2.3 手动测试
-
-使用 `tests/fixtures/sample_inputs.md` 逐条输入。
-
-## 3. 样例场景
-
-### 场景 0：单会话回答与工具调用
-
-先输入：
-
-```text
-我在排查支付回调 502，先帮我分析可能原因和检查顺序。
-```
-
-期望：
-
-- 助手直接给出问题分析和可执行步骤。
-- 因为输入包含正在发生的故障状态，模型同时主动调用归档工具。
-- `chat_messages` 保存 user、tool 和 assistant 消息。
-
-单独输入一个没有新增工作事实的问题：
-
-```text
-Python 的上下文管理器是什么？
-```
-
-期望：
-
-- 助手正常回答。
-- 不调用写入工具，不创建无意义 Bucket。
-
-继续输入：
-
-```text
-查一下之前支付问题的记录，再结合历史告诉我下一步。
-```
-
-期望：
-
-- 模型调用 `search_memory`，必要时继续调用 `get_bucket_detail`。
-- 工具调用及结果作为 tool 消息保存并在 UI 中可展开查看。
-- 最终回答结合本轮问题与已持久化的上一轮上下文。
-
-再输入：
-
-```text
-请记住：支付回调问题已定位为第三方证书过期。
-```
-
-期望：
-
-- 模型调用受控写入工具，而不是声称已保存但不执行。
-- 写入仍经过现有 Bucket 分类、提取和事务逻辑。
-
-### 场景 1：Incident 新建与追加
-
-输入：
-
-```text
-支付回调从 10:20 开始大量失败，日志里第三方返回 502，影响订单确认。
-```
-
-期望：
-
-- 创建 bucket。
-- type = incident。
-- evidence 包含第三方 502。
-- timeline 包含 10:20。
-
-继续输入：
-
-```text
-刚才那个支付问题，10:40 切到备用通道后恢复了，后面要补复盘。
-```
-
-期望：
-
-- append_existing。
-- bucket 仍是同一个。
-- todo 包含补复盘。
-- decision/处置包含切备用通道。
-
-### 场景 2：Experiment 新建与追加
-
-输入：
-
-```text
-今天压测接口 A，QPS 到 1200 后 P99 延迟升到 2.3s，CPU 85%。
-```
-
-期望：
-
-- 创建 experiment。
-- evidence 包含 QPS、P99、CPU。
-
-继续输入：
-
-```text
-把连接池从 50 调到 100 后，P99 降到了 1.4s。
-```
-
-期望：
-
-- 追加到接口 A 压测 bucket。
-- evidence 包含参数调整和结果变化。
-
-### 场景 3：Meeting
-
-输入：
-
-```text
-下午和设计同学讨论了首页改版，结论是先保留搜索入口，卡片布局下周再验证。
-```
-
-期望：
-
-- type = meeting 或 decision。
-- decision 包含保留搜索入口。
-- todo 包含下周验证卡片布局。
-
-### 场景 4：纠错
-
-前置：最近一条被放入支付 bucket。
-
-输入：
-
-```text
-刚才那条不要放到支付问题，放到接口稳定性问题里。
-```
-
-期望：
-
-- 最近 entry 被移动。
-- corrections 表新增记录。
-- 两个 bucket 更新时间变化。
-
-### 场景 5：搜索
-
-输入：
-
-```text
-帮我找之前支付回调失败的问题。
-```
-
-期望：
-
-- 返回支付回调相关 bucket。
-- 显示摘要和最近更新时间。
-
-## 4. 评估指标
-
-### 分类评估集
-
-维护不少于 50 条人工标注案例，目标逐步扩充到 100 条。案例必须固定输入、候选 Bucket、当前焦点、期望 action、期望 bucket_id、是否应询问和错误代价。不要让待评估的同一次 LLM 调用生成标准答案。
-
-### 分类核心指标
-
-分别统计：
-
-```text
-action 准确率
-已有 Bucket 选择准确率
-自动归档准确率
-ask_user 覆盖率
-严重误合并数量
-```
-
-MVP 目标：
-
-- action 准确率 >= 85%。
-- 已有 Bucket 选择准确率 >= 80%。
-- 高置信度自动归档准确率 >= 90%。
-- 标注集中的严重误合并为 0；出现时必须单独分析。
-
-### 置信度校准
-
-`confidence` 是 LLM 的主观信号，不直接等于正确概率。按 `<0.55`、`0.55-0.85`、`>=0.85` 分桶，统计每档实际正确率、询问率和纠错率。只有评估数据支持时才调整自动归档阈值。
-
-### 结构化提取
-
-分别检查 Summary 忠实性、Todo Precision/Recall、Evidence 事实准确性、Timeline 时间保持和严重编造。`tests/fixtures/extraction_cases.json` 保存人工定义的必需术语与禁止事实；`app.extraction_evaluation` 自动计算各字段术语召回，并标记禁止事实和原文不存在的数字。
-
-自动检查不能判断改写后的语义、因果关系、否定表达、单位变化或无数字编造。每份真实报告仍需人工逐条回答：
-
-1. Summary 是否只包含原文事实；
-2. Todo 是否真的是未完成动作，是否有遗漏或误报；
-3. Evidence 是否能直接在原文定位；
-4. Decision 与 Hypothesis 是否被混淆；
-5. 时间表达是否被错误确定化。
-
-MVP 目标：
-
-- 提取内容人工可用率 >= 80%。
-- Evidence 严重编造为 0。
-- Todo Precision >= 85%，Recall >= 70%。
-- 固定必需事实术语召回率单独按字段报告，不合成为虚假的“总体置信度”。
-
-### 纠错与搜索
-
-- 最近 Entry 移动成功率 >= 95%。
-- 10 条固定搜索 query 的目标 Bucket 召回率 >= 80%。
-
-## 5. LLM 测试建议
-
-LLM 输出不稳定，所以测试分两层：
-
-1. mock LLM 输出，测试业务逻辑；
-2. 少量真实 LLM 调用，测试 Prompt 和模型效果。
-
-不要让普通单元测试依赖真实 API，否则测试慢且花钱。常用命令：
+启动：
 
 ```bash
-pytest -q
-python -m app.evaluation --baseline
-python -m app.live_evaluation \
-  --limit 3 \
-  --output /tmp/classification-live-report.json
-python -m app.live_extraction_evaluation \
-  --limit 3 \
-  --reference-date 2026-08-03 \
-  --output /tmp/extraction-live-report.json
+npm ci
+cp .env.example .env
+# 填写 OPENAI_API_KEY 和 OPENAI_MODEL
+npm start
 ```
 
-前两条不调用真实 API。后两条会使用 `.env` 中选定站点的 Base URL、Key、API 模式和模型，并可能产生费用。报告必须保存站点名、Base URL、API 模式、模型名、Prompt 版本、日期、案例路径、完整预测和指标。真实调用失败时，应保留错误原因，不能用 mock 或规则基线冒充真实模型结果。中转站需分别验证其是否支持 Responses API 或 Chat Completions Structured Outputs。
+依次验证：
 
-离线复算已有报告：
+1. 输入一个含具体数字/事实的新记录，确认自动归档；
+2. 输入“它现在正常了”或“压测结果更新了”，确认页面显示“尚未保存”和完整四项选择；
+3. 选择推荐 Bucket、其他 Bucket、新建和不保存；
+4. 在归档结果中移动 Entry，确认 Bucket 详情和审计同步更新；
+5. 输入“查询接口 A 最近两周的压测结果”，确认结果可跨多个 Entry/Bucket，并展示 query plan 和 evidence 来源；
+6. 重启服务，确认聊天历史、Bucket 和 pending 状态符合预期。
 
-```bash
-python -m app.evaluation /tmp/classification-live-report.json
-python -m app.extraction_evaluation /tmp/extraction-live-report.json
-```
-
-## 6. 回归测试清单
-
-自动化映射：
-
-- `tests/test_llm.py`：Structured Outputs 封装和错误分支；
-- `tests/test_agent_service.py`：单会话持久化、Responses/Chat Completions 工具循环和工具白名单；
-- `tests/test_classify_service.py`、`tests/test_evaluation.py`：分类、门控和指标；
-- `tests/test_live_evaluation.py`：真实分类运行器的版本化元数据和报告落盘；
-- `tests/test_extraction_evaluation.py`、`tests/test_live_extraction_evaluation.py`：提取遗漏、编造风险提示和真实报告结构；
-- `tests/test_archive_service.py`、`tests/test_extraction_and_bucket_memory.py`：事务归档和长期记忆；
-- `tests/test_correction_service.py`：纠错移动和审计；
-- `tests/test_search_and_view.py`、`tests/test_ui.py`：搜索、展示和 Streamlit；
-- `tests/test_mvp_regression.py`：Incident、Experiment、Meeting、纠错和搜索串联回归。
-
-每次改 Prompt 或分类逻辑后，至少手动跑：
-
-- incident 新建。
-- incident 追加。
-- experiment 新建。
-- experiment 追加。
-- meeting 提取 TODO。
-- 纠错移动最近 entry。
-- 搜索历史 bucket。
-
-## 7. bug 记录模板
-
-```md
-## Bug 标题
-
-### 输入
-
-### 当前结果
-
-### 期望结果
-
-### 判断
-- 分类错 / 提取错 / 保存错 / 展示错 / 搜索错
-
-### 修复方案
-```
+普通测试不得调用真实模型。真实模型只用于明确的人工 smoke test，并且不得把 API Key 或真实数据库带入测试产物。

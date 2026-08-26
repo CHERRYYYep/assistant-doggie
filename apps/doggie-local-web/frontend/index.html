@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Doggie 工作记忆</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div>
+            <h1>Doggie 工作记忆</h1>
+            <small>Doggie 本地工作记忆 · 类似 ChatGPT 的长期对话</small>
+          </div>
+          <button id="new-chat" title="清空当前输入">新对话</button>
+        </div>
+        <section class="sidebar-section">
+          <div class="section-heading">
+            <h2>活跃 Bucket</h2>
+            <button id="refresh-buckets">刷新</button>
+          </div>
+          <div id="buckets" class="bucket-list muted">加载中…</div>
+        </section>
+        <section class="sidebar-section">
+          <div class="section-heading"><h2>Bucket 详情</h2></div>
+          <div id="detail" class="detail-panel muted">
+            选择一个 Bucket 查看 Entry 和结构化记忆。
+          </div>
+        </section>
+        <section class="sidebar-section query-box">
+          <div class="section-heading"><h2>语言查询</h2></div>
+          <input id="memory-query" type="text" placeholder="例如：接口 A 最近两周的压测结果" />
+          <button id="memory-query-button" class="primary">查询记忆</button>
+          <div id="memory-query-result" class="query-result muted">
+            系统会解析实体、主题、时间范围和状态，并合并多个 Bucket 的证据。
+          </div>
+        </section>
+        <div class="side-footer">自动归档由服务端完成；低信息输入会先询问，不会静默写错。</div>
+      </aside>
+      <main class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <h2>长期对话</h2>
+            <span>每条用户消息都会先进入归档安全门控</span>
+          </div>
+          <span id="selected-bucket-label">自动关联最近和热门 Bucket</span>
+        </header>
+        <section id="chat-messages" class="chat-messages" aria-live="polite">
+          <div class="empty-chat">
+            <h3>从一条工作事实开始</h3>
+            <p>例如：接口 A 最近两周的压测结果有明显回归。</p>
+            <p>我会自动归档；如果目标不明确，会展示推荐、备选、创建和不保存选项。</p>
+          </div>
+        </section>
+        <div class="composer-wrap">
+          <div class="composer">
+            <textarea
+              id="chat-input"
+              rows="1"
+              placeholder="发送消息…（Enter 发送，Shift+Enter 换行）"
+            ></textarea
+            ><button id="chat-send" class="primary">发送</button>
+          </div>
+          <div id="chat-status" class="chat-status"></div>
+        </div>
+      </main>
+    </div>
+    <script type="module" src="assets/app.ts"></script>
+  </body>
+</html>

@@ -1,108 +1,177 @@
-# Personal Work Memory Agent
+# Doggie
 
-一个面向个人工作的长期事务记忆 Agent。用户把日志、想法、会议结论、实验记录和排障证据输入系统后，Agent 会判断应追加到已有 `Bucket`、创建新 `Bucket`，还是先请求用户确认，并把原文与结构化结果保存为可追溯记忆。
+一个面向个人工作的本地长期记忆 Agent。用户可以像使用聊天助手一样输入日志、想法、会议结论、实验记录或排障事实；Doggie engine 会完成理解、查询、归档和后续纠错。
 
-> 当前仓库已完成本地单用户 Agent MVP：单一持久化对话、问题回答、受控工具 Harness、Bucket 分类与记忆、事务归档、纠错和 SQLite 搜索均已实现。
+```text
+对话输入
+  → 分类已有/新建 Bucket
+  → 低信息安全门控
+  → 结构化提取
+  → Doggie canonical SQLite 持久化
+  → 返回可解释的归档结果
+```
 
-## 核心理念
+`doggie-local-web` 是唯一应用入口，提供本地 HTTP API，并同源托管独立静态 Web UI 资源。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
 
-- 一个长期对话，不要求用户在聊天与记忆工具之间手工切换上下文。
-- 普通问题直接分析和回答；每轮默认加载活跃 Bucket 概览，并主动保存值得长期跟踪的工作事实。
-- Bucket 表示持续存在的事务上下文，不是无限增长的聊天记录。
-- 仅高置信度且候选唯一时自动归档；空工作区中有效的新建判断可直接创建首个 Bucket。
-- 保存原始 Entry，并提取摘要、Todo、Evidence、Timeline 和 Decision。
-- 所有派生信息可追溯到原文，误归档可移动并保留纠错记录。
-- `confidence` 是待校准的风险信号，不等于真实正确概率。
+## 当前开发状态
 
-## MVP 能力
+当前目标分支是 `dev_ts`，产品实现以 TypeScript 为准：
 
-1. 在唯一的长期对话中持久化用户消息、助手回答和工具执行记录。
-2. 使用 OpenAI Responses API 或兼容的 Chat Completions 生成问题解决方案。
-3. 通过受控 Agent Harness 列出、搜索、读取和写入 Bucket 记忆。
-4. 从当前焦点和活跃 Bucket 中构造有限候选，并使用 Structured Outputs 分类和提取。
-5. 校验模型返回的 Bucket ID，并应用可配置置信度门控。
-6. 在同一事务中保存 Bucket、Entry、结构化记录和分类审计。
-7. 支持确认追加、确认新建和移动最近 Entry；首次无 Bucket 时始终提供可编辑的新建入口。
-8. Streamlit 主区域专注长期对话，Bucket 记忆放在可展开的独立侧边栏，不再提供重复的手工归档页签。
+| 项目 | 状态 |
+|---|---|
+| M1：TypeScript 功能对等 | ✅ 已完成 |
+| M2：评测、MCP 与可启动 Web MVP | ✅ 已完成（T10b） |
+| M3：Agent 控制面 | 🚧 下一步从 T11 `PendingAction` 泛化开始 |
+| Rust workspace | 冻结的行为 oracle，不是产品运行路径 |
 
-Harness 的工具、上下文和安全边界见 [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)。
+协作者第一次查看仓库时，建议按这个顺序阅读：
 
-## 技术栈与目录
+1. 本 README：启动项目、理解当前能力和目录；
+2. [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)：理解 TypeScript 分层、核心设计和实现路径；
+3. [`docs/PLAN.md`](docs/PLAN.md)：确认已完成阶段、当前任务和 Rust 删除条件；
+4. [`docs/INVARIANTS.md`](docs/INVARIANTS.md) 与 [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)：修改代码前确认不可破坏的行为和回归要求；
+5. 需要接入 Claude/Codex 时再阅读 [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)。
 
-- Python、SQLite、SQLAlchemy、Pydantic、OpenAI API、Streamlit、Pytest。
-- `app/`：模型、Schema、Prompt、LLM 封装和业务服务。
-- `ui/streamlit_app.py`：本地交互界面。
-- `tests/`：单元、集成、UI 测试与固定评估样例。
-- `docs/`：产品、架构、数据模型、测试和开发说明。
+## 当前能力
+
+- **ChatGPT 风格单会话**：保存 user、assistant 和 tool 消息，重启后恢复对话历史。
+- **自动归档**：安全地追加到已有 Bucket 或创建新 Bucket，并保留 Entry 原文和结构化 memory。
+- **确认式归档**：不确定时返回推荐 Bucket、备选 Bucket、模型判断理由、创建新 Bucket 和“不保存”选项。
+- **低信息保护**：输入只有模糊指代或状态短句时，即使模型给出高置信度，也优先询问用户。
+- **可纠错**：归档结果提供修改 Bucket 的入口，也支持通过 API 移动 Entry、修改 Bucket 状态。
+- **自然语言记忆查询**：支持 Bucket 名称、Entry 原文、summary、tag、entity、时间范围、状态和结构化字段筛选。
+- **查询聚合**：关键词与结构化条件组合，按结果质量重排，去重 evidence，并可合并多个 Bucket 的结果。
 
 ## 快速开始
 
+需要 Node.js 24 或更新版本，以及一个支持严格结构化输出的 OpenAI 或 OpenAI-compatible 模型端点。
+
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+npm ci
 cp .env.example .env
-# 在 .env 中选择 API 站点，并填写该站点的 Key 与模型
-python -m app.main
-streamlit run ui/streamlit_app.py
+chmod 600 .env
+# 编辑 .env，至少填写 OPENAI_API_KEY 和 OPENAI_MODEL
+npm start
 ```
 
-API 站点通过 `.env` 选择。官方 OpenAI 使用：
+启动成功后终端会输出实际地址，默认是：
 
 ```text
-OPENAI_SITE=official
-OPENAI_API_MODE=responses
-OPENAI_API_KEY=你的官方Key
-OPENAI_MODEL=该站点可用的模型
+http://127.0.0.1:8787/
 ```
 
-OpenAI 兼容中转站使用：
+程序自动读取**当前工作目录**的 `.env`，shell 环境变量优先。相对数据库路径也相对于当前工作目录解析；若要让 Web、Claude 和 Codex 的 MCP 共享记忆，推荐统一填写绝对路径：
 
-```text
-OPENAI_SITE=my-relay
-OPENAI_BASE_URL=https://relay.example.com/v1
-OPENAI_API_MODE=responses
-OPENAI_API_KEY=中转站签发的Key
-OPENAI_MODEL=中转站支持的模型名
+```dotenv
+DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
 ```
 
-如果中转站没有实现 `/responses`，将 `OPENAI_API_MODE` 改为 `chat_completions`。`OPENAI_BASE_URL` 应填写 API 根路径（通常以 `/v1` 结尾），不要填写具体的 `/responses` 或 `/chat/completions` 路径。修改配置后重启应用。
+本地 Web UI 源文件位于 `apps/doggie-local-web/frontend/`，由 TypeScript `node:http` + Hono server 同源提供。Node 24 在启动时剥离浏览器资源中的 TypeScript 类型，不需要 Vite、Webpack 或 JavaScript 构建产物。
 
-运行自动化测试和透明规则分类基线：
+检查代码与测试：
 
 ```bash
-pytest -q
-python -m app.evaluation --baseline
+npm run check
 ```
 
-少量真实模型分类与提取评估会产生 API 调用：
+当前 Web MVP 的 assistant 回复聚焦归档状态、确认和确定性记忆查询。带只读工具循环的完整模型回答以及 Claude/Codex 任务编排仍属于计划中的 T13，不在 T10b 提前实现。
+
+## 配置
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `DOGGIE_DATABASE_PATH` | `doggie.db` | canonical SQLite 文件路径；相对路径基于启动工作目录 |
+| `DOGGIE_SERVER_ADDRESS` | `127.0.0.1:8787` | 只接受字面量 `127.0.0.1` 或 `[::1]` 的监听地址 |
+| `RUST_DATABASE_PATH` / `RUST_SERVER_ADDRESS` | 无 | 旧变量名兼容读取；新配置请使用 `DOGGIE_*` |
+| `OPENAI_SITE` | `official` | `official` 或自定义站点名称 |
+| `OPENAI_BASE_URL` | 官方为 `https://api.openai.com/v1` | OpenAI-compatible API 根地址；官方站点留空 |
+| `OPENAI_API_MODE` | `responses` | `responses` 或 `chat_completions` |
+| `OPENAI_API_KEY` | 无 | 必填；模型端点 API Key |
+| `OPENAI_MODEL` | 无 | 必填；分类和提取使用的模型名 |
+| `OPENAI_TIMEOUT_SECONDS` | `30` | 单次模型 HTTP 请求超时，范围 1–300 秒 |
+
+自定义远程 endpoint 必须使用 HTTPS；HTTP 只允许指向本机 loopback。`OPENAI_SITE=official` 时 `OPENAI_BASE_URL` 必须留空。`OPENAI_BASE_URL` 应填写 API 根地址（通常以 `/v1` 结尾），不要附加 `/responses` 或 `/chat/completions`。
+
+不要把 API Key、本地数据库、日志或 `node_modules/` 提交到 Git。
+
+## HTTP API
+
+成功响应均为 JSON，请求中的文本字段不能为空。
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| `POST` | `/api/chat` | 发送一轮对话；输入会先归档，再生成回答 |
+| `GET` | `/api/chat/history?limit=40` | 读取对话历史 |
+| `POST` | `/api/chat/confirm` | 提交确认后的追加、新建或不保存选择 |
+| `POST` | `/api/archive` | 执行分类、提取和自动归档 |
+| `POST` | `/api/archive/append` | 显式追加到已有 Bucket |
+| `POST` | `/api/archive/create` | 显式创建 Bucket 并保存第一条 Entry |
+| `GET` | `/api/buckets/active?limit=20` | 查看活跃 Bucket |
+| `GET` | `/api/buckets/search?q=支付&limit=20` | 搜索 Bucket 和 Entry |
+| `GET` | `/api/memory/query?q=接口%20A%20最近两周的压测结果&limit=20` | 自然语言查询记忆 |
+| `POST` | `/api/memory/query` | 使用查询文本和显式筛选条件查询 |
+| `GET` | `/api/buckets/:id` | 查看 Bucket、Entry 和 memory 详情 |
+| `DELETE` | `/api/buckets/:id` | 删除 Bucket 及其 Entry/memory/tag，并记录纠错审计 |
+| `POST` | `/api/buckets/status` | 设置 `active`、`paused`、`done` 或 `archived` |
+| `POST` | `/api/corrections/move` | 移动 Entry 并记录纠错审计 |
+| `GET` | `/health` | 健康检查 |
+
+自动归档示例：
 
 ```bash
-python -m app.live_evaluation \
-  --limit 3 \
-  --output /tmp/classification-live-report.json
-python -m app.live_extraction_evaluation \
-  --limit 3 \
-  --reference-date 2026-08-03 \
-  --output /tmp/extraction-live-report.json
+curl -s http://127.0.0.1:8787/api/chat \
+  -H 'content-type: application/json' \
+  -d '{"message":"支付回调从 10:20 开始失败，第三方返回 502。"}'
 ```
 
-报告会保留 API 站点、Base URL、接口模式、模型名、Prompt 版本、生成时间、完整结构化输出和指标。分类报告可重新交给 `app.evaluation` 计算指标；提取报告可交给 `app.extraction_evaluation` 检查必需事实遗漏、禁用事实和原文中不存在的数字。自动检查只是人工语义审查的辅助，不能独立证明提取没有幻觉。
+需要确认时，响应的 `archive_state` 为 `needs_confirmation`，客户端应完整呈现：
 
-## 文档阅读顺序
+- `recommended_bucket_id` 和 `recommended_bucket`；
+- `candidate_bucket_ids` 和 `candidate_buckets`；
+- `reason` 与 `question`；
+- 保存到推荐 Bucket、保存到其他 Bucket、创建新 Bucket、不保存；
+- 归档完成后的目标 Bucket 和“修改 Bucket”入口。
 
-1. [`docs/AGENT_HARNESS.md`](./docs/AGENT_HARNESS.md)：单会话、上下文、工具循环与安全边界。
-2. [`docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md`](./docs/PRODUCT_DOCUMENT_AND_COMPLETION_PLAN.md)：综合产品文档与后续完成规划。
-3. [`docs/PRD.md`](./docs/PRD.md)：产品目标与边界。
-4. [`docs/MVP_SPEC.md`](./docs/MVP_SPEC.md)：MVP 功能定义。
-5. [`docs/DATA_MODEL.md`](./docs/DATA_MODEL.md)：数据如何持久化。
-6. [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md)：服务和数据流。
-7. [`docs/DEVELOPMENT_GUIDE.md`](./docs/DEVELOPMENT_GUIDE.md)：逐日开发步骤。
-8. [`docs/DAYS_4_TO_10_IMPLEMENTATION.md`](./docs/DAYS_4_TO_10_IMPLEMENTATION.md)：本阶段实现、原因和限制。
-9. [`docs/LONG_TERM_BUCKET_MEMORY.md`](./docs/LONG_TERM_BUCKET_MEMORY.md)：长期 Bucket 记忆设计。
-10. [`docs/TEST_PLAN.md`](./docs/TEST_PLAN.md)：验收策略。
-11. [`docs/ROADMAP.md`](./docs/ROADMAP.md)：后续路线。
+查询示例：
 
-## 当前边界
+```bash
+curl -G http://127.0.0.1:8787/api/memory/query \
+  --data-urlencode 'q=查询接口 A 最近两周的压测结果' \
+  --data-urlencode 'limit=20'
+```
 
-MVP 暂不包含多用户、云同步、附件、向量检索和复杂 Agent 编排。`hypotheses` 与 `entities` 已能由 LLM 输出，但尚未持久化；滚动摘要是可重建缓存，原始 Entry 始终是事实来源。
+系统会把查询拆成实体、主题、相对时间和可选状态/字段条件。结果以 Entry 为基本证据单元，因此同一问题可以跨多个 Bucket 返回，并在最终回答中标注来源。
+
+## TypeScript 目录
+
+| 路径 | 职责 |
+|---|---|
+| `src/main.ts` | TypeScript Web 生产入口、启动日志和信号关闭 |
+| `src/runtime/` | `.env`/运行配置、composition root 和生命周期 |
+| `src/domain/` | 领域模型、分类后处理和低信息安全门控 |
+| `src/application/` | 归档、确认、查询、纠错和 Bucket 状态服务 |
+| `src/storage/` | `node:sqlite` canonical schema、迁移、事务和查询 |
+| `src/llm/` | endpoint、HTTP transport、结构化输出和 wire response |
+| `src/http/` | Hono API、DTO、安全边界和 Node HTTP adapter |
+| `src/mcp/` | Doggie MCP stdio server 和受控记忆工具 |
+| `apps/doggie-local-web/frontend/` | 无 bundler 的浏览器 TypeScript UI |
+
+Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品启动路径。
+
+## 文档索引
+
+为避免协作者同时看到多套 Rust/TypeScript 叙述，`dev_ts` 只保留下列仍有明确用途的文档：
+
+| 文档 | 用途 |
+|---|---|
+| [`docs/PLAN.md`](docs/PLAN.md) | 当前进度、后续阶段和 Rust oracle 删除门槛 |
+| [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md) | TypeScript 项目拆解、数据流、核心设计和代码阅读指南 |
+| [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 从历史实现固化的可执行行为规格 |
+| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | TypeScript 日常门禁和分层回归要求 |
+| [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) | MCP 工具、安全边界及 Claude/Codex 接入 |
+| [`docs/PRD.md`](docs/PRD.md) | 产品目标、用户故事和成功指标 |
+| [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md) | MVP 归档、确认、对话和查询行为 |
+| [`docs/PROMPTS.md`](docs/PROMPTS.md) | 分类、提取和纠错的 prompt 设计依据 |
+| [`docs/TS_REWRITE.md`](docs/TS_REWRITE.md) | 从 Rust 转向 TypeScript 的技术决策记录 |
+
+旧的 Rust 架构、数据模型、迁移和代码阅读文档已从 `dev_ts` 删除，避免把 Cargo/Rust 路径误认为当前产品入口；需要考古时可从 Git 历史或 `dev_rust` 分支读取。

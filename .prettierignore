@@ -1,0 +1,13 @@
+node_modules/
+target/
+crates/
+package-lock.json
+*.db
+
+# Markdown is excluded on purpose: Prettier pads table columns by UTF-16 code
+# units, but CJK glyphs render double-width, so its "aligned" tables come out
+# visibly crooked in a terminal. These docs are written and reviewed by hand.
+*.md
+
+# Golden fixtures are tab-separated with meaningful whitespace
+tests/fixtures/*.tsv

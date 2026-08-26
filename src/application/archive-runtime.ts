@@ -1,0 +1,368 @@
+/** Model-backed archive orchestration with deterministic server-side gates. */
+
+import {
+  appendExisting,
+  buildBucketCandidates,
+  createNew,
+  DEFAULT_CONFIDENCE_POLICY,
+  postprocessClassification,
+  type ClassificationResult,
+  type ConfidencePolicy,
+} from "../domain/classification.ts";
+import { requiredText } from "../domain/errors.ts";
+import type { ExtractionResult } from "../domain/memory.ts";
+import {
+  BucketStatus,
+  createBucketView,
+  type BucketType,
+  type BucketView,
+} from "../domain/types.ts";
+import {
+  classificationContract,
+  extractionContract,
+} from "../llm/contracts.ts";
+import type { StructuredOutputAdapter } from "../llm/structured-output.ts";
+import { StorageError } from "../storage/database.ts";
+import type { BucketRow, Store } from "../storage/store.ts";
+import {
+  ArchiveService,
+  type ArchiveResult,
+  type DiscardResult,
+} from "./archive.ts";
+
+export const RUNTIME_PROMPT_VERSION = "doggie-engine-v1";
+export const DEFAULT_ACTIVE_BUCKET_LIMIT = 20;
+export const DEFAULT_STRUCTURED_OUTPUT_RETRIES = 2;
+
+export const CLASSIFICATION_SYSTEM_PROMPT =
+  "你是工作记忆分类器。只返回符合 ClassificationResult schema 的 JSON。" +
+  "候选 Bucket 是服务端根据最近活跃和热门程度自动提供的唯一有效 ID，不代表用户手动选择。" +
+  "优先使用唯一且明确匹配的候选；无法安全判断时使用 ask_user。" +
+  "如果输入只有“那个/这个/它/上次/相关”等模糊指代，或只有“继续/更新了/完成了/好了/正常了/记一下”等低信息状态动作，" +
+  "且没有数字、指标、错误、日志、决定、原因或其他可核验事实，必须使用 ask_user，即使你很确定最像哪个 Bucket。不要臆造 Bucket ID。";
+
+export const EXTRACTION_SYSTEM_PROMPT =
+  "你是工作记忆提取器。只返回符合 ExtractionResult schema 的 JSON。" +
+  "完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。";
+
+export type MemoryModel = {
+  readonly modelName: string;
+  readonly classify: (
+    text: string,
+    candidates: readonly BucketView[],
+  ) => Promise<ClassificationResult>;
+  readonly extract: (text: string) => Promise<ExtractionResult>;
+};
+
+/** Production facade over the transport-independent strict output adapter. */
+export class StructuredMemoryModel implements MemoryModel {
+  readonly modelName: string;
+  readonly #adapter: StructuredOutputAdapter;
+  readonly #maxRetries: number;
+
+  constructor(
+    adapter: StructuredOutputAdapter,
+    modelName: string,
+    maxRetries: number = DEFAULT_STRUCTURED_OUTPUT_RETRIES,
+  ) {
+    this.#adapter = adapter;
+    this.modelName = requiredText(modelName, "model_name");
+    this.#maxRetries = maxRetries;
+  }
+
+  classify(
+    text: string,
+    candidates: readonly BucketView[],
+  ): Promise<ClassificationResult> {
+    return this.#adapter.parse(
+      classificationContract,
+      this.modelName,
+      CLASSIFICATION_SYSTEM_PROMPT,
+      JSON.stringify({ text, candidates: candidates.map(projectCandidate) }),
+      this.#maxRetries,
+    );
+  }
+
+  extract(text: string): Promise<ExtractionResult> {
+    return this.#adapter.parse(
+      extractionContract,
+      this.modelName,
+      EXTRACTION_SYSTEM_PROMPT,
+      JSON.stringify({ text }),
+      this.#maxRetries,
+    );
+  }
+}
+
+export type ArchiveExecution = {
+  readonly result: ArchiveResult;
+  readonly candidates: readonly BucketView[];
+  readonly bucket: BucketRow | undefined;
+};
+
+export type ConfirmationExecution =
+  | ArchiveExecution
+  | {
+      readonly result: DiscardResult;
+      readonly candidates: readonly BucketView[];
+      readonly bucket: undefined;
+    };
+
+export type RuntimeConfirmationRequest =
+  | {
+      readonly action: "append";
+      readonly attemptId: string;
+      readonly rawText: string;
+      readonly targetBucketId: string;
+      readonly focusBucketId?: string;
+    }
+  | {
+      readonly action: "create";
+      readonly attemptId: string;
+      readonly rawText: string;
+      readonly title: string;
+      readonly bucketType: BucketType;
+      readonly focusBucketId?: string;
+    }
+  | {
+      readonly action: "discard";
+      readonly attemptId: string;
+      readonly rawText: string;
+    };
+
+export class ArchiveRuntime {
+  readonly #store: Store;
+  readonly #service: ArchiveService;
+  readonly #model: MemoryModel;
+  readonly #policy: ConfidencePolicy;
+
+  constructor(
+    store: Store,
+    model: MemoryModel,
+    policy: ConfidencePolicy = DEFAULT_CONFIDENCE_POLICY,
+  ) {
+    this.#store = store;
+    this.#service = new ArchiveService(store);
+    this.#model = model;
+    this.#policy = policy;
+  }
+
+  async archiveText(
+    rawText: string,
+    focusBucketId?: string,
+  ): Promise<ArchiveExecution> {
+    const text = requiredText(rawText, "text");
+    const candidates = this.#candidates(focusBucketId);
+    const raw = await this.#model.classify(text, candidates);
+    const classification = postprocessClassification(
+      text,
+      raw,
+      candidates,
+      this.#policy,
+    );
+    const extraction =
+      classification.action === "ask_user"
+        ? undefined
+        : await this.#model.extract(text);
+    return this.#execute(text, classification, extraction, candidates, {
+      focusBucketId,
+    });
+  }
+
+  async appendConfirmed(
+    rawText: string,
+    bucketId: string,
+    focusBucketId?: string,
+  ): Promise<ArchiveExecution> {
+    const text = requiredText(rawText, "text");
+    const target = this.#requireActiveBucket(bucketId);
+    const candidates = this.#candidates(focusBucketId);
+    const extraction = await this.#model.extract(text);
+    return this.#execute(
+      text,
+      appendExisting(target.id, target.kind, 1, "用户明确确认目标 Bucket。"),
+      extraction,
+      candidates,
+      { focusBucketId },
+    );
+  }
+
+  async createConfirmed(
+    rawText: string,
+    title: string,
+    bucketType: BucketType,
+    focusBucketId?: string,
+  ): Promise<ArchiveExecution> {
+    const text = requiredText(rawText, "text");
+    const candidates = this.#candidates(focusBucketId);
+    const extraction = await this.#model.extract(text);
+    return this.#execute(
+      text,
+      createNew(bucketType, title, 1, "用户明确确认创建新 Bucket。"),
+      extraction,
+      candidates,
+      { focusBucketId },
+    );
+  }
+
+  async confirm(
+    request: RuntimeConfirmationRequest,
+  ): Promise<ConfirmationExecution> {
+    const attempt = this.#requirePendingAttempt(
+      request.attemptId,
+      request.rawText,
+    );
+    const candidates = attempt.candidateBucketIds
+      .map((id) => this.#store.getBucket(id))
+      .filter((bucket): bucket is BucketRow => bucket !== undefined)
+      .map(toBucketView);
+
+    if (request.action === "discard") {
+      return {
+        result: this.#service.confirm({
+          action: "discard",
+          attemptId: attempt.id,
+          rawText: request.rawText,
+        }),
+        candidates,
+        bucket: undefined,
+      };
+    }
+
+    const targetBucket =
+      request.action === "append"
+        ? this.#requireActiveBucket(request.targetBucketId)
+        : undefined;
+    const extraction = await this.#model.extract(request.rawText);
+    let result: ArchiveResult;
+    if (request.action === "append") {
+      result = this.#service.confirm({
+        action: "append",
+        attemptId: attempt.id,
+        rawText: request.rawText,
+        targetBucketId: targetBucket!.id,
+        ...(request.focusBucketId === undefined
+          ? {}
+          : { focusBucketId: request.focusBucketId }),
+        extraction,
+        confidence: attempt.confidence,
+        reason: attempt.reason,
+        modelName: attempt.modelName,
+      });
+    } else {
+      result = this.#service.confirm({
+        action: "create",
+        attemptId: attempt.id,
+        rawText: request.rawText,
+        title: request.title,
+        bucketType: request.bucketType,
+        ...(request.focusBucketId === undefined
+          ? {}
+          : { focusBucketId: request.focusBucketId }),
+        extraction,
+        confidence: attempt.confidence,
+        reason: attempt.reason,
+        modelName: attempt.modelName,
+      });
+    }
+    return {
+      result,
+      candidates,
+      bucket:
+        result.bucketId === undefined
+          ? undefined
+          : this.#store.getBucket(result.bucketId),
+    };
+  }
+
+  #execute(
+    text: string,
+    classification: ClassificationResult,
+    extraction: ExtractionResult | undefined,
+    candidates: readonly BucketView[],
+    options: { readonly focusBucketId: string | undefined },
+  ): ArchiveExecution {
+    const result = this.#service.archiveClassifiedInput(
+      text,
+      classification,
+      extraction,
+      {
+        candidateBucketIds: candidates.map((candidate) => candidate.id),
+        focusBucketId: options.focusBucketId,
+        promptVersion: RUNTIME_PROMPT_VERSION,
+        modelName: this.#model.modelName,
+      },
+    );
+    return {
+      result,
+      candidates,
+      bucket:
+        result.bucketId === undefined
+          ? undefined
+          : this.#store.getBucket(result.bucketId),
+    };
+  }
+
+  #candidates(focusBucketId?: string): BucketView[] {
+    const rows = [
+      ...this.#store.listActiveBuckets(DEFAULT_ACTIVE_BUCKET_LIMIT),
+      ...this.#store.listPopularActiveBuckets(DEFAULT_ACTIVE_BUCKET_LIMIT),
+    ];
+    return buildBucketCandidates(
+      rows.map(toBucketView),
+      focusBucketId,
+      DEFAULT_ACTIVE_BUCKET_LIMIT,
+    );
+  }
+
+  #requireActiveBucket(bucketId: string): BucketRow {
+    const id = requiredText(bucketId, "bucket_id");
+    const bucket = this.#store.getBucket(id);
+    if (bucket === undefined) throw StorageError.missingRecord("buckets", id);
+    if (bucket.lifecycle !== BucketStatus.Active) {
+      throw StorageError.inactiveBucket(id);
+    }
+    return bucket;
+  }
+
+  #requirePendingAttempt(attemptId: string, rawText: string) {
+    const id = requiredText(attemptId, "attempt_id");
+    const attempt = this.#store.getArchiveAttempt(id);
+    if (attempt === undefined) throw StorageError.archiveAttemptNotFound(id);
+    if (attempt.rawText !== rawText) {
+      throw StorageError.archiveAttemptTextMismatch(id);
+    }
+    if (
+      attempt.archiveState !== "needs_confirmation" ||
+      attempt.resolvedAt !== null ||
+      attempt.corrected
+    ) {
+      throw StorageError.archiveAttemptNotPending(id);
+    }
+    return attempt;
+  }
+}
+
+export function toBucketView(bucket: BucketRow): BucketView {
+  return createBucketView({
+    id: bucket.id,
+    title: bucket.title,
+    bucketType: bucket.kind,
+    status: bucket.lifecycle,
+    summary: bucket.summary,
+    tags: bucket.tags,
+    lastActiveAtUnixMs: Date.parse(bucket.lastActiveAt),
+  });
+}
+
+function projectCandidate(candidate: BucketView) {
+  return {
+    id: candidate.id,
+    title: candidate.title,
+    bucket_type: candidate.bucketType,
+    status: candidate.status,
+    summary: candidate.summary,
+    tags: [...candidate.tags],
+    last_active_at_unix_ms: candidate.lastActiveAtUnixMs,
+  } as const;
+}
