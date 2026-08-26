@@ -13,6 +13,25 @@
 
 `doggie-local-web` 是唯一应用入口，提供本地 HTTP API，并同源托管独立静态 Web UI 资源。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
 
+## 当前开发状态
+
+当前目标分支是 `dev_ts`，产品实现以 TypeScript 为准：
+
+| 项目 | 状态 |
+|---|---|
+| M1：TypeScript 功能对等 | ✅ 已完成 |
+| M2：评测、MCP 与可启动 Web MVP | ✅ 已完成（T10b） |
+| M3：Agent 控制面 | 🚧 下一步从 T11 `PendingAction` 泛化开始 |
+| Rust workspace | 冻结的行为 oracle，不是产品运行路径 |
+
+协作者第一次查看仓库时，建议按这个顺序阅读：
+
+1. 本 README：启动项目、理解当前能力和目录；
+2. [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)：理解 TypeScript 分层、核心设计和实现路径；
+3. [`docs/PLAN.md`](docs/PLAN.md)：确认已完成阶段、当前任务和 Rust 删除条件；
+4. [`docs/INVARIANTS.md`](docs/INVARIANTS.md) 与 [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)：修改代码前确认不可破坏的行为和回归要求；
+5. 需要接入 Claude/Codex 时再阅读 [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)。
+
 ## 当前能力
 
 - **ChatGPT 风格单会话**：保存 user、assistant 和 tool 消息，重启后恢复对话历史。
@@ -139,10 +158,20 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 
 Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品启动路径。
 
-更多说明见：
+## 文档索引
 
-- [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)：TypeScript 项目拆解和阅读路径
-- [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)：Claude/Codex MCP 接入
-- [`docs/PLAN.md`](docs/PLAN.md)：阶段计划和当前状态
-- [`docs/INVARIANTS.md`](docs/INVARIANTS.md)：可执行行为规格
-- [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md)：测试与人工验收
+为避免协作者同时看到多套 Rust/TypeScript 叙述，`dev_ts` 只保留下列仍有明确用途的文档：
+
+| 文档 | 用途 |
+|---|---|
+| [`docs/PLAN.md`](docs/PLAN.md) | 当前进度、后续阶段和 Rust oracle 删除门槛 |
+| [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md) | TypeScript 项目拆解、数据流、核心设计和代码阅读指南 |
+| [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 从历史实现固化的可执行行为规格 |
+| [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | TypeScript 日常门禁和分层回归要求 |
+| [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) | MCP 工具、安全边界及 Claude/Codex 接入 |
+| [`docs/PRD.md`](docs/PRD.md) | 产品目标、用户故事和成功指标 |
+| [`docs/MVP_SPEC.md`](docs/MVP_SPEC.md) | MVP 归档、确认、对话和查询行为 |
+| [`docs/PROMPTS.md`](docs/PROMPTS.md) | 分类、提取和纠错的 prompt 设计依据 |
+| [`docs/TS_REWRITE.md`](docs/TS_REWRITE.md) | 从 Rust 转向 TypeScript 的技术决策记录 |
+
+旧的 Rust 架构、数据模型、迁移和代码阅读文档已从 `dev_ts` 删除，避免把 Cargo/Rust 路径误认为当前产品入口；需要考古时可从 Git 历史或 `dev_rust` 分支读取。
