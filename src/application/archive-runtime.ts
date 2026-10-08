@@ -17,6 +17,12 @@ import {
   type BucketView,
 } from "../domain/types.ts";
 import {
+  abortError,
+  isAbortError,
+  throwIfAborted,
+  withCancellation,
+} from "../llm/cancellation.ts";
+import {
   classificationContract,
   extractionContract,
 } from "../llm/contracts.ts";
@@ -49,8 +55,12 @@ export type MemoryModel = {
   readonly classify: (
     text: string,
     candidates: readonly BucketView[],
+    signal?: AbortSignal,
   ) => Promise<ClassificationResult>;
-  readonly extract: (text: string) => Promise<ExtractionResult>;
+  readonly extract: (
+    text: string,
+    signal?: AbortSignal,
+  ) => Promise<ExtractionResult>;
 };
 
 /** Production facade over the transport-independent strict output adapter. */
@@ -72,6 +82,7 @@ export class StructuredMemoryModel implements MemoryModel {
   classify(
     text: string,
     candidates: readonly BucketView[],
+    signal?: AbortSignal,
   ): Promise<ClassificationResult> {
     return this.#adapter.parse(
       classificationContract,
@@ -79,16 +90,18 @@ export class StructuredMemoryModel implements MemoryModel {
       CLASSIFICATION_SYSTEM_PROMPT,
       JSON.stringify({ text, candidates: candidates.map(projectCandidate) }),
       this.#maxRetries,
+      signal,
     );
   }
 
-  extract(text: string): Promise<ExtractionResult> {
+  extract(text: string, signal?: AbortSignal): Promise<ExtractionResult> {
     return this.#adapter.parse(
       extractionContract,
       this.modelName,
       EXTRACTION_SYSTEM_PROMPT,
       JSON.stringify({ text }),
       this.#maxRetries,
+      signal,
     );
   }
 }
@@ -149,10 +162,14 @@ export class ArchiveRuntime {
   async archiveText(
     rawText: string,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
     const candidates = this.#candidates(focusBucketId);
-    const raw = await this.#model.classify(text, candidates);
+    const raw = await withCancellation(signal, () =>
+      this.#model.classify(text, candidates, signal),
+    );
     const classification = postprocessClassification(
       text,
       raw,
@@ -162,9 +179,12 @@ export class ArchiveRuntime {
     const extraction =
       classification.action === "ask_user"
         ? undefined
-        : await this.#model.extract(text);
+        : await withCancellation(signal, () =>
+            this.#model.extract(text, signal),
+          );
     return this.#execute(text, classification, extraction, candidates, {
       focusBucketId,
+      signal,
     });
   }
 
@@ -172,14 +192,20 @@ export class ArchiveRuntime {
     rawText: string,
     bucketId: string,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
     const target = this.#requireActiveBucket(bucketId);
-    return this.#confirmUserAction(text, {
-      action: "append",
-      targetBucketId: target.id,
-      ...(focusBucketId === undefined ? {} : { focusBucketId }),
-    });
+    return this.#confirmUserAction(
+      text,
+      {
+        action: "append",
+        targetBucketId: target.id,
+        ...(focusBucketId === undefined ? {} : { focusBucketId }),
+      },
+      signal,
+    );
   }
 
   async createConfirmed(
@@ -187,14 +213,20 @@ export class ArchiveRuntime {
     title: string,
     bucketType: BucketType,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
-    return this.#confirmUserAction(text, {
-      action: "create",
-      title: requiredText(title, "title"),
-      bucketType,
-      ...(focusBucketId === undefined ? {} : { focusBucketId }),
-    });
+    return this.#confirmUserAction(
+      text,
+      {
+        action: "create",
+        title: requiredText(title, "title"),
+        bucketType,
+        ...(focusBucketId === undefined ? {} : { focusBucketId }),
+      },
+      signal,
+    );
   }
 
   async #confirmUserAction(
@@ -211,11 +243,15 @@ export class ArchiveRuntime {
           readonly bucketType: BucketType;
           readonly focusBucketId?: string;
         },
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const candidates = this.#candidates(choice.focusBucketId);
     // Extract before registering a one-shot explicit choice. A model failure
     // must not leave an invisible pending proposal with no recovery card.
-    const extraction = await this.#model.extract(text);
+    const extraction = await withCancellation(signal, () =>
+      this.#model.extract(text, signal),
+    );
     const pending = this.#execute(
       text,
       askUser(
@@ -228,17 +264,20 @@ export class ArchiveRuntime {
       ),
       undefined,
       candidates,
-      { focusBucketId: choice.focusBucketId, proposedBy: "user" },
+      { focusBucketId: choice.focusBucketId, proposedBy: "user", signal },
     );
     let execution: ConfirmationExecution;
     try {
       execution = await this.#confirm(
         { ...choice, attemptId: pending.result.attemptId, rawText: text },
+        signal,
         extraction,
       );
-    } catch (error) {
+    } catch (error: unknown) {
       // A one-shot explicit request has no durable UI card. Retain rejected
       // audit instead of leaving an inaccessible pending action on failure.
+      throwIfAborted(signal);
+      if (isAbortError(error)) throw abortError();
       this.#store.discardArchiveAttempt(pending.result.attemptId, text);
       throw error;
     }
@@ -250,14 +289,17 @@ export class ArchiveRuntime {
 
   async confirm(
     request: RuntimeConfirmationRequest,
+    signal?: AbortSignal,
   ): Promise<ConfirmationExecution> {
-    return this.#confirm(request);
+    return this.#confirm(request, signal);
   }
 
   async #confirm(
     request: RuntimeConfirmationRequest,
+    signal?: AbortSignal,
     preparedExtraction?: ExtractionResult,
   ): Promise<ConfirmationExecution> {
+    throwIfAborted(signal);
     const attempt = this.#requirePendingAttempt(
       request.attemptId,
       request.rawText,
@@ -268,6 +310,7 @@ export class ArchiveRuntime {
       .map(toBucketView);
 
     if (request.action === "discard") {
+      throwIfAborted(signal);
       return {
         result: this.#service.confirm({
           action: "discard",
@@ -282,9 +325,13 @@ export class ArchiveRuntime {
     if (request.action === "append")
       this.#requireActiveBucket(request.targetBucketId);
     const extraction =
-      preparedExtraction ?? (await this.#model.extract(request.rawText));
+      preparedExtraction ??
+      (await withCancellation(signal, () =>
+        this.#model.extract(request.rawText, signal),
+      ));
     let result: ArchiveResult;
     if (request.action === "append") {
+      throwIfAborted(signal);
       result = this.#service.confirm({
         action: "append",
         attemptId: attempt.id,
@@ -299,6 +346,7 @@ export class ArchiveRuntime {
         modelName: attempt.modelName,
       });
     } else {
+      throwIfAborted(signal);
       result = this.#service.confirm({
         action: "create",
         attemptId: attempt.id,
@@ -332,8 +380,10 @@ export class ArchiveRuntime {
     options: {
       readonly focusBucketId: string | undefined;
       readonly proposedBy?: "user" | "model";
+      readonly signal?: AbortSignal | undefined;
     },
   ): ArchiveExecution {
+    throwIfAborted(options.signal);
     const result = this.#service.archiveClassifiedInput(
       text,
       classification,

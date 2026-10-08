@@ -1,5 +1,6 @@
 /** Transport-independent strict structured-output calls with bounded retries. */
 
+import { abortError, isAbortError, throwIfAborted } from "./cancellation.ts";
 import type { LlmEndpointConfig } from "./config.ts";
 import { LlmApiMode, resolveLlmEndpoint } from "./config.ts";
 import type { StructuredOutputContract } from "./contracts.ts";
@@ -98,6 +99,15 @@ export class LlmError extends Error {
   }
 }
 
+export type StructuredOutputInput<T> = {
+  readonly contract: StructuredOutputContract<T>;
+  readonly model: string;
+  readonly systemPrompt: string;
+  readonly userPrompt: string;
+  readonly maxRetries: number;
+  readonly signal?: AbortSignal | undefined;
+};
+
 export class StructuredOutputAdapter {
   readonly #endpoint: LlmEndpointConfig;
   readonly #transport: StructuredOutputTransport;
@@ -132,7 +142,22 @@ export class StructuredOutputAdapter {
     systemPrompt: string,
     userPrompt: string,
     maxRetries: number,
+    signal?: AbortSignal,
   ): Promise<T> {
+    return this.generate({
+      contract,
+      model,
+      systemPrompt,
+      userPrompt,
+      maxRetries,
+      signal,
+    });
+  }
+
+  async generate<T>(input: StructuredOutputInput<T>): Promise<T> {
+    const { contract, model, systemPrompt, userPrompt, maxRetries, signal } =
+      input;
+    throwIfAborted(signal);
     const cleanedModel = model.trim();
     if (cleanedModel === "") {
       throw LlmError.requestValidation(
@@ -165,18 +190,25 @@ export class StructuredOutputAdapter {
       cleanedModel,
       systemPrompt,
       userPrompt,
+      signal,
     );
 
     for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex += 1) {
       const attempt = attemptIndex + 1;
       try {
+        throwIfAborted(signal);
         const response = await this.#transport.send(request);
-        return parseStructuredResponse(
+        throwIfAborted(signal);
+        const result = parseStructuredResponse(
           this.#endpoint.apiMode,
           contract,
           response.body,
         );
+        throwIfAborted(signal);
+        return result;
       } catch (error: unknown) {
+        throwIfAborted(signal);
+        if (isAbortError(error)) throw abortError();
         const normalized = normalizeAttemptError(error);
         if (attemptIndex < maxRetries && normalized.retryable) continue;
         throw LlmError.attemptsExhausted(attempt, normalized);
@@ -193,6 +225,7 @@ function requestForContract<T>(
   model: string,
   systemPrompt: string,
   userPrompt: string,
+  signal?: AbortSignal,
 ): LlmHttpRequest {
   const messages = [
     { role: "system", content: systemPrompt },
@@ -218,7 +251,11 @@ function requestForContract<T>(
             json_schema: jsonSchema,
           },
         };
-  return { url: endpoint.requestUrl, body };
+  return {
+    url: endpoint.requestUrl,
+    body,
+    ...(signal === undefined ? {} : { signal }),
+  };
 }
 
 function parseStructuredResponse<T>(

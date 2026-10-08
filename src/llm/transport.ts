@@ -2,12 +2,15 @@
 
 import { inspect } from "node:util";
 
+import { abortError, isAbortError, throwIfAborted } from "./cancellation.ts";
+
 export const DEFAULT_LLM_HTTP_TIMEOUT_MS = 30_000;
 export const MAX_LLM_HTTP_TIMEOUT_MS = 2_147_483_647;
 
 export type LlmHttpRequest = {
   readonly url: string;
   readonly body: unknown;
+  readonly signal?: AbortSignal | undefined;
 };
 
 export type LlmHttpResponse = {
@@ -60,7 +63,7 @@ export interface StructuredOutputTransport {
 
 export type LlmHttpTransportConfig = {
   readonly timeoutMs?: number | undefined;
-  /** Optional process-level cancellation. Request-level cancellation is T12. */
+  /** Optional process-level cancellation, combined with each request signal. */
   readonly signal?: AbortSignal | undefined;
 };
 
@@ -136,16 +139,24 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
   }
 
   async send(request: LlmHttpRequest): Promise<LlmHttpResponse> {
+    throwIfAborted(request.signal);
+    throwIfAborted(this.#signal);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     timeout.unref();
-    const signal =
-      this.#signal === undefined
-        ? controller.signal
-        : AbortSignal.any([controller.signal, this.#signal]);
+    const signals = [controller.signal];
+    if (this.#signal !== undefined) signals.push(this.#signal);
+    if (request.signal !== undefined) signals.push(request.signal);
+    const signal = AbortSignal.any(signals);
+    const checkCancellation = (): void => {
+      throwIfAborted(request.signal);
+      throwIfAborted(this.#signal);
+      // A timeout remains a retryable transport failure, not request cancellation.
+      if (controller.signal.aborted) throw LlmTransportError.request();
+    };
 
     try {
-      if (signal.aborted) throw LlmTransportError.request();
+      checkCancellation();
       const response = await this.#fetch(request.url, {
         method: "POST",
         headers: {
@@ -155,16 +166,17 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
         body: JSON.stringify(request.body),
         signal,
       });
+      checkCancellation();
       if (!response.ok) {
         throw LlmTransportError.httpStatus(response.status);
       }
 
-      try {
-        return { body: await response.json() };
-      } catch {
-        throw LlmTransportError.request();
-      }
+      const body: unknown = await response.json();
+      checkCancellation();
+      return { body };
     } catch (error: unknown) {
+      checkCancellation();
+      if (isAbortError(error)) throw abortError();
       if (error instanceof LlmTransportError) throw error;
       throw LlmTransportError.request();
     } finally {

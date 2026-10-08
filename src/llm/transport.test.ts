@@ -201,13 +201,13 @@ test("process-level cancellation aborts an in-flight model request without leaki
     url: "http://localhost/v1/responses",
     body: {},
   });
-  controller.abort();
+  controller.abort(new Error("cancel-secret"));
   await assert.rejects(
     pending,
     (error: unknown) =>
-      error instanceof LlmTransportError &&
-      error.kind === "request" &&
-      !error.message.includes("cancel-secret"),
+      error instanceof DOMException &&
+      error.name === "AbortError" &&
+      error.message === "The operation was aborted",
   );
   assert.equal(observedSignal?.aborted, true);
 });
