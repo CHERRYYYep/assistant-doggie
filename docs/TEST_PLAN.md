@@ -61,3 +61,30 @@ npm start
 6. 重启服务，确认聊天历史、Bucket 和 pending 状态符合预期。
 
 普通测试不得调用真实模型。真实模型只用于明确的人工 smoke test，并且不得把 API Key 或真实数据库带入测试产物。
+
+
+## T11：通用待批准动作与纯 TS 前端解耦
+
+针对性门禁：
+
+```bash
+node --test --test-isolation=none src/storage/pending-actions.test.ts
+node --test src/application/archive-runtime.test.ts src/application/archive.test.ts src/http/api.test.ts src/mcp/tools.test.ts tests/storage-parity.test.ts
+npm run check
+```
+
+`src/storage/pending-actions.test.ts` 使用 fake model 和内存/临时 SQLite，覆盖：
+
+- 严格四类 payload、未知字段/类型拒绝、参数大小、稳定失败码；
+- pending 不产生正式数据，原文绑定、批准前不可完成、终态不能重放；
+- user create/append、模型 ask_user 和 MCP proposal 共用审批权威，MCP 工具面不扩展；
+- archive 批准、正式数据和审计在同一事务中提交，故障注入时完整回滚；
+- 并发确认只有一次正式写入成功；提取可能重复，不宣称已完成 T12 去重/取消；
+- proposal 不可被改写，generic approve/reject/finish 不得处理 archive；
+- schema v2→v3 保留 pending/resolved ID 与原文，重开不重放，future approved action 重开不自动派发；
+- 运行时完成结果严格只接受 executed / failed，非法状态、null、多余字段不能重开批准；
+- 显式保存提取失败不登记不可恢复 proposal，正式写入失败自动终结单次提案，重试只写入一次；
+- Store/Service 确认保留 exact raw text，不因 trim 放过不一致输入；
+- 保留 HTTP 大文本和 MCP 16,000 字 Unicode 合约，不误用未来工具的 32 KiB 上限收紧旧归档行为。
+
+`web/` 搬迁需验证静态资源加载、共享 DTO import、API client 和安全 Markdown 渲染。普通测试和 production 无 Cargo 依赖；Rust oracle 仅资源路径跟随搬迁，不新增功能。沙箱若限制 loopback/子进程，需明确报告并经授权在沙箱外跑完整门禁，不能跳过真实 socket 测试。

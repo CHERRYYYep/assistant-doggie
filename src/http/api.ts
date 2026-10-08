@@ -199,7 +199,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
 
     let execution: ArchiveExecution;
     try {
-      // Rust parity: focus is recorded for UX/audit, but chat auto-classification
+      // Focus is recorded for UX/audit, but chat auto-classification
       // still uses the server-owned candidate set rather than a UI hint.
       execution = await this.#runtime.archiveText(request.message);
     } catch (error) {
@@ -380,20 +380,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
   }
 
   #validateConfirmationBoundary(request: ChatConfirmationRequest): void {
-    const attempt = this.#store.getArchiveAttempt(request.attempt_id);
-    if (attempt === undefined) {
-      throw StorageError.archiveAttemptNotFound(request.attempt_id);
-    }
-    if (attempt.rawText !== request.text) {
-      throw StorageError.archiveAttemptTextMismatch(request.attempt_id);
-    }
-    if (
-      attempt.archiveState !== "needs_confirmation" ||
-      attempt.resolvedAt !== null ||
-      attempt.corrected
-    ) {
-      throw StorageError.archiveAttemptNotPending(request.attempt_id);
-    }
+    this.#store.requirePendingArchiveAttempt(request.attempt_id, request.text);
     if (request.action === "append") {
       const bucket = this.#store.getBucket(request.bucket_id);
       if (bucket === undefined) {

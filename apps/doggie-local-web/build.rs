@@ -25,7 +25,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     for (relative_source, output_name) in FRONTEND_MODULES {
-        let source = manifest_dir.join("frontend").join(relative_source);
+        let source = manifest_dir.join("../../web").join(relative_source);
         println!("cargo:rerun-if-changed={}", source.display());
         let output = output_dir.join(output_name);
         strip_types(&source, &output);

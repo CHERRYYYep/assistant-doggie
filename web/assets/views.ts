@@ -5,9 +5,9 @@
  * call or a state mutation lives here so the two never interleave.
  */
 
-import type { ChatConfirmationRequest, ChatRequest } from "../../../../src/http/contracts.ts";
-import type { PendingChatMessageDto } from "../../../../src/http/dto.ts";
-import type { BucketType } from "../../../../src/domain/types.ts";
+import type { ChatConfirmationRequest, ChatRequest } from "../../src/http/contracts.ts";
+import type { PendingChatMessageDto } from "../../src/http/dto.ts";
+import type { BucketType } from "../../src/domain/types.ts";
 import {
   deleteBucketRequest,
   fetchActiveBuckets,

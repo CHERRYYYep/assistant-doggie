@@ -141,10 +141,7 @@ const FRONTEND_FILES = [
 export function loadFrontendAssets(): readonly StaticAsset[] {
   return FRONTEND_FILES.map(([path, relativePath, contentType]) => {
     const source = readFileSync(
-      new URL(
-        `../../apps/doggie-local-web/frontend/${relativePath}`,
-        import.meta.url,
-      ),
+      new URL(`../../web/${relativePath}`, import.meta.url),
       "utf8",
     );
     return {

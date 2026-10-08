@@ -1,10 +1,6 @@
 /** Bucket presentation shared by the sidebar, the archive card and queries. */
 
-import type {
-  BucketDto,
-  BucketSearchResponse,
-  CandidateBucketDto,
-} from "../../../../src/http/dto.ts";
+import type { BucketDto, BucketSearchResponse, CandidateBucketDto } from "../../src/http/dto.ts";
 import { escapeHtml } from "./markdown.ts";
 import { bucketById, state } from "./state.ts";
 

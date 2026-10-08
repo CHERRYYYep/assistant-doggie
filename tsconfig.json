@@ -15,8 +15,7 @@
     "moduleResolution": "nodenext",
     "types": ["node"],
 
-    // Maximum strictness. The Rust implementation this replaces got its
-    // safety from the compiler; this is the closest equivalent.
+    // Maximum strictness. Runtime schema validation complements these checks.
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -29,10 +28,6 @@
     "skipLibCheck": true,
     "isolatedModules": true
   },
-  "include": [
-    "src/**/*.ts",
-    "tests/**/*.ts",
-    "apps/doggie-local-web/frontend/**/*.ts"
-  ],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "web/**/*.ts"],
   "exclude": ["node_modules", "target", "crates"]
 }

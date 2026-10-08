@@ -36,6 +36,23 @@ import {
   type Clock,
 } from "./database.ts";
 
+import { pendingActionDraftSchema } from "../domain/pending-action.ts";
+import type {
+  PendingAction,
+  DeferredActionDraft,
+  ProposedBy,
+  ActionCompletion,
+  ApprovalChoice,
+} from "../domain/pending-action.ts";
+import {
+  readPendingAction,
+  insertPendingAction,
+  requirePendingAction,
+  approvePendingAction,
+  rejectPendingAction,
+  finishPendingAction,
+} from "./pending-actions.ts";
+
 export type BucketRow = {
   readonly id: string;
   readonly title: string;
@@ -107,6 +124,7 @@ export type BucketDetail = {
 
 /** Metadata every archive attempt records for audit. */
 export type ArchiveAudit = {
+  readonly proposedBy?: ProposedBy;
   readonly candidateBucketIds: readonly string[];
   readonly focusBucketId?: string | undefined;
   readonly promptVersion: string;
@@ -234,7 +252,7 @@ export class Store {
       const attemptId = newId();
       const confirmationAttemptId = audit.confirmationAttemptId;
       if (confirmationAttemptId !== undefined) {
-        this.#requirePendingAttempt(confirmationAttemptId, text);
+        this.requirePendingArchiveAttempt(confirmationAttemptId, rawText);
         if (decision.action === "ask_user") {
           throw StorageError.invalidWrite(
             "confirmation",
@@ -258,6 +276,31 @@ export class Store {
           bucketId: undefined,
           entryId: undefined,
         };
+      }
+
+      if (confirmationAttemptId !== undefined) {
+        let choice: ApprovalChoice;
+        if (decision.action === "create_new") {
+          if (decision.bucketType === undefined)
+            throw StorageError.invalidWrite("bucket_type", "is required");
+          choice = {
+            action: "create",
+            title: decision.title ?? "",
+            bucketType: decision.bucketType,
+          };
+        } else {
+          choice = {
+            action: "append",
+            targetBucketId: decision.bucketId ?? "",
+          };
+        }
+        approvePendingAction(
+          this.#database,
+          confirmationAttemptId,
+          text,
+          choice,
+          timestamp,
+        );
       }
 
       if (extraction === undefined) {
@@ -305,6 +348,16 @@ export class Store {
         if (updated.changes !== 1) {
           throw StorageError.archiveAttemptNotPending(confirmationAttemptId);
         }
+        finishPendingAction(
+          this.#database,
+          confirmationAttemptId,
+          text,
+          {
+            status: "executed",
+            result: { bucketId, entryId, resultAttemptId: attemptId },
+          },
+          timestamp,
+        );
       }
 
       return {
@@ -637,9 +690,28 @@ export class Store {
         context.timestamp,
         context.archiveState === "archived" ? context.timestamp : null,
       );
+    if (context.archiveState === "needs_confirmation") {
+      insertPendingAction(
+        this.#database,
+        attemptId,
+        {
+          kind: "archive",
+          payload: {
+            rawText,
+            candidateBucketIds,
+            focusBucketId: optionalField(audit.focusBucketId),
+            suggestedBucketType: decision.bucketType ?? null,
+            suggestedTitle: optionalField(decision.title),
+          },
+        },
+        audit.proposedBy ?? "model",
+        rawText,
+        context.timestamp,
+      );
+    }
   }
 
-  #requirePendingAttempt(
+  requirePendingArchiveAttempt(
     attemptId: string,
     rawText: string,
   ): ArchiveAttemptRow {
@@ -656,6 +728,17 @@ export class Store {
       attempt.corrected
     ) {
       throw StorageError.archiveAttemptNotPending(attemptId);
+    }
+    const pending = readPendingAction(this.#database, attemptId);
+    if (
+      pending === undefined ||
+      pending.kind !== "archive" ||
+      pending.status !== "pending"
+    ) {
+      throw StorageError.archiveAttemptNotPending(attemptId);
+    }
+    if (pending.binding !== rawText || pending.payload.rawText !== rawText) {
+      throw StorageError.archiveAttemptTextMismatch(attemptId);
     }
     return attempt;
   }
@@ -698,7 +781,9 @@ export class Store {
     const id = requiredField(attemptId, "attempt_id");
     const text = requiredField(rawText, "raw_text");
     withTransaction(this.#database, () => {
-      this.#requirePendingAttempt(id, text);
+      this.requirePendingArchiveAttempt(id, rawText);
+      const timestamp = this.#now();
+      rejectPendingAction(this.#database, id, text, timestamp);
       const updated = this.#database
         .prepare(
           `UPDATE archive_attempts
@@ -706,11 +791,90 @@ export class Store {
            WHERE id = ? AND archive_state = 'needs_confirmation'
              AND resolved_at IS NULL AND corrected = 0`,
         )
-        .run(this.#now(), id);
+        .run(timestamp, id);
       if (updated.changes !== 1) {
         throw StorageError.archiveAttemptNotPending(id);
       }
     });
+  }
+
+  getPendingAction(id: string): PendingAction | undefined {
+    return readPendingAction(
+      this.#database,
+      requiredField(id, "pending_action_id"),
+    );
+  }
+
+  /** Future use cases can persist proposals; no executor is dispatched here. */
+  proposePendingAction(
+    draft: DeferredActionDraft,
+    binding: string,
+    proposedBy: ProposedBy,
+  ): PendingAction {
+    const parsed = pendingActionDraftSchema.safeParse(draft);
+    if (!parsed.success || parsed.data.kind === "archive") {
+      throw StorageError.invalidWrite(
+        "pending_action",
+        "requires a valid non-archive proposal",
+      );
+    }
+    return withTransaction(this.#database, () => {
+      const id = newId();
+      insertPendingAction(
+        this.#database,
+        id,
+        parsed.data,
+        proposedBy,
+        binding,
+        this.#now(),
+      );
+      return requirePendingAction(this.#database, id, binding);
+    });
+  }
+
+  approvePendingAction(id: string, binding: string): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding);
+      approvePendingAction(
+        this.#database,
+        id,
+        binding,
+        { action: "approve" },
+        this.#now(),
+      );
+    });
+  }
+
+  rejectPendingAction(id: string, binding: string): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding);
+      rejectPendingAction(this.#database, id, binding, this.#now());
+    });
+  }
+
+  finishPendingAction(
+    id: string,
+    binding: string,
+    outcome: ActionCompletion,
+  ): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding, "approved");
+      finishPendingAction(this.#database, id, binding, outcome, this.#now());
+    });
+  }
+
+  #requireDeferredAction(
+    id: string,
+    binding: string,
+    status: "pending" | "approved" = "pending",
+  ): PendingAction {
+    const row = requirePendingAction(this.#database, id, binding, status);
+    if (row.kind === "archive")
+      throw StorageError.invalidWrite(
+        "pending_action",
+        "archive actions must use bound confirmation",
+      );
+    return row;
   }
 
   // ── correction ───────────────────────────────────────────────────────────

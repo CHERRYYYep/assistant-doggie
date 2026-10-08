@@ -11,7 +11,7 @@
   → 返回可解释的归档结果
 ```
 
-`doggie-local-web` 是唯一应用入口，提供本地 HTTP API，并同源托管独立静态 Web UI 资源。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
+`src/main.ts` 是 TypeScript Web 应用入口，提供本地 HTTP API，并同源托管独立静态 Web UI 资源。默认监听 `127.0.0.1:8787`，数据库默认使用 `doggie.db`。
 
 ## 当前开发状态
 
@@ -21,8 +21,9 @@
 |---|---|
 | M1：TypeScript 功能对等 | ✅ 已完成 |
 | M2：评测、MCP 与可启动 Web MVP | ✅ 已完成（T10b） |
-| M3：Agent 控制面 | 🚧 下一步从 T11 `PendingAction` 泛化开始 |
-| Rust workspace | 冻结的行为 oracle，不是产品运行路径 |
+| M3：Agent 控制面 | 🚧 T11 已完成，下一步 T12（队列/SSE/取消） |
+| 运行与日常测试 | 纯 TypeScript / Node，前端独立于旧源码目录 |
+| 历史参考源码 | 暂留至 Harness 验收，退出条件见 PLAN 第九章 |
 
 协作者第一次查看仓库时，建议按这个顺序阅读：
 
@@ -33,6 +34,8 @@
 5. 需要接入 Claude/Codex 时再阅读 [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md)。
 
 ## 当前能力
+
+T11 已把待确认归档泛化为 `PendingAction`。用户确认的原文、选择和执行结果可重开数据库追踪；任务/调度/批量操作只有数据契约，还不能自动执行。详见 [T11 实现说明](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)。
 
 - **ChatGPT 风格单会话**：保存 user、assistant 和 tool 消息，重启后恢复对话历史。
 - **自动归档**：安全地追加到已有 Bucket 或创建新 Bucket，并保留 Entry 原文和结构化 memory。
@@ -66,7 +69,7 @@ http://127.0.0.1:8787/
 DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
 ```
 
-本地 Web UI 源文件位于 `apps/doggie-local-web/frontend/`，由 TypeScript `node:http` + Hono server 同源提供。Node 24 在启动时剥离浏览器资源中的 TypeScript 类型，不需要 Vite、Webpack 或 JavaScript 构建产物。
+本地 Web UI 源文件位于 `web/`，由 TypeScript `node:http` + Hono server 同源提供。Node 24 在启动时剥离浏览器资源中的 TypeScript 类型，不需要 Vite、Webpack 或 JavaScript 构建产物。
 
 检查代码与测试：
 
@@ -154,7 +157,7 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 | `src/llm/` | endpoint、HTTP transport、结构化输出和 wire response |
 | `src/http/` | Hono API、DTO、安全边界和 Node HTTP adapter |
 | `src/mcp/` | Doggie MCP stdio server 和受控记忆工具 |
-| `apps/doggie-local-web/frontend/` | 无 bundler 的浏览器 TypeScript UI |
+| `web/` | 无 bundler 的浏览器 TypeScript UI |
 
 Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品启动路径。
 

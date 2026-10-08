@@ -241,6 +241,33 @@ function assertSchemaShape(database: DatabaseSync): void {
     }
   }
 
+  const pendingColumns = new Set(
+    database
+      .prepare("PRAGMA table_info(pending_actions)")
+      .all()
+      .map((row) => row["name"]),
+  );
+  for (const column of [
+    "id",
+    "kind",
+    "proposed_by",
+    "binding_text",
+    "payload_json",
+    "status",
+    "approval_json",
+    "result_json",
+    "failure_code",
+    "created_at",
+    "updated_at",
+  ]) {
+    if (!pendingColumns.has(column)) {
+      throw new StorageError(
+        "unsupported_schema_version",
+        `Doggie schema is missing pending_actions.${column}`,
+      );
+    }
+  }
+
   const applied = database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
     .all() as { version: number; name: string }[];

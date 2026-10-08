@@ -1,6 +1,6 @@
 /** Natural-language query results: the parsed plan, then grouped evidence. */
 
-import type { MemoryQueryResponse, QueryPlanDto } from "../../../../src/http/dto.ts";
+import type { MemoryQueryResponse, QueryPlanDto } from "../../src/http/dto.ts";
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import { bucketLabel } from "./render-bucket.ts";
 import { memoryQueryResult } from "./dom.ts";

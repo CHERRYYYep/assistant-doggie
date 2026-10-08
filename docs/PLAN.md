@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-25 · 当前分支 `dev_ts` · T10b 已完成，下一阶段 T11（`PendingAction` 泛化）
+> 最后更新：2026-10-08 · 当前分支 `dev_ts` · T11 已完成，下一阶段 T12（任务队列 / SSE / 请求级取消）
 
 ---
 
@@ -8,8 +8,8 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | **21,021 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **204 通过** |
+| TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
+| TS 测试 | **222 通过** |
 | 前端测试 | **23 通过** |
 | Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
@@ -20,7 +20,7 @@
 进度  ███████████████████████████░░░  76 / 85
 ```
 
-**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。下一步进入 M3 的 T11；§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
+**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。T11 已完成通用批准状态机，前端已独立到 `web/`，下一步进入 T12；§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
 
 ### 分支布局
 
@@ -218,7 +218,7 @@ T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d90
 ```
 M1  TS 与 Rust 功能对等         T3 ✅ → T8b ✅   ← 已完成，CI 就位
 M2  记忆开始被日常消费           T9 ✅ → T9b ✅ → T10 ✅  ← 已完成
-M3  Doggie 成为 Agent 控制面    T11 → T12 → T13   ← §7 在此覆盖完
+M3  Doggie 成为 Agent 控制面    T11 ✅ → T12 → T13   ← §7 在此覆盖完
        ↓
     ⚑ 删除 Rust workspace（前置条件见第九章）
        ↓
@@ -323,7 +323,7 @@ T10b 最终实现与验证：
 
 | # | 阶段 | 交付 |
 |---|---|---|
-| **T11** | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
+| **T11** ✅ | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
 | **T12** | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
 | **T13** | Agent 编排 | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
 
@@ -336,6 +336,22 @@ PendingAction
   ├─ payload / binding（防伪造）
   └─ status: pending | approved | rejected | executed | failed
 ```
+
+**T11 已完成（2026-10-08）**：采用增量、无新增依赖的轻量实现，不一次性重写现有 API 或 UI。
+
+- `src/domain/pending-action.ts`：严格 Zod 判别联合，四类 payload、来源和五态状态机；未知字段/类型拒绝，proposal 只有数据权限。
+- `src/storage/pending-actions.ts`：持久化读取校验、原文 binding、单次 CAS 状态转换，批准时记录用户选择，结果仅存稳定 ID；失败仅存稳定错误码。
+- schema v3 新增 `pending_actions` 和不可改写 proposal 的 trigger；v2→v3 在迁移事务中按旧确认 ID 回填 pending / executed / rejected，聊天卡片 ID 不变。
+- `archive_attempts` 保留为原有归档审计和 HTTP DTO projection，**不是独立授权路径**；所有确认同时校验 generic action 和旧审计。删除这个表会破坏历史审计、纠错和 DTO，因此本阶段不强行重命名全部业务对象。
+- 自动归档仍遵循领域门控；`ask_user`、MCP proposal、用户显式 append/create 共用批准流程。显式保存先登记 `proposed_by=user` 的 proposal，再使用用户给定选择执行；不额外弹出第二次确认。
+- 归档 `pending→approved→executed` 与 Bucket/Entry/Memory/attempt 在**一个 SQLite 事务**中完成；失败全部回滚，原动作保留 pending。通用 approve/reject/finish 方法不能处理 archive，避免旁路绕过写入门控。
+- 非归档三类动作仅提供持久化 proposal 和状态转换，不新增 HTTP/MCP 写接口，不启动真实 agent / schedule / bulk executor；这些执行能力分别留给 T12–T15。
+- 显式保存先完成模型提取，再登记用户 proposal 并复用确认事务；提取失败不留下隐形 pending，正式写入失败的无 UI 卡片 proposal 自动终结为 rejected。既有 UI 卡片确认失败仍保留 pending。
+- HTTP / runtime / store 的 pending 前置校验统一；并发确认可各自提取，但只有一次事务写入成功。提取去重与取消仍属于 T12。
+
+**同期 TS 解耦**：前端搬到 `web/`，更新共享 DTO import、静态加载路径、`test:web` glob 和 typecheck include。生产启动、MCP、CI 和普通测试不读 Rust 源码、不调用 Cargo；保留人类可读的历史 fixture。Rust Web oracle 仅调整资源定位到 `web/`，无功能修改，避免搬迁将冻结参考的构建路径弄断。
+
+T11 验收覆盖：原文防伪造、单次/并发确认、拒绝、非法状态转换、事务故障注入回滚、v2 migration、数据库重开、不可修改 proposal、输入资源上限及 MCP 只提案。`npm run check`（真实 socket 需沙箱外权限）通过，222 个后端 + 23 个前端测试；未运行真实模型或访问用户数据库。详见 `docs/TEST_PLAN.md` 的 T11 项。
 
 **T12 必须包含取消传播**：目前客户端断开连接后，服务端 handler 仍会跑完全程（已实测）。
 现在影响有限——LLM 有 30s 超时兜着。但 T13 之后 agent 任务要跑几分钟，
@@ -552,29 +568,22 @@ git stash && git checkout dev && .venv/bin/python -m pytest tests -q   # 跑 Pyt
 |---|---|---|
 | 1 | **§7 全部 9 条在 TS 侧有可执行测试** | ⬜ 等 T10 + T13 |
 | 2 | 所有 parity fixture 已提交，且文件头记录了再生成命令 | ✅ `low-information-gate.tsv`、`storage-parity.json` 都有 |
-| 3 | 前端已从 `apps/doggie-local-web/frontend/` 移到 `web/`，TS server 与 CI 通过 | ⬜ 与删除同批做 |
-| 4 | 最近连续两个阶段都没有需要 `cargo test` 来裁决行为 | ⬜ 观察中 |
+| 3 | 前端已独立到 `web/`，TS server 与 CI 等价门禁通过 | ✅ T11 同期完成；远程 CI 仍需推送触发 |
+| 4 | 最近连续两个阶段都没有需要 `cargo test` 来裁决行为 | ✅ T10b、T11 均仅以 TS 测试验收 |
 
-> **条件 3 是硬耦合**：前端现在住在 `apps/doggie-local-web/frontend/`，
-> 而那是 Rust crate 的目录。删 `apps/` 就必须同时搬前端，不能分两次。
+> 前端已提前搬迁，不再需要等待 Rust 删除。当前唯一未完成的删除门槛是 §7 完整 Harness 测试；T11 不能冒充 T13。用户希望尽早纯 TS，因此后续优先补齐验收再删除，不继续投入 Rust 产品能力。
 
 ### 9.4 执行清单
 
 ```bash
-# ① 最后一次全量对拍，确认两边仍一致
-cargo test --workspace --offline
+# ① 用 TS 门禁确认 §7 九条均已有可执行测试；必要时只查历史 oracle
 npm run check
 
-# ② 搬前端（条件 3）
-git mv apps/doggie-local-web/frontend web
-#    改 src/http/app.ts 的 loadFrontendAssets() 路径
-#    改 package.json 的 test:web glob
-#    改 tsconfig.json 的 include
+# ② 前端已在 web/，无需再次搬迁；不要删除 web/ 或历史 fixture
 
-# ③ 删 Rust
+# ③ 所有门槛满足后删除历史 Rust workspace（只删除 tracked 文件）
 git rm -r crates apps Cargo.toml Cargo.lock
-#    删 .gitignore 里的 /target/
-#    删 AGENTS.md 里的 cargo 门禁段落
+#    清理 .gitignore 和 AGENTS.md 的已过时 oracle 说明
 
 # ④ 验证
 npm run check
@@ -590,7 +599,7 @@ npm run check
 - 因此 fixture 必须保持人类可读（TSV / 格式化 JSON），**不能压缩或二进制化**。
 
 这是可接受的——T2 的 low-information fixture 从写下来那天起就是这个定位。
-但它意味着**删除是不可逆的**，所以条件 1 和 4 不能通融。
+删除当前分支源码不等于删除 Git 历史；历史 fixture 如需再生，可以从移除前提交恢复到隔离临时工作树。条件 1 和 4 仍是验收要求，不以历史可恢复为理由跳过。
 
 ### 9.6 其他两个分支
 

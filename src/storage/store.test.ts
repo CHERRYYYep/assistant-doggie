@@ -769,6 +769,7 @@ test("a database holding foreign tables is refused", () => {
         "bucket_tags",
         "memory_items",
         "archive_attempts",
+        "pending_actions",
         "corrections",
         "conversation_messages",
       ]);
@@ -788,7 +789,7 @@ test("the schema records its version", () => {
   const meta = store.database
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     .get() as { value: string };
-  assert.equal(meta.value, "2");
+  assert.equal(meta.value, "3");
 
   const migrations = store.database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -796,6 +797,7 @@ test("the schema records its version", () => {
   assert.deepEqual(plainAll(migrations), [
     { version: 1, name: "create_memory_schema_v1" },
     { version: 2, name: "add_pending_archive_suggestions_v2" },
+    { version: 3, name: "add_pending_actions_v3" },
   ]);
 });
 

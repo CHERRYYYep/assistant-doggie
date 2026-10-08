@@ -189,3 +189,19 @@ git show dev_rust:crates/doggie-domain/tests/classification.rs
 # Python 行为（可直接运行）
 git stash && git checkout dev && .venv/bin/python -m pytest tests -q
 ```
+
+
+## 11. T11 增量批准契约（2026-10-08）
+
+这组验收独立于原有 85 条规格，**不表示 §7 Harness 已全部完成**。
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 11.1 | 所有待批准动作有 durable ID、严格 payload、来源和不可修改的原文 binding | `src/storage/pending-actions.test.ts` proposal / immutable / reopen |
+| 11.2 | 未批准不得完成；rejected / executed / failed 不能再次批准或执行 | generic action kinds / terminal tests |
+| 11.3 | archive 通用批准不可旁路；确认选择与正式数据在同一事务内记录 | archive rejection / choice / injected rollback tests |
+| 11.4 | MCP proposal 与 Web/User 归档共用批准权威，不获得直接写入能力 | MCP / explicit use cases tests + `src/runtime/local-web.test.ts` |
+| 11.5 | v2 pending/resolved IDs、原文和审计迁移后可重开且不能重放 | v2 migration test |
+| 11.6 | 并发确认只有一次正式写入；不保证提取调用去重 | concurrent confirmations test |
+
+`pending_actions` 是通用批准权威；`archive_attempts` 仍是归档审计/HTTP projection。两者任何 pending/binding 不一致均拒绝 archive 确认。非归档动作的 approve/finish 是供后续应用服务使用的存储操作，不是 HTTP/MCP 工具，也不自行调用 executor。

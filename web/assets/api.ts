@@ -4,7 +4,7 @@ import type {
   ChatConfirmationRequest,
   ChatRequest,
   MoveEntryRequest,
-} from "../../../../src/http/contracts.ts";
+} from "../../src/http/contracts.ts";
 import type {
   ActiveBucketsResponse,
   BucketDetailResponse,
@@ -15,7 +15,7 @@ import type {
   ErrorResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
-} from "../../../../src/http/dto.ts";
+} from "../../src/http/dto.ts";
 
 export const ROUTES = {
   chat: "/api/chat",

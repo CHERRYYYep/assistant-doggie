@@ -5,12 +5,12 @@ import type {
   ChatConfirmationRequest,
   ChatRequest,
   MoveEntryRequest,
-} from "../../../../src/http/contracts.ts";
+} from "../../src/http/contracts.ts";
 import type {
   ActiveBucketsResponse,
   ChatHistoryResponse,
   MemoryQueryResponse,
-} from "../../../../src/http/dto.ts";
+} from "../../src/http/dto.ts";
 import {
   fetchActiveBuckets,
   fetchChatHistory,

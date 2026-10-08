@@ -127,6 +127,7 @@ export class DoggieMcpTools {
         candidateBucketIds: candidates.map(({ id }) => id),
         focusBucketId: preferred?.id,
         promptVersion: "doggie-mcp-v1",
+        proposedBy: "model",
         modelName: "mcp-client",
       },
     );

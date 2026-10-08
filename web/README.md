@@ -1,6 +1,6 @@
 # Doggie Local Web Frontend
 
-本目录是 `doggie-local-web` 的本地 Web UI 源码边界，使用**严格 TypeScript + 原生 ES module**，不引入第三方 bundler：
+本目录是 TypeScript Doggie 的本地 Web UI 源码边界，使用**严格 TypeScript + 原生 ES module**，不引入第三方 bundler：
 
 - `index.html`：页面结构和静态挂载点，并加载 `assets/app.ts`。
 - `assets/styles.css`：页面样式。全部颜色走 CSS 自定义属性，`:root` 与
@@ -20,14 +20,17 @@
 
 - Node HTTP runtime 使用 Node 24 的 `stripTypeScriptTypes`，在响应 `/assets/*.ts`
   前剥离类型语法；
-- Rust 参考入口的 Cargo `build.rs` 也使用 Node 24 的原生剥离能力，在编译时生成
-  `OUT_DIR` 下的临时 JavaScript，再嵌入 `doggie-local-web`；
-- 两条路径都只生成临时产物，生成的 `.js` 不提交；
+- 类型剥离只在内存中生成响应体，不写入或提交生成的 `.js` 文件；
 - 浏览器继续通过 `/assets/*.ts` URL 加载模块，但收到的响应体是可执行的 JavaScript，
   MIME 类型为 `text/javascript; charset=utf-8`；
 - 没有 Vite、Webpack 或其他第三方 bundler，模块依赖仍由原生 ES module 路径加载。
 
 ## 工具链
+
+从仓库根目录运行 `npm start` 启动 TypeScript Web 服务。生产入口是 `src/main.ts`，
+静态资源由 `src/http/app.ts` 从本目录加载；浏览器的 `/assets/` URL 不变。
+前端源码和 DTO 合同测试通过 `../../src/http/` 复用共享 HTTP 类型，这些 type-only
+import 在类型剥离后不会成为浏览器的运行时依赖。
 
 仓库根目录负责类型检查和完整测试；本目录的 package script 适合单独检查前端资源：
 
@@ -38,7 +41,7 @@ npm run test:web      # API/DTO 合同和 Markdown 行为测试
 npm run format:check  # 检查整个仓库格式
 
 # 当前目录
-cd apps/doggie-local-web/frontend
+cd web
 npm run format:check  # 检查前端资源格式
 npm test              # node --test，运行前端 .test.ts 测试
 ```

@@ -1,6 +1,6 @@
 //! Static assets for the local Web UI.
 //!
-//! The UI lives under `apps/doggie-local-web/frontend/` as plain ES modules
+//! The UI lives under `web/` as plain ES modules
 //! with a tiny build step: Node 24 strips TypeScript syntax before the server
 //! embeds the modules and serves them same-origin. No generated files are
 //! committed to the repository.
@@ -10,9 +10,9 @@
 //! but never registered here.
 
 /// Frontend index document.
-pub const INDEX_HTML: &str = include_str!("../frontend/index.html");
+pub const INDEX_HTML: &str = include_str!("../../../web/index.html");
 /// Frontend stylesheet.
-pub const STYLES_CSS: &str = include_str!("../frontend/assets/styles.css");
+pub const STYLES_CSS: &str = include_str!("../../../web/assets/styles.css");
 /// Entry point: binds DOM events to controllers.
 pub const APP_JS: &str = include_str!(concat!(env!("OUT_DIR"), "/frontend/app.js"));
 /// Markdown renderer.

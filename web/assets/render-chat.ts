@@ -1,6 +1,6 @@
 /** Chat transcript rendering: the empty state and one message. */
 
-import type { UiChatMessageDto } from "../../../../src/http/dto.ts";
+import type { UiChatMessageDto } from "../../src/http/dto.ts";
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import { chatMessages } from "./dom.ts";
 import { renderArchiveCard } from "./render-archive.ts";

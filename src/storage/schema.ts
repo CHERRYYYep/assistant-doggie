@@ -1,11 +1,7 @@
 /**
  * Canonical SQLite schema.
  *
- * The physical layout is a cleaned-up version of the Rust canonical schema —
- * the `rust_` table-name prefix is gone, since it was a legacy-compatibility
- * artifact that means nothing here. Compatibility with the old database was
- * dropped deliberately (see `docs/PLAN.md` Q3), so this is free to be a
- * straightforward design.
+ * TypeScript owns this schema; pre-TS databases are not imported.
  *
  * What did **not** change is the transaction semantics: see
  * `docs/INVARIANTS.md` §4, all fifteen of which this layer must uphold.
@@ -19,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -172,6 +168,43 @@ ALTER TABLE archive_attempts ADD COLUMN suggested_bucket_type TEXT;
 ALTER TABLE archive_attempts ADD COLUMN suggested_title TEXT;
 `;
 
+const ADD_PENDING_ACTIONS_V3 = `
+CREATE TABLE pending_actions (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL CHECK (kind IN ('archive', 'agent_task', 'scheduled_run', 'bulk_mutation')),
+    proposed_by   TEXT NOT NULL CHECK (proposed_by IN ('model', 'schedule', 'user')),
+    binding_text  TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'executed', 'failed')),
+    approval_json TEXT,
+    result_json   TEXT,
+    failure_code  TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX ix_pending_actions_status_created ON pending_actions(status, created_at, id);
+
+-- Preserve existing confirmation IDs and raw input; history cards need no rewrite.
+-- Archive attempts remain the historical audit projection, not approval authority.
+INSERT INTO pending_actions
+    (id, kind, proposed_by, binding_text, payload_json, status, result_json, created_at, updated_at)
+SELECT id, 'archive', 'model', raw_text,
+    json_object('rawText', raw_text, 'candidateBucketIds', json(candidate_bucket_ids_json),
+      'focusBucketId', focus_bucket_id, 'suggestedBucketType', suggested_bucket_type,
+      'suggestedTitle', suggested_title),
+    CASE WHEN archive_state = 'needs_confirmation' AND resolved_at IS NULL AND corrected = 0 THEN 'pending'
+         WHEN archive_state = 'archived' THEN 'executed' ELSE 'rejected' END,
+    CASE WHEN archive_state = 'archived' THEN json_object('referenceId', id) ELSE NULL END,
+    created_at, COALESCE(resolved_at, created_at)
+FROM archive_attempts WHERE action = 'ask_user';
+
+CREATE TRIGGER pending_action_proposal_immutable
+BEFORE UPDATE OF id, kind, proposed_by, binding_text, payload_json, created_at ON pending_actions
+BEGIN
+  SELECT RAISE(ABORT, 'pending action proposal is immutable');
+END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -179,6 +212,7 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "add_pending_archive_suggestions_v2",
     sql: ADD_PENDING_SUGGESTIONS_V2,
   },
+  { version: 3, name: "add_pending_actions_v3", sql: ADD_PENDING_ACTIONS_V3 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */
@@ -190,6 +224,7 @@ export const OWNED_TABLES: readonly string[] = [
   "bucket_tags",
   "memory_items",
   "archive_attempts",
+  "pending_actions",
   "corrections",
   "conversation_messages",
 ];

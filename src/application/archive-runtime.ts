@@ -1,9 +1,8 @@
 /** Model-backed archive orchestration with deterministic server-side gates. */
 
 import {
-  appendExisting,
+  askUser,
   buildBucketCandidates,
-  createNew,
   DEFAULT_CONFIDENCE_POLICY,
   postprocessClassification,
   type ClassificationResult,
@@ -176,15 +175,11 @@ export class ArchiveRuntime {
   ): Promise<ArchiveExecution> {
     const text = requiredText(rawText, "text");
     const target = this.#requireActiveBucket(bucketId);
-    const candidates = this.#candidates(focusBucketId);
-    const extraction = await this.#model.extract(text);
-    return this.#execute(
-      text,
-      appendExisting(target.id, target.kind, 1, "用户明确确认目标 Bucket。"),
-      extraction,
-      candidates,
-      { focusBucketId },
-    );
+    return this.#confirmUserAction(text, {
+      action: "append",
+      targetBucketId: target.id,
+      ...(focusBucketId === undefined ? {} : { focusBucketId }),
+    });
   }
 
   async createConfirmed(
@@ -194,19 +189,74 @@ export class ArchiveRuntime {
     focusBucketId?: string,
   ): Promise<ArchiveExecution> {
     const text = requiredText(rawText, "text");
-    const candidates = this.#candidates(focusBucketId);
+    return this.#confirmUserAction(text, {
+      action: "create",
+      title: requiredText(title, "title"),
+      bucketType,
+      ...(focusBucketId === undefined ? {} : { focusBucketId }),
+    });
+  }
+
+  async #confirmUserAction(
+    text: string,
+    choice:
+      | {
+          readonly action: "append";
+          readonly targetBucketId: string;
+          readonly focusBucketId?: string;
+        }
+      | {
+          readonly action: "create";
+          readonly title: string;
+          readonly bucketType: BucketType;
+          readonly focusBucketId?: string;
+        },
+  ): Promise<ArchiveExecution> {
+    const candidates = this.#candidates(choice.focusBucketId);
+    // Extract before registering a one-shot explicit choice. A model failure
+    // must not leave an invisible pending proposal with no recovery card.
     const extraction = await this.#model.extract(text);
-    return this.#execute(
+    const pending = this.#execute(
       text,
-      createNew(bucketType, title, 1, "用户明确确认创建新 Bucket。"),
-      extraction,
+      askUser(
+        undefined,
+        undefined,
+        1,
+        "用户提交了明确的归档选择。",
+        "等待执行用户选择。",
+        candidates.map(({ id }) => id),
+      ),
+      undefined,
       candidates,
-      { focusBucketId },
+      { focusBucketId: choice.focusBucketId, proposedBy: "user" },
     );
+    let execution: ConfirmationExecution;
+    try {
+      execution = await this.#confirm(
+        { ...choice, attemptId: pending.result.attemptId, rawText: text },
+        extraction,
+      );
+    } catch (error) {
+      // A one-shot explicit request has no durable UI card. Retain rejected
+      // audit instead of leaving an inaccessible pending action on failure.
+      this.#store.discardArchiveAttempt(pending.result.attemptId, text);
+      throw error;
+    }
+    if (execution.result.archiveState === "discarded") {
+      throw StorageError.invalidWrite("confirmation", "unexpected discard");
+    }
+    return { ...execution, result: execution.result };
   }
 
   async confirm(
     request: RuntimeConfirmationRequest,
+  ): Promise<ConfirmationExecution> {
+    return this.#confirm(request);
+  }
+
+  async #confirm(
+    request: RuntimeConfirmationRequest,
+    preparedExtraction?: ExtractionResult,
   ): Promise<ConfirmationExecution> {
     const attempt = this.#requirePendingAttempt(
       request.attemptId,
@@ -229,18 +279,17 @@ export class ArchiveRuntime {
       };
     }
 
-    const targetBucket =
-      request.action === "append"
-        ? this.#requireActiveBucket(request.targetBucketId)
-        : undefined;
-    const extraction = await this.#model.extract(request.rawText);
+    if (request.action === "append")
+      this.#requireActiveBucket(request.targetBucketId);
+    const extraction =
+      preparedExtraction ?? (await this.#model.extract(request.rawText));
     let result: ArchiveResult;
     if (request.action === "append") {
       result = this.#service.confirm({
         action: "append",
         attemptId: attempt.id,
         rawText: request.rawText,
-        targetBucketId: targetBucket!.id,
+        targetBucketId: request.targetBucketId,
         ...(request.focusBucketId === undefined
           ? {}
           : { focusBucketId: request.focusBucketId }),
@@ -280,7 +329,10 @@ export class ArchiveRuntime {
     classification: ClassificationResult,
     extraction: ExtractionResult | undefined,
     candidates: readonly BucketView[],
-    options: { readonly focusBucketId: string | undefined },
+    options: {
+      readonly focusBucketId: string | undefined;
+      readonly proposedBy?: "user" | "model";
+    },
   ): ArchiveExecution {
     const result = this.#service.archiveClassifiedInput(
       text,
@@ -288,6 +340,7 @@ export class ArchiveRuntime {
       extraction,
       {
         candidateBucketIds: candidates.map((candidate) => candidate.id),
+        proposedBy: options.proposedBy ?? "model",
         focusBucketId: options.focusBucketId,
         promptVersion: RUNTIME_PROMPT_VERSION,
         modelName: this.#model.modelName,
@@ -326,20 +379,10 @@ export class ArchiveRuntime {
   }
 
   #requirePendingAttempt(attemptId: string, rawText: string) {
-    const id = requiredText(attemptId, "attempt_id");
-    const attempt = this.#store.getArchiveAttempt(id);
-    if (attempt === undefined) throw StorageError.archiveAttemptNotFound(id);
-    if (attempt.rawText !== rawText) {
-      throw StorageError.archiveAttemptTextMismatch(id);
-    }
-    if (
-      attempt.archiveState !== "needs_confirmation" ||
-      attempt.resolvedAt !== null ||
-      attempt.corrected
-    ) {
-      throw StorageError.archiveAttemptNotPending(id);
-    }
-    return attempt;
+    return this.#store.requirePendingArchiveAttempt(
+      requiredText(attemptId, "attempt_id"),
+      rawText,
+    );
   }
 }
 

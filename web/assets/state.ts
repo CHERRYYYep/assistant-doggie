@@ -5,7 +5,7 @@
  * private copies, so "which bucket is selected" has exactly one answer.
  */
 
-import type { BucketDto, UiChatMessageDto } from "../../../../src/http/dto.ts";
+import type { BucketDto, UiChatMessageDto } from "../../src/http/dto.ts";
 
 export type FrontendState = {
   /** Active buckets as last returned by the server. */

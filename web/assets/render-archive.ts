@@ -5,7 +5,7 @@
  * written an Entry, the card must say so and offer all four choices.
  */
 
-import type { ArchiveDto } from "../../../../src/http/dto.ts";
+import type { ArchiveDto } from "../../src/http/dto.ts";
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import {
   bucketLabel,

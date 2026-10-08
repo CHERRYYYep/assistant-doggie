@@ -15,7 +15,7 @@ Rust workspace 仅作为冻结的行为参考（oracle）保留，用于查询�
 - `src/http/`：Hono 路由、HTTP DTO/contract、安全策略和 Node HTTP adapter。
 - `src/mcp/`：Doggie MCP stdio server、严格工具 schema 和受控工具执行边界。
 - `src/evaluation/`：分类与提取评测；真实模型评测不得进入普通测试链。
-- `apps/doggie-local-web/frontend/`：当前复用的浏览器 UI 源码。该目录暂时保留在旧 Rust crate 下，后续按 `docs/PLAN.md` 搬迁；不要因此把 Rust Web runtime 视为目标实现。
+- `web/`：独立浏览器 TypeScript UI，复用 `src/http/` 的共享 DTO；生产资源与日常测试不依赖 Rust 目录。
 - `bin/doggie-mcp`：本地 MCP 可执行入口。
 - `tests/fixtures/`：从历史实现固化的 parity fixture。
 - `docs/`：架构、不变量、数据模型、MCP、迁移边界和测试计划。
@@ -98,7 +98,9 @@ npm start
 
 - `ask_user` 低信息安全门控；
 - 推荐 Bucket、备选 Bucket、判断理由、创建新 Bucket 和“不保存”选项；
-- confirmation 与持久化 pending attempt、原始输入和用户选择严格绑定；
+- confirmation 与 `pending_actions`、原始输入和用户选择严格绑定；`archive_attempts` 保留为审计/兼容 projection；
+- 归档批准、Entry/Memory 和双审计状态在同一事务内提交，失败时动作仍可确认；
+- `agent_task` / `scheduled_run` / `bulk_mutation` 当前只存储 proposal，不注册执行器或新增 MCP 写工具；
 - 归档后的 Bucket 修改入口；
 - Entry 原文、结构化 memory、审计记录和可重放防护。
 

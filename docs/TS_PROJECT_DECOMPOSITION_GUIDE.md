@@ -183,7 +183,7 @@ src/
 ├── http/         Hono 路由、HTTP DTO、安全策略、Node server adapter
 └── evaluation/   分类/提取评测，不属于在线请求主路径
 
-apps/doggie-local-web/frontend/
+web/
 └── assets/       浏览器端 TypeScript UI
 ```
 
@@ -969,7 +969,7 @@ HTTP 使用：
 目录：
 
 ```text
-apps/doggie-local-web/frontend/assets/
+web/assets/
 ├── api.ts
 ├── app.ts
 ├── dom.ts
@@ -1427,7 +1427,7 @@ src/http/*.test.ts
 文件：
 
 ```text
-apps/doggie-local-web/frontend/tests/*.test.ts
+web/tests/*.test.ts
 ```
 
 测试：
@@ -1543,7 +1543,7 @@ src/application
 src/storage
 src/llm
 src/http
-apps/doggie-local-web/frontend
+web
 ```
 
 ---
@@ -1627,11 +1627,11 @@ src/llm/structured-output.ts
 ### 第 7 步：读前端
 
 ```text
-apps/doggie-local-web/frontend/assets/api.ts
-apps/doggie-local-web/frontend/assets/views.ts
-apps/doggie-local-web/frontend/assets/render-chat.ts
-apps/doggie-local-web/frontend/assets/render-archive.ts
-apps/doggie-local-web/frontend/assets/app.ts
+web/assets/api.ts
+web/assets/views.ts
+web/assets/render-chat.ts
+web/assets/render-archive.ts
+web/assets/app.ts
 ```
 
 重点理解事件 → API → state → render。
@@ -1723,3 +1723,56 @@ npm run test:web
 
 1. **不要让模型直接决定写入；**
 2. **不要让 UI 或 HTTP handler 直接承担领域和存储逻辑。**
+
+
+## T11 补充：通用待批准动作（2026-10-08）
+
+现在前端源码已位于独立 `web/`，生产入口为 `src/main.ts`，运行、类型检查、前端测试和 CI 不依赖 Rust/Cargo。
+
+### 类型定义：判别联合而不是大而全的对象
+
+`src/domain/pending-action.ts` 使用 `z.discriminatedUnion("kind", ...)` 同时提供运行时校验和 `z.infer` 类型：
+
+```ts
+type PendingActionDraft =
+  | { kind: "archive"; payload: ArchivePayload }
+  | { kind: "agent_task"; payload: { instruction: string; workspaceId: string | null } }
+  | { kind: "scheduled_run"; payload: { scheduleId: string } }
+  | { kind: "bulk_mutation"; payload: BulkPayload };
+```
+
+上面是简化讲解，真实定义以源码为准。`kind` 告诉 TS 应使用哪类 payload，Zod 的 `.strict()` 阻止运行时偷偷夹带其他字段。没有新增依赖、通用插件框架或复杂 class 继承。
+
+### 持久化状态不等于执行权限
+
+```text
+proposal → pending → approved → executed
+                  │          └→ failed
+                  └→ rejected
+```
+
+动作包含 `proposedBy`、原文 `binding`、用户 `approval` 和结果 `result`。存储层会比对动作 ID、原文和当前状态，不能仅凭模型给出的高置信度批准。proposal 字段由 SQLite trigger 保护，后续不能替换输入再复用批准。
+
+### 归档事务与兼容投影
+
+schema v3 增加 `pending_actions`，自动在迁移事务中回填 TS v2 库的确认记录。原来的 `archive_attempts` **不直接删除**：纠错、历史卡片和 HTTP DTO 还需要它，它现在是归档审计 projection，不再是另一套授权入口。
+
+归档确认在同一个事务内执行：
+
+```text
+校验 pending action + attempt + exact raw text
+  → 记录用户 append/create 选择，status=approved
+  → 写 Bucket / Entry / Memory
+  → 更新归档审计，status=executed
+  → commit
+```
+
+任何一步失败全部 rollback，原动作仍是 pending；“不保存”则将动作和归档审计一起标成拒绝。批准与执行之间不会留下可被重放的半成品 archive。
+
+`ArchiveRuntime.appendConfirmed/createConfirmed` 不再另走直接写入分支，而是登记用户 proposal，再复用 `confirm()`。用户已经明确点击保存，因此不会重复弹出一次批准。该单次入口先提取再登记 proposal，模型失败不留下不可恢复的 pending；正式写入失败则保留 rejected 审计。已经有 UI 卡片的确认失败仍保留 pending 供重试。自动归档仍保留原有领域安全门控。
+
+### 此阶段不实现什么
+
+`agent_task`、`scheduled_run` 和 `bulk_mutation` 只有严格数据契约与 durable 状态转换。没有任务进程、调度 tick 或批量写 executor；MCP 依然只允许三个读取工具和 `propose_entry`。执行队列、取消传播、SSE、多轮 Harness 属于 T12/T13。
+
+代码阅读顺序：`src/domain/pending-action.ts` → `src/storage/schema.ts` 的 v3 → `src/storage/pending-actions.ts` → `src/storage/store.ts` → `src/application/archive-runtime.ts` → `src/storage/pending-actions.test.ts`。
