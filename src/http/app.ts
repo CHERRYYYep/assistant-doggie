@@ -6,6 +6,9 @@ import { stripTypeScriptTypes } from "node:module";
 import { Hono } from "hono";
 import { z } from "zod";
 
+import { taskPayloadSchema } from "../domain/task.ts";
+import { taskEventStream, type TaskQueue } from "../application/task-queue.ts";
+
 import type { BucketType } from "../domain/types.ts";
 
 import {
@@ -48,19 +51,28 @@ export type DoggieHttpApi = {
   ) => unknown | Promise<unknown>;
   readonly bucketDetail: (bucketId: string) => unknown | Promise<unknown>;
   readonly deleteBucket: (bucketId: string) => unknown | Promise<unknown>;
-  readonly archive: (request: ArchiveRequest) => unknown | Promise<unknown>;
-  readonly chat: (request: ChatRequest) => unknown | Promise<unknown>;
+  readonly archive: (
+    request: ArchiveRequest,
+    signal?: AbortSignal,
+  ) => unknown | Promise<unknown>;
+  readonly chat: (
+    request: ChatRequest,
+    signal?: AbortSignal,
+  ) => unknown | Promise<unknown>;
   readonly confirmChat: (
     request: ChatConfirmationRequest,
+    signal?: AbortSignal,
   ) => unknown | Promise<unknown>;
   readonly appendConfirmed: (
     request: ArchiveRequest & { readonly bucket_id: string },
+    signal?: AbortSignal,
   ) => unknown | Promise<unknown>;
   readonly createConfirmed: (
     request: ArchiveRequest & {
       readonly title: string;
       readonly bucket_type: BucketType;
     },
+    signal?: AbortSignal,
   ) => unknown | Promise<unknown>;
   readonly moveEntry: (request: MoveEntryRequest) => unknown | Promise<unknown>;
   readonly setBucketStatus: (
@@ -158,6 +170,7 @@ export function createDoggieApp(
   api: DoggieHttpApi,
   assets: readonly StaticAsset[] = loadFrontendAssets(),
   additionalAllowedAuthorities: readonly string[] = [],
+  tasks?: TaskQueue,
 ): Hono {
   const app = new Hono();
   const authorityPolicy = new AuthorityPolicy(additionalAllowedAuthorities);
@@ -222,17 +235,27 @@ export function createDoggieApp(
   app.post("/api/archive", async (context) =>
     json(
       context,
-      await api.archive(await parseBody(context, archiveRequestSchema)),
+      await api.archive(
+        await parseBody(context, archiveRequestSchema),
+        context.req.raw.signal,
+      ),
     ),
   );
   app.post("/api/chat", async (context) =>
-    json(context, await api.chat(await parseBody(context, chatRequestSchema))),
+    json(
+      context,
+      await api.chat(
+        await parseBody(context, chatRequestSchema),
+        context.req.raw.signal,
+      ),
+    ),
   );
   app.post("/api/chat/confirm", async (context) =>
     json(
       context,
       await api.confirmChat(
         await parseBody(context, chatConfirmationRequestSchema),
+        context.req.raw.signal,
       ),
     ),
   );
@@ -250,7 +273,10 @@ export function createDoggieApp(
       throw new HttpBoundaryError(400, "confirmation is required");
     }
     const { confirmation_granted: _, ...payload } = request;
-    return json(context, await api.appendConfirmed(payload));
+    return json(
+      context,
+      await api.appendConfirmed(payload, context.req.raw.signal),
+    );
   });
   app.post("/api/archive/create", async (context) => {
     const request = await parseBody(context, confirmedCreateRequestSchema);
@@ -258,7 +284,10 @@ export function createDoggieApp(
       throw new HttpBoundaryError(400, "confirmation is required");
     }
     const { confirmation_granted: _, ...payload } = request;
-    return json(context, await api.createConfirmed(payload));
+    return json(
+      context,
+      await api.createConfirmed(payload, context.req.raw.signal),
+    );
   });
   app.post("/api/corrections/move", async (context) =>
     json(
@@ -274,6 +303,42 @@ export function createDoggieApp(
       ),
     ),
   );
+
+  if (tasks !== undefined) {
+    app.post("/api/tasks", async (context) => {
+      const payload = await parseBody(context, taskPayloadSchema);
+      context.req.raw.signal.throwIfAborted();
+      return context.json({ ok: true, task: tasks.submit(payload) }, 202);
+    });
+    app.get("/api/tasks", (context) =>
+      context.json({ ok: true, tasks: tasks.list() }),
+    );
+    app.get("/api/tasks/:taskId", (context) =>
+      context.json({
+        ok: true,
+        task: tasks.get(z.string().uuid().parse(context.req.param("taskId"))),
+      }),
+    );
+    app.post("/api/tasks/:taskId/cancel", async (context) => {
+      await parseBody(context, z.object({}).strict());
+      return context.json({
+        ok: true,
+        task: await tasks.cancel(
+          z.string().uuid().parse(context.req.param("taskId")),
+        ),
+      });
+    });
+    app.get("/api/tasks/:taskId/events", (context) => {
+      const id = z.string().uuid().parse(context.req.param("taskId"));
+      return new Response(taskEventStream(tasks, id, context.req.raw.signal), {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Accel-Buffering": "no",
+        },
+      });
+    });
+  }
 
   app.notFound((context) =>
     context.json({ ok: false, error: "route not found" }, 404),
@@ -318,13 +383,17 @@ function json(
   return context.json(value as never);
 }
 
-function httpStatus(status: number): 400 | 403 | 404 | 409 | 415 | 500 {
+function httpStatus(
+  status: number,
+): 400 | 403 | 404 | 409 | 415 | 429 | 503 | 500 {
   switch (status) {
     case 400:
     case 403:
     case 404:
     case 409:
     case 415:
+    case 429:
+    case 503:
     case 500:
       return status;
     default:

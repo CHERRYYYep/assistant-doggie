@@ -1776,3 +1776,16 @@ schema v3 增加 `pending_actions`，自动在迁移事务中回填 TS v2 库的
 `agent_task`、`scheduled_run` 和 `bulk_mutation` 只有严格数据契约与 durable 状态转换。没有任务进程、调度 tick 或批量写 executor；MCP 依然只允许三个读取工具和 `propose_entry`。执行队列、取消传播、SSE、多轮 Harness 属于 T12/T13。
 
 代码阅读顺序：`src/domain/pending-action.ts` → `src/storage/schema.ts` 的 v3 → `src/storage/pending-actions.ts` → `src/storage/store.ts` → `src/application/archive-runtime.ts` → `src/storage/pending-actions.test.ts`。
+
+
+## T12 补充：理解 TS 的后台执行
+
+详细实现见 [TASK_QUEUE.md](TASK_QUEUE.md)。这里没有把 TypeScript 当成需要编译的“另一套 Rust”：Node 原生 async 承担等待模型，SQLite 同步事务承担短时间确定性写入，两者的边界明确。
+
+- `Promise<T>` 代表“未来返回 T”，并不代表工作在独立线程。单 worker 是用一个 `#worker: Promise<void>` 防止同时启动两次 drain；claim → await execute → finish 循环按持久化 sequence 顺序执行。
+- `AbortController` 是发出取消的一方，`AbortSignal` 是传给下层的一方。把它作为最后一个可选参数，原有调用仍兼容；有 signal 的调用在 await 两侧和写入前检查。
+- `ReadableStream<Uint8Array>` 是分块响应。SSE 发送的是任务状态 JSON，不是执行命令；`desiredSize` 与 socket `drain` 分别控制应用缓冲和网络背压。
+- TypeScript 的联合类型约束内部状态，Zod 则在运行时验证外部 JSON/SQLite 行；两者不是替代关系。浏览器的 type-only import 会被 Node strip 掉，不把后端 Zod/数据库模块带入浏览器。
+- `finally` 是生命周期底线：worker 无论成功/失败都清 timer，socket 无论断线/结束都清 listener，进程无论关闭哪层失败都等实际工作结束再关数据库。
+
+最值得保留的设计不是某个框架，而是**授权、执行、观察三个边界分离**：批准状态机决定能不能写，queue 决定何时执行，SSE 只告诉 UI 当前是什么状态。

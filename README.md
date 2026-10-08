@@ -69,6 +69,8 @@ http://127.0.0.1:8787/
 DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
 ```
 
+浏览器发送消息后可查看排队/执行状态、显式取消，刷新页面恢复后台任务。SSE 断线不会取消任务，也不会自动重发消息。
+
 本地 Web UI 源文件位于 `web/`，由 TypeScript `node:http` + Hono server 同源提供。Node 24 在启动时剥离浏览器资源中的 TypeScript 类型，不需要 Vite、Webpack 或 JavaScript 构建产物。
 
 检查代码与测试：
@@ -99,10 +101,15 @@ npm run check
 
 ## HTTP API
 
-成功响应均为 JSON，请求中的文本字段不能为空。
+除 SSE 事件订阅外，成功响应均为 JSON，请求中的文本字段不能为空。浏览器聊天已使用 T12 后台任务；原有同步 API 保留。详见 [任务队列与取消说明](docs/TASK_QUEUE.md)。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
+| `POST` | `/api/tasks` | 提交后台聊天任务，202 返回任务 ID |
+| `GET` | `/api/tasks` | 恢复近期任务和未结束任务 |
+| `GET` | `/api/tasks/:id` | 查询状态，不重复返回模型/原文 |
+| `GET` | `/api/tasks/:id/events` | SSE 状态快照，终态关闭 |
+| `POST` | `/api/tasks/:id/cancel` | JSON `{}` 显式取消；不会回滚已提交的归档 |
 | `POST` | `/api/chat` | 发送一轮对话；输入会先归档，再生成回答 |
 | `GET` | `/api/chat/history?limit=40` | 读取对话历史 |
 | `POST` | `/api/chat/confirm` | 提交确认后的追加、新建或不保存选择 |

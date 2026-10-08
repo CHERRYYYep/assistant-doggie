@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-10-08 · 当前分支 `dev_ts` · T11 已完成，下一阶段 T12（任务队列 / SSE / 请求级取消）
+> 最后更新：2026-10-08 · 当前分支 `dev_ts` · T12 已完成，下一阶段 T13（Agent Harness / 编排）
 
 ---
 
@@ -9,8 +9,8 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TS 测试 | **222 通过** |
-| 前端测试 | **23 通过** |
+| TS 测试 | **299 通过** |
+| 前端测试 | **50 通过** |
 | Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
 | 不变量规格总条数 | **85 条**（8 个章节） |
 | 已覆盖 | **76 条**（§1–§6 + §8 全部） |
@@ -20,7 +20,7 @@
 进度  ███████████████████████████░░░  76 / 85
 ```
 
-**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。T11 已完成通用批准状态机，前端已独立到 `web/`，下一步进入 T12；§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
+**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。T11 已完成通用批准状态机，前端已独立到 `web/`，T12 已补齐后台任务、SSE 和取消；下一步 T13，§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
 
 ### 分支布局
 
@@ -218,7 +218,7 @@ T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d90
 ```
 M1  TS 与 Rust 功能对等         T3 ✅ → T8b ✅   ← 已完成，CI 就位
 M2  记忆开始被日常消费           T9 ✅ → T9b ✅ → T10 ✅  ← 已完成
-M3  Doggie 成为 Agent 控制面    T11 ✅ → T12 → T13   ← §7 在此覆盖完
+M3  Doggie 成为 Agent 控制面    T11 ✅ → T12 ✅ → T13   ← §7 在此覆盖完
        ↓
     ⚑ 删除 Rust workspace（前置条件见第九章）
        ↓
@@ -324,7 +324,7 @@ T10b 最终实现与验证：
 | # | 阶段 | 交付 |
 |---|---|---|
 | **T11** ✅ | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
-| **T12** | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
+| **T12** ✅ | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
 | **T13** | Agent 编排 | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
 
 **T11 的关键洞察**：`ask_user` → 确认卡片 → 服务端执行，**已经是 agent action approval 的正确形态**。扩展不需要发明新安全模型，只需泛化：
@@ -345,18 +345,27 @@ PendingAction
 - `archive_attempts` 保留为原有归档审计和 HTTP DTO projection，**不是独立授权路径**；所有确认同时校验 generic action 和旧审计。删除这个表会破坏历史审计、纠错和 DTO，因此本阶段不强行重命名全部业务对象。
 - 自动归档仍遵循领域门控；`ask_user`、MCP proposal、用户显式 append/create 共用批准流程。显式保存先登记 `proposed_by=user` 的 proposal，再使用用户给定选择执行；不额外弹出第二次确认。
 - 归档 `pending→approved→executed` 与 Bucket/Entry/Memory/attempt 在**一个 SQLite 事务**中完成；失败全部回滚，原动作保留 pending。通用 approve/reject/finish 方法不能处理 archive，避免旁路绕过写入门控。
-- 非归档三类动作仅提供持久化 proposal 和状态转换，不新增 HTTP/MCP 写接口，不启动真实 agent / schedule / bulk executor；这些执行能力分别留给 T12–T15。
+- 非归档三类动作仅提供持久化 proposal 和状态转换，不新增 HTTP/MCP 写接口，不启动真实 agent / schedule / bulk executor；这些执行能力分别留给 T13–T15，T12 只运行现有后台聊天服务。
 - 显式保存先完成模型提取，再登记用户 proposal 并复用确认事务；提取失败不留下隐形 pending，正式写入失败的无 UI 卡片 proposal 自动终结为 rejected。既有 UI 卡片确认失败仍保留 pending。
-- HTTP / runtime / store 的 pending 前置校验统一；并发确认可各自提取，但只有一次事务写入成功。提取去重与取消仍属于 T12。
+- HTTP / runtime / store 的 pending 前置校验统一；并发确认可各自提取，但只有一次事务写入成功。取消已在 T12 覆盖；同一确认的重复提取暂不做共享 Promise，仍由单次事务阻止重复写入（请求级 signal 不共享）。
 
 **同期 TS 解耦**：前端搬到 `web/`，更新共享 DTO import、静态加载路径、`test:web` glob 和 typecheck include。生产启动、MCP、CI 和普通测试不读 Rust 源码、不调用 Cargo；保留人类可读的历史 fixture。Rust Web oracle 仅调整资源定位到 `web/`，无功能修改，避免搬迁将冻结参考的构建路径弄断。
 
 T11 验收覆盖：原文防伪造、单次/并发确认、拒绝、非法状态转换、事务故障注入回滚、v2 migration、数据库重开、不可修改 proposal、输入资源上限及 MCP 只提案。`npm run check`（真实 socket 需沙箱外权限）通过，222 个后端 + 23 个前端测试；未运行真实模型或访问用户数据库。详见 `docs/TEST_PLAN.md` 的 T11 项。
 
-**T12 必须包含取消传播**：目前客户端断开连接后，服务端 handler 仍会跑完全程（已实测）。
-现在影响有限——LLM 有 30s 超时兜着。但 T13 之后 agent 任务要跑几分钟，
-"用户关了页面而 agent 还在烧 token"就不可接受了。因此把 `AbortSignal` 从 HTTP 请求
-一路传到 LLM transport 和任务执行器，是 T12 的验收项之一，而不是 T9b 的补丁。
+**T12 已完成（2026-10-08）**：采用标准库 + SQLite 的轻量化后台聊天任务，不新增依赖，不提前启动 Claude/Codex 进程。
+
+- schema v4 新增 `background_tasks` / `background_task_executor`；严格 128 KiB payload、32 个 outstanding、最多 200 个保留任务；不可变单调 sequence 保证同毫秒 FIFO，claim/终态 CAS，单 Web worker ownership。
+- queued 重启继续，running 重启变为 `failed / interrupted`，不自动重放；正常 shutdown 取消当前工作并等实际 handler/worker 后才关 SQLite。ownership 对活 PID / 不确定 PID fail closed。
+- 新增任务 submit/list/get/cancel/events HTTP 路由，后台执行现有 `ConcreteDoggieHttpApi.chat`；低信息门控、T11 pending confirmation 和 MCP 四工具权限不变。不会把 generic agent/schedule/bulk payload 作为可执行命令。
+- SSE 即时分块、socket backpressure、有界快照合并、心跳和断线 reader/listener 清理；连接断线不取消持久化后台任务，显式 cancel/deadline/shutdown 才取消。
+- Request signal 传播至 API / archive runtime / structured output / fetch；模型 await 两侧和写入前检查，取消不重试且 abort reason 脱敏。正式归档已提交后不承诺撤销，不写入晚模型工具消息。
+- 终态持久化失败与 executor 失败区分：不伪报已提交效果为 cancelled，不自动重放，worker 停止接收并在 close 报告稳定错误。startup 清理即使 queue close 出错也必须释放 DB，保留原启动错误。
+- 浏览器聊天改为后台 submit，任务列表/取消/刷新恢复；严格 SSE parser，断线只 GET 有界轮询，POST 结果不明不自动重发；keyed history 渲染保留未改变确认表单和滚动位置。
+- 原 `/api/chat` / archive / confirm 同步路由保留；SSE 是任务状态，不是 token 流式回答。AbortSignal 为协作取消，永不返回的非协作执行器仍会阻止安全 shutdown。
+
+最终 `npm run check`（真实 socket / subprocess 需沙箱外权限）通过：**299 后端 + 50 前端，共 349 个**；格式、最高严格度 typecheck、`git diff --check` 均通过。审查发现并修复终态存储故障误标 cancelled、worker fault 丢失、同毫秒 FIFO 和 startup 清理及 drain 后探测故障问题，并补故障注入测试。全部 fake model / 临时库，未访问真实数据库/密钥、未调用真实模型。详细说明：[TASK_QUEUE.md](TASK_QUEUE.md)。
+
 
 **T13 数据模型**（已在对话中确认）：
 
@@ -435,9 +444,9 @@ claude -p "指令" --output-format stream-json --include-partial-messages \
 | 一个 LLM 慢请求占用整个服务循环 | 1.5s 慢请求在飞时，并发读 **16ms 返回** | ❌ 不成立 |
 | 慢客户端影响后续请求 | 同上，`node:http` 事件驱动 | ❌ 不成立 |
 | 并发能力很弱 | 单进程 Node 对单用户本地应用够用 | ❌ 不成立 |
-| 没有请求级取消 | 客户端 abort 后 handler 仍跑完全程 | ✅ 成立 → **T12** |
+| 没有请求级取消 | 当时客户端 abort 后 handler 仍跑完全程 | ✅ **T12 已修复**：Request signal 传播 + 写入前门控 |
 | 没有连接数限制 | `maxConnections` 未设置 | ✅ **T9b 已修复**：默认 32 |
-| 没有限流 | 无 | ✅ 成立 → 见下 |
+| 没有任务配额 | 当时无后台队列 | ✅ **T12 已修复**：队列容量和 payload/订阅上限 |
 
 前三条在 **Rust 版是真问题**（`for stream in listener.incoming()` 串行 + `ureq` 阻塞式 HTTP），
 换到 `node:http` + `await fetch` 之后自动消失。**这是换语言一个此前未记录的收益。**
@@ -461,7 +470,7 @@ Node 默认值已提供部分保护：`headersTimeout` 60s（基本 slowloris �
 重新嫁接到中间件层，是**有风险的改动而收益只是代码变少**；当前瓶颈在 T10 而不在这里。
 
 **限流为什么也推迟**：对 loopback 单用户，限流真正防的是"前端 bug 导致的请求风暴"，不是攻击。
-等 T12 有了任务队列，配额应该落在**队列层**而不是 HTTP 层——现在在 HTTP 层加限流，T12 要拆一遍。
+T12 已把任务配额落在**队列层**，保留 Node adapter 的连接/请求字节限制；没有额外引入通用 HTTP 限流框架。
 
 ### D12 展开 — 排序必须与 locale 无关
 
@@ -488,7 +497,7 @@ locale 下验证（提交 `8d8f3ae`）。
 | **Q3** | 是否兼容现有 `doggie.db` | **不兼容。** 现有数据量少、可随时重新自测。T3 不做 legacy 导入，物理 schema 可自由设计（仍保留 §4 全部事务语义）。**导出/导入延后到 T17** |
 | **Q4** | `HEAD` 返回 404 | T7 重建路由时顺手修——正确的 HTTP 行为，成本近零 |
 | **Q5** | 评测 fixture | **复用 `dev` 分支的人工标注**，不重新标注 |
-| **Q6** | `renderHistory` 全量重渲染 | **推迟到 T12**，SSE 会重写这条路径 |
+| **Q6** | `renderHistory` 全量重渲染 | **T12 已完成**：keyed 增量更新、表单和滚动位置保留 |
 | **Q7** | 删除 Rust 时机 | **M1 完成后**，差分测试价值在 M1 阶段最高 |
 
 ### Q3 的两个后果

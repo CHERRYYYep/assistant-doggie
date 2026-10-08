@@ -268,6 +268,37 @@ function assertSchemaShape(database: DatabaseSync): void {
     }
   }
 
+  for (const [table, required] of [
+    [
+      "background_tasks",
+      [
+        "id",
+        "sequence",
+        "payload_json",
+        "status",
+        "revision",
+        "error_code",
+        "created_at",
+        "updated_at",
+      ],
+    ],
+    ["background_task_executor", ["singleton", "owner_id", "process_id"]],
+  ] as const) {
+    const columns = new Set(
+      database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => row["name"]),
+    );
+    for (const column of required) {
+      if (!columns.has(column))
+        throw new StorageError(
+          "unsupported_schema_version",
+          `Doggie schema is missing ${table}.${column}`,
+        );
+    }
+  }
+
   const applied = database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
     .all() as { version: number; name: string }[];

@@ -770,6 +770,8 @@ test("a database holding foreign tables is refused", () => {
         "memory_items",
         "archive_attempts",
         "pending_actions",
+        "background_tasks",
+        "background_task_executor",
         "corrections",
         "conversation_messages",
       ]);
@@ -789,7 +791,7 @@ test("the schema records its version", () => {
   const meta = store.database
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     .get() as { value: string };
-  assert.equal(meta.value, "3");
+  assert.equal(meta.value, "4");
 
   const migrations = store.database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -798,6 +800,7 @@ test("the schema records its version", () => {
     { version: 1, name: "create_memory_schema_v1" },
     { version: 2, name: "add_pending_archive_suggestions_v2" },
     { version: 3, name: "add_pending_actions_v3" },
+    { version: 4, name: "add_background_tasks_v4" },
   ]);
 });
 

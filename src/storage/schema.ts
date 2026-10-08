@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -205,6 +205,29 @@ BEGIN
 END;
 `;
 
+const ADD_BACKGROUND_TASKS_V4 = `
+CREATE TABLE background_tasks (
+    id TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL UNIQUE CHECK (sequence > 0),
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    error_code TEXT CHECK (error_code IN ('execution_failed','interrupted')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX ix_background_tasks_status_created ON background_tasks(status, sequence);
+CREATE TRIGGER background_task_payload_immutable
+BEFORE UPDATE OF id, sequence, payload_json, created_at ON background_tasks
+BEGIN SELECT RAISE(ABORT, 'task payload is immutable'); END;
+-- A local process owner prevents a second Web runtime recovering live work.
+CREATE TABLE background_task_executor (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    owner_id TEXT NOT NULL,
+    process_id INTEGER NOT NULL CHECK (process_id > 0)
+);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -213,6 +236,7 @@ export const MIGRATIONS: readonly Migration[] = [
     sql: ADD_PENDING_SUGGESTIONS_V2,
   },
   { version: 3, name: "add_pending_actions_v3", sql: ADD_PENDING_ACTIONS_V3 },
+  { version: 4, name: "add_background_tasks_v4", sql: ADD_BACKGROUND_TASKS_V4 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */
@@ -225,6 +249,8 @@ export const OWNED_TABLES: readonly string[] = [
   "memory_items",
   "archive_attempts",
   "pending_actions",
+  "background_tasks",
+  "background_task_executor",
   "corrections",
   "conversation_messages",
 ];

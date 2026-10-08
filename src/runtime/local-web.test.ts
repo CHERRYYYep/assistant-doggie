@@ -1,3 +1,5 @@
+import { DatabaseSync } from "node:sqlite";
+import { TaskQueue } from "../application/task-queue.ts";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -257,17 +259,22 @@ test("T10b close is shared and cancels an in-flight production model call before
     const firstClose = web.close();
     const secondClose = web.close();
     assert.equal(firstClose, secondClose);
-    const [response] = await Promise.all([chat, firstClose]);
-    assert.equal(response.status, 500);
+    // T12 shutdown aborts the HTTP lifecycle and closes its socket rather than
+    // manufacturing a 500/error assistant message after intentional cancellation.
+    await Promise.all([assert.rejects(chat, /fetch failed/u), firstClose]);
 
     const reopened = openDatabase(config.databasePath);
     try {
       const messages = new Store(reopened).listChatMessages(10);
       assert.deepEqual(
         messages.map(({ role }) => role),
-        ["user", "assistant"],
+        ["user"],
       );
-      assert.match(messages[1]?.content ?? "", /无法完成/u);
+      assert.equal(new Store(reopened).listBuckets().length, 0);
+      assert.equal(
+        reopened.prepare("SELECT * FROM background_task_executor").get(),
+        undefined,
+      );
     } finally {
       reopened.close();
     }
@@ -304,6 +311,175 @@ test("T10b listen failure closes the startup database and leaves it reopenable",
     );
     const reopened = openDatabase(config.databasePath);
     reopened.close();
+  } finally {
+    blocker.close();
+    await once(blocker, "close");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("T12 production tasks continue across SSE disconnect and shutdown closes streaming subscribers", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-task-web-"));
+  let started = () => {};
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release = () => {};
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const model: MemoryModel = {
+    modelName: "task-fake-model",
+    async classify() {
+      started();
+      await delayed;
+      return createNew(BucketType.Task, "后台完成", 0.99, "明确事实");
+    },
+    async extract() {
+      return minimalExtraction("后台结果");
+    },
+  };
+  const web = await startDoggieLocalWeb(setupConfig(directory), { model });
+  try {
+    const task = web.tasks.submit({ message: "后台继续执行测试 100%" });
+    await began;
+    const streamController = new AbortController();
+    const events = await fetch(
+      new URL(`api/tasks/${task.id}/events`, web.url),
+      { signal: streamController.signal },
+    );
+    const reader = events.body?.getReader();
+    assert.ok(reader);
+    assert.match(
+      new TextDecoder().decode((await reader.read()).value),
+      /running/u,
+    );
+    streamController.abort();
+    assert.equal(web.tasks.get(task.id).status, "running");
+    release();
+    for (let i = 0; i < 100 && web.tasks.get(task.id).status === "running"; i++)
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(web.tasks.get(task.id).status, "succeeded");
+    assert.equal(web.store.listBuckets().length, 1);
+    const terminal = await fetch(
+      new URL(`api/tasks/${task.id}/events`, web.url),
+    );
+    assert.match(await terminal.text(), /succeeded/u);
+  } finally {
+    release();
+    await web.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("T12 runtime shutdown drains noncooperative worker before closing SQLite and preserves queued jobs", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-task-drain-"));
+  let started = () => {};
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let release = () => {};
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const model: MemoryModel = {
+    modelName: "task-drain-fake",
+    async classify() {
+      started();
+      await delayed;
+      return createNew(BucketType.Task, "late", 0.99, "明确事实");
+    },
+    async extract() {
+      return minimalExtraction("late");
+    },
+  };
+  const web = await startDoggieLocalWeb(setupConfig(directory), { model });
+  const a = web.tasks.submit({ message: "running at shutdown 100%" });
+  const b = web.tasks.submit({ message: "queued at shutdown 100%" });
+  try {
+    await began;
+    const stream = await fetch(new URL(`api/tasks/${a.id}/events`, web.url));
+    const reader = stream.body?.getReader();
+    assert.ok(reader);
+    await reader.read();
+    let closed = false;
+    const closing = web.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(closed, false);
+    assert.doesNotThrow(() => web.database.prepare("SELECT 1").get());
+    release();
+    await closing;
+    assert.equal(closed, true);
+    assert.throws(() => web.database.prepare("SELECT 1").get());
+    const restarted = await startDoggieLocalWeb(setupConfig(directory), {
+      model: new FakeModel(),
+    });
+    try {
+      assert.equal(restarted.tasks.get(a.id).status, "cancelled");
+      for (
+        let i = 0;
+        i < 100 && restarted.tasks.get(b.id).status !== "succeeded";
+        i++
+      )
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(restarted.tasks.get(b.id).status, "succeeded");
+      assert.equal(restarted.store.listBuckets().length, 1);
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    release();
+    await web.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("T12 startup bind failure closes database even when executor release fails, retaining original error", async (context) => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-task-start-fail-"));
+  const blocker = createServer();
+  blocker.listen(0, "127.0.0.1");
+  await once(blocker, "listening");
+  const port = (blocker.address() as AddressInfo).port;
+  const config = resolveRuntimeConfig(
+    {
+      OPENAI_API_KEY: "fixture-key",
+      OPENAI_MODEL: "fixture-model",
+      DOGGIE_DATABASE_PATH: join(directory, "test.db"),
+      DOGGIE_SERVER_ADDRESS: `127.0.0.1:${port}`,
+    },
+    {},
+    directory,
+  );
+  const originalClose = TaskQueue.prototype.close;
+  context.mock.method(
+    TaskQueue.prototype,
+    "close",
+    async function (this: TaskQueue) {
+      await originalClose.call(this);
+      throw new Error("injected release failure");
+    },
+  );
+  const originalDbClose = DatabaseSync.prototype.close;
+  let closed = 0;
+  context.mock.method(
+    DatabaseSync.prototype,
+    "close",
+    function (this: DatabaseSync) {
+      closed++;
+      originalDbClose.call(this);
+    },
+  );
+  try {
+    await assert.rejects(
+      startDoggieLocalWeb(config, { model: new FakeModel() }),
+      (error) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "EADDRINUSE",
+    );
+    assert.equal(closed, 1);
   } finally {
     blocker.close();
     await once(blocker, "close");

@@ -88,3 +88,17 @@ npm run check
 - 保留 HTTP 大文本和 MCP 16,000 字 Unicode 合约，不误用未来工具的 32 KiB 上限收紧旧归档行为。
 
 `web/` 搬迁需验证静态资源加载、共享 DTO import、API client 和安全 Markdown 渲染。普通测试和 production 无 Cargo 依赖；Rust oracle 仅资源路径跟随搬迁，不新增功能。沙箱若限制 loopback/子进程，需明确报告并经授权在沙箱外跑完整门禁，不能跳过真实 socket 测试。
+
+
+## T12 任务队列、SSE 和取消回归（2026-10-08）
+
+- `src/application/task-queue.test.ts`：strict payload/资源上限、claim/CAS、FIFO（同毫秒+重开）、执行器所有权、重启 interrupted 不重放、queued/running 取消、close drain、SSE coalesce/释放、稳定错误、终态持久化故障不得伪报已提交效果且阻止新任务。
+- `src/http/tasks.test.ts`：202 提交、列表/get/cancel、严格参数/缺失 ID/foreign Origin、SSE→历史、非协作模型晚返回不得归档、已归档之后回复取消不得写入晚模型工具消息。
+- `src/llm/cancellation.test.ts`、`src/application/archive-runtime.cancellation.test.ts`：请求/进程 signal、await 前后和写入前检查、取消不重试及 reason 脱敏、确认仍 pending。
+- `src/http/server-stream.test.ts`：真实 socket 早期帧、慢读者 backpressure、HEAD、断线、deadline、shutdown、reader/listener 清理及实际 handler drain。
+- `src/runtime/local-web.test.ts`：生产组装、SSE 断线后台继续、shutdown 关流并等 worker 后才关库、queued 重启继续、listen failure + close fault 保留原错误且释放数据库。
+- `web/tests/tasks.test.ts`、`ui-tasks.test.ts`、`module-contract.test.ts`：SSE split UTF-8/CRLF/multiline、恶意或错误 ID/大小/revision、轮询次数/观察预算、断线只 GET、取消、恢复、POST 结果不明不重试、keyed 渲染/确认输入/滚动、真实模块图/CSP。
+
+既有 T10b shutdown 测试原来要求进程关闭时返回 500 并追加 error assistant。T12 明确将 shutdown 纳入 Request 生命周期，关闭 socket，取消不冒充模型错误；测试更新为客户端连接终止、用户原文仍保留、无正式归档及 executor ownership 已释放。测试没有删除或跳过。
+
+完整门禁仍为 `npm run check`。真实 socket / subprocess 测试需沙箱外权限；测试全部使用 fake model/transport 和临时或内存 SQLite，不读用户库、密钥，不调用真实模型。

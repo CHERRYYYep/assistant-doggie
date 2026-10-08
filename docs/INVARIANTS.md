@@ -205,3 +205,24 @@ git stash && git checkout dev && .venv/bin/python -m pytest tests -q
 | 11.6 | 并发确认只有一次正式写入；不保证提取调用去重 | concurrent confirmations test |
 
 `pending_actions` 是通用批准权威；`archive_attempts` 仍是归档审计/HTTP projection。两者任何 pending/binding 不一致均拒绝 archive 确认。非归档动作的 approve/finish 是供后续应用服务使用的存储操作，不是 HTTP/MCP 工具，也不自行调用 executor。
+
+
+## 12. T12 后台执行与取消契约（2026-10-08）
+
+此增量章节不计入原有 85 条，§7 Harness 仍待 T13。
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 12.1 | 严格任务 payload、稳定 ID、容量/历史上限；无新增批准权限 | `src/application/task-queue.test.ts` bounded / retention，`src/http/tasks.test.ts` contracts |
+| 12.2 | 同毫秒 FIFO、原子 claim、终态 CAS；持久化重开不重放 running | queue FIFO / restart / one-shot tests |
+| 12.3 | 单机 worker ownership 冲突 fail closed，正常关闭释放 ownership | queue restart / cancellation tests |
+| 12.4 | queued 取消不执行，running 取消传播；晚 model 结果不能归档 | queue cancellation，HTTP late model，`src/application/archive-runtime.cancellation.test.ts` |
+| 12.5 | 请求和进程 abort 不重试、不泄露 reason；timeout 仍按既有策略分类 | `src/llm/cancellation.test.ts` |
+| 12.6 | 已提交的效果不被伪报为取消，终态持久化故障停止 worker，关闭报告故障 | queue committed-effect / terminal-storage-failure tests，HTTP post-archive responder test |
+| 12.7 | SSE 有界 coalesce，早期帧即时发送/backpressure；断线 unsubscribe 不取消后台工作 | queue SSE，`src/http/server-stream.test.ts`，runtime disconnect tests |
+| 12.8 | HTTP disconnect/deadline/shutdown 提供 signal；正常 body close 不取消；HEAD/安全边界不回退 | server-stream + existing server/security tests |
+| 12.9 | 等 worker/handler 实际返回后才关 SQLite；启动清理失败也不遗漏数据库 | `src/runtime/local-web.test.ts` shutdown/drain/startup fault tests |
+| 12.10 | 客户端只 GET 恢复，不自动重复 POST；严格 SSE 和递增 revision，有界观察 | `web/tests/tasks.test.ts` + `ui-tasks.test.ts` |
+| 12.11 | 增量历史渲染保持未改变确认表单和用户滚动位置，仍防 XSS/CSP | `web/tests/ui-tasks.test.ts` + markdown/module-contract tests |
+
+T12 使用后台聊天任务，不执行 generic `agent_task` / `scheduled_run` / `bulk_mutation`。完整规则和限制见 [TASK_QUEUE.md](TASK_QUEUE.md)。

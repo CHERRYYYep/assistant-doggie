@@ -1,3 +1,8 @@
+import {
+  throwIfAborted,
+  withCancellation,
+  isAbortError,
+} from "../llm/cancellation.ts";
 /** Concrete application composition behind the local HTTP routes. */
 
 import {
@@ -71,6 +76,7 @@ export type ChatResponder = {
     readonly sourceText: string;
     readonly history: readonly ChatMessageRow[];
     readonly archive: Readonly<Record<string, unknown>>;
+    readonly signal?: AbortSignal;
   }) => Promise<ChatResponse>;
 };
 
@@ -181,13 +187,24 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
-  async archive(request: ArchiveRequest): Promise<ArchiveResponse> {
+  async archive(
+    request: ArchiveRequest,
+    signal?: AbortSignal,
+  ): Promise<ArchiveResponse> {
     return this.#projectExecution(
-      await this.#runtime.archiveText(request.text, request.focus_bucket_id),
+      await this.#runtime.archiveText(
+        request.text,
+        request.focus_bucket_id,
+        signal,
+      ),
     );
   }
 
-  async chat(request: ChatRequest): Promise<HttpChatResponse> {
+  async chat(
+    request: ChatRequest,
+    signal?: AbortSignal,
+  ): Promise<HttpChatResponse> {
+    throwIfAborted(signal);
     const userMessage = this.#store.appendChatMessage({
       role: "user",
       content: request.message,
@@ -201,8 +218,14 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     try {
       // Focus is recorded for UX/audit, but chat auto-classification
       // still uses the server-owned candidate set rather than a UI hint.
-      execution = await this.#runtime.archiveText(request.message);
+      execution = await this.#runtime.archiveText(
+        request.message,
+        undefined,
+        signal,
+      );
     } catch (error) {
+      if (signal?.aborted)
+        throw new DOMException("operation cancelled", "AbortError");
       this.#throwChatFailure(request.message, userMessage, error);
     }
 
@@ -213,17 +236,24 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     let chatError: string | null = null;
     if (this.#chatResponder !== undefined) {
       try {
-        const response = await this.#chatResponder.respond({
-          sourceText: request.message,
-          history,
-          archive,
-        });
+        const responder = this.#chatResponder;
+        const response = await withCancellation(signal, () =>
+          responder.respond({
+            sourceText: request.message,
+            history,
+            archive,
+            ...(signal === undefined ? {} : { signal }),
+          }),
+        );
         toolMessages = response.toolMessages ?? [];
         if (archive.archive_state !== "needs_confirmation") {
           assistantText = response.assistantText;
         }
       } catch (error) {
-        chatError = normalizeHttpError(error).message;
+        // Archive is already committed. Persist its truthful fallback/audit,
+        // not late model tool messages; cancellation cannot undo the archive.
+        if (!signal?.aborted && !isAbortError(error))
+          chatError = normalizeHttpError(error).message;
       }
     }
 
@@ -271,7 +301,9 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
 
   async confirmChat(
     request: ChatConfirmationRequest,
+    signal?: AbortSignal,
   ): Promise<ChatConfirmationResponse> {
+    throwIfAborted(signal);
     const confirmationText = confirmationUserText(request);
     this.#validateConfirmationBoundary(request);
     const userMessage = this.#store.appendChatMessage({
@@ -288,8 +320,13 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
 
     let execution: ConfirmationExecution;
     try {
-      execution = await this.#runtime.confirm(toRuntimeConfirmation(request));
+      execution = await this.#runtime.confirm(
+        toRuntimeConfirmation(request),
+        signal,
+      );
     } catch (error) {
+      if (signal?.aborted)
+        throw new DOMException("operation cancelled", "AbortError");
       this.#throwConfirmationFailure(request, userMessage, error);
     }
     const archive = this.#projectConfirmation(execution!, request.attempt_id);
@@ -329,12 +366,14 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
 
   async appendConfirmed(
     request: ArchiveRequest & { readonly bucket_id: string },
+    signal?: AbortSignal,
   ): Promise<ArchiveResponse> {
     return this.#projectExecution(
       await this.#runtime.appendConfirmed(
         request.text,
         request.bucket_id,
         request.focus_bucket_id,
+        signal,
       ),
     );
   }
@@ -344,6 +383,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       readonly title: string;
       readonly bucket_type: Parameters<ArchiveRuntime["createConfirmed"]>[2];
     },
+    signal?: AbortSignal,
   ): Promise<ArchiveResponse> {
     return this.#projectExecution(
       await this.#runtime.createConfirmed(
@@ -351,6 +391,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
         request.title,
         request.bucket_type,
         request.focus_bucket_id,
+        signal,
       ),
     );
   }

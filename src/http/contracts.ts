@@ -1,3 +1,4 @@
+import { TaskError } from "../domain/task.ts";
 /** Stable JSON contracts at the local HTTP boundary. */
 
 import { z } from "zod";
@@ -171,6 +172,11 @@ export function stableError(error: unknown): {
 
 export function normalizeHttpError(error: unknown): HttpBoundaryError {
   if (error instanceof HttpBoundaryError) return error;
+  if (error instanceof TaskError)
+    return new HttpBoundaryError(
+      error.kind === "missing" ? 404 : error.kind === "capacity" ? 429 : 503,
+      error.message,
+    );
   if (error instanceof z.ZodError) {
     return new HttpBoundaryError(400, "request body is invalid");
   }

@@ -10,9 +10,14 @@ import {
   StructuredMemoryModel,
   type MemoryModel,
 } from "../application/archive-runtime.ts";
+import { TaskQueue } from "../application/task-queue.ts";
+import { TaskStore } from "../storage/tasks.ts";
 import { ConcreteDoggieHttpApi } from "../http/api.ts";
 import type { StaticAsset } from "../http/app.ts";
-import { createDoggieNodeServer } from "../http/server.ts";
+import {
+  createDoggieNodeServer,
+  drainDoggieNodeServer,
+} from "../http/server.ts";
 import { StructuredOutputAdapter } from "../llm/structured-output.ts";
 import { openDatabase } from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
@@ -28,6 +33,7 @@ export class DoggieLocalWeb {
   readonly server: Server;
   readonly database: DatabaseSync;
   readonly store: Store;
+  readonly tasks: TaskQueue;
   readonly url: string;
   readonly #shutdownController: AbortController;
   #closePromise: Promise<void> | undefined;
@@ -36,12 +42,14 @@ export class DoggieLocalWeb {
     readonly server: Server;
     readonly database: DatabaseSync;
     readonly store: Store;
+    readonly tasks: TaskQueue;
     readonly url: string;
     readonly shutdownController: AbortController;
   }) {
     this.server = input.server;
     this.database = input.database;
     this.store = input.store;
+    this.tasks = input.tasks;
     this.url = input.url;
     this.#shutdownController = input.shutdownController;
   }
@@ -53,13 +61,26 @@ export class DoggieLocalWeb {
 
   async #performClose(): Promise<void> {
     this.#shutdownController.abort();
+    const workerClose = this.tasks.close();
+    const serverClose = this.server.listening
+      ? once(this.server, "close")
+      : Promise.resolve();
+    this.server.close();
+    this.server.closeAllConnections();
     try {
-      this.server.closeIdleConnections();
-      if (this.server.listening) {
-        this.server.close();
-        await once(this.server, "close");
-      }
+      await Promise.all([
+        workerClose,
+        serverClose,
+        drainDoggieNodeServer(this.server),
+      ]);
     } finally {
+      // All settled is required even when one drain fails: no worker may retain
+      // access to SQLite after close.
+      await Promise.allSettled([
+        workerClose,
+        serverClose,
+        drainDoggieNodeServer(this.server),
+      ]);
       this.database.close();
     }
   }
@@ -72,6 +93,7 @@ export async function startDoggieLocalWeb(
   const database = openDatabase(config.databasePath);
   const shutdownController = new AbortController();
   let server: Server | undefined;
+  let tasks: TaskQueue | undefined;
   try {
     const store = new Store(database);
     const model =
@@ -79,7 +101,12 @@ export async function startDoggieLocalWeb(
       createProductionModel(config, dependencies, shutdownController.signal);
     const runtime = new ArchiveRuntime(store, model);
     const api = new ConcreteDoggieHttpApi(store, runtime);
+    tasks = new TaskQueue(new TaskStore(database), async (payload, signal) =>
+      api.chat(payload, signal),
+    );
     server = createDoggieNodeServer(api, {
+      tasks,
+      signal: shutdownController.signal,
       ...(dependencies.assets === undefined
         ? {}
         : { assets: dependencies.assets }),
@@ -90,16 +117,29 @@ export async function startDoggieLocalWeb(
       server,
       database,
       store,
+      tasks,
       url: serverUrl(server),
       shutdownController,
     });
   } catch (error) {
-    if (server?.listening) {
-      server.closeAllConnections();
-      server.close();
-      await once(server, "close").catch(() => undefined);
+    shutdownController.abort();
+    const workerClose = tasks?.close();
+    const serverClose = server?.listening
+      ? once(server, "close").catch(() => undefined)
+      : Promise.resolve();
+    server?.close();
+    server?.closeAllConnections();
+    try {
+      await Promise.allSettled([
+        workerClose,
+        serverClose,
+        server === undefined ? undefined : drainDoggieNodeServer(server),
+      ]);
+    } finally {
+      database.close();
     }
-    database.close();
+    // Preserve the original startup failure. Cleanup faults must not skip
+    // remaining resources or replace the user's actionable bind/config error.
     throw error;
   }
 }
