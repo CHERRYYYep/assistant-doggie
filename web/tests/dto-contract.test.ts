@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type {
   ChatConfirmationRequest,
   ChatRequest,
@@ -17,6 +18,10 @@ import {
   fetchMemoryQuery,
   postChatConfirmation,
   postChatMessage,
+  postTask,
+  fetchTask,
+  fetchTasks,
+  postTaskCancel,
   postEntryMove,
 } from "../assets/api.ts";
 
@@ -41,6 +46,13 @@ if (false) {
   const queryPromise: Promise<MemoryQueryResponse> = fetchMemoryQuery("接口 A");
   void [activePromise, historyPromise, queryPromise];
   void postChatMessage(chatRequest);
+  const taskPromise: Promise<{ readonly ok: true; readonly task: TaskSnapshot }> =
+    postTask(chatRequest);
+  const readTaskPromise: typeof taskPromise = fetchTask("task-1");
+  const cancelPromise: typeof taskPromise = postTaskCancel("task-1");
+  const tasksPromise: Promise<{ readonly ok: true; readonly tasks: readonly TaskSnapshot[] }> =
+    fetchTasks();
+  void [taskPromise, readTaskPromise, cancelPromise, tasksPromise];
   void postEntryMove(moveRequest);
   void postChatConfirmation(appendRequest);
 }

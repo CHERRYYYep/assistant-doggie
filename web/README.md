@@ -63,3 +63,29 @@ TypeScript 编译产物。
 安全边界。行为由 `tests/markdown.test.ts` 覆盖，包含每条规则对应的注入载荷。
 **不要用“源码里是否包含某个字符串”来测试它**——那种断言在重命名或重新格式化时会
 误报，而真出漏洞时会漏报。
+
+## T12 后台聊天任务
+
+发送消息使用 `POST /api/tasks`（共享 `ChatRequest`），不再同步调用 `/api/chat`。
+任务快照通过 type-only import 复用 `src/domain/task.ts` 的 `TaskSnapshot`；快照不含结果，
+到达 succeeded / failed / cancelled 后，重新读取现有聊天历史和活跃 Bucket。
+同步归档确认仍使用 `/api/chat/confirm`。
+
+- `api.ts` 是唯一网络边界：SSE fetch streaming 解析分块 UTF-8、CRLF 和多行 data，
+  校验 UUID、正整数 revision 和有限状态，忽略旧 revision，并限制事件大小与数量。
+- 每个任务只尝试一次 SSE 连接；35 秒无数据时关闭观察连接（服务端每 15 秒心跳），
+  断流后查询同一个任务，最多 60 次 GET、间隔 3 秒，单请求 10 秒，整体观察预算 5 分钟。
+  达到上限显示“跟踪已暂停”，不自动重连、不重新 POST、不自动取消后台工作。
+- 页面启动和“刷新任务状态”通过 `GET /api/tasks` 恢复最多 40 个近期任务。
+  并发刷新合并；历史中多个终态只批量刷新一次结果。取消按钮始终使用
+  `POST /api/tasks/:id/cancel`，JSON body 为 `{}`。只有服务端终态才能确认取消完成。
+- 提交/取消响应丢失时明确提示结果未确认，要求刷新状态，而不是自动重试写请求。
+- 聊天记录按消息 ID 复用未变化的行，保留确认表单输入；内容变化时只更新对应行。
+  简化 DOM harness 保留全量渲染回退；重复 ID 也不做不安全的节点合并。
+  并发历史/Bucket 查询使用请求版本防止旧响应覆盖更新结果。
+
+`tests/tasks.test.ts` 覆盖协议解析、有界轮询/超时及断流恢复；
+`tests/ui-tasks.test.ts` 和 `tests/dom-harness.ts` 执行真实模块，覆盖提交、恢复、取消、
+终态结果刷新、确认 API、XSS 和 keyed rendering；`tests/module-contract.test.ts`
+检查类型剥离后的浏览器模块图、唯一网络边界和 CSP 兼容结构。均为 fake transport，
+不调用模型或访问真实用户数据库。

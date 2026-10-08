@@ -24,6 +24,8 @@ const isHtmlButtonElement: ElementGuard<HTMLButtonElement> = (
   element,
 ): element is HTMLButtonElement => element instanceof HTMLButtonElement;
 
+export const taskList = requireElement("#task-list", isHtmlElement);
+export const taskRefresh = requireElement("#task-refresh", isHtmlButtonElement);
 export const chatMessages = requireElement("#chat-messages", isHtmlElement);
 export const chatInput = requireElement("#chat-input", isHtmlTextAreaElement);
 export const chatSend = requireElement("#chat-send", isHtmlButtonElement);

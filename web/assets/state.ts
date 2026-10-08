@@ -5,6 +5,7 @@
  * private copies, so "which bucket is selected" has exactly one answer.
  */
 
+import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type { BucketDto, UiChatMessageDto } from "../../src/http/dto.ts";
 
 export type FrontendState = {
@@ -14,12 +15,26 @@ export type FrontendState = {
   selectedBucketId: string | null;
   /** Chat messages currently rendered, oldest first. */
   history: UiChatMessageDto[];
+  tasks: Map<string, TaskSnapshot>;
+  taskObservers: Map<string, AbortController>;
+  pausedTasks: Set<string>;
+  cancellingTasks: Set<string>;
+  resumingTasks: boolean;
+  historyRequestRevision: number;
+  bucketsRequestRevision: number;
 };
 
 export const state: FrontendState = {
   activeBuckets: [],
   selectedBucketId: null,
   history: [],
+  tasks: new Map(),
+  taskObservers: new Map(),
+  pausedTasks: new Set(),
+  cancellingTasks: new Set(),
+  resumingTasks: false,
+  historyRequestRevision: 0,
+  bucketsRequestRevision: 0,
 };
 
 export function bucketById(id: string): BucketDto | undefined {

@@ -16,9 +16,13 @@ import {
   newChatButton,
   refreshBucketsButton,
   setStatus,
+  taskList,
+  taskRefresh,
 } from "./dom.ts";
 import {
   confirmArchive,
+  cancelTask,
+  resumeTasks,
   deleteBucket,
   loadHistory,
   moveEntry,
@@ -95,4 +99,13 @@ memoryQueryInput.addEventListener("keydown", (event: KeyboardEvent) => {
     void runMemoryQuery();
   }
 });
-void Promise.all([refreshBuckets(), loadHistory()]);
+taskList.addEventListener("click", (event: MouseEvent) => {
+  const button = closestActionButton(event);
+  if (button?.dataset["action"] === "cancel-task") {
+    void cancelTask(button.dataset["taskId"]).catch((error: unknown) =>
+      setStatus(errorMessage(error), "warning"),
+    );
+  }
+});
+taskRefresh.addEventListener("click", () => void resumeTasks());
+void Promise.all([refreshBuckets(), loadHistory(), resumeTasks()]);

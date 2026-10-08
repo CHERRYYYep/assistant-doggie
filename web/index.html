@@ -55,6 +55,13 @@
           </div>
         </section>
         <div class="composer-wrap">
+          <section class="task-panel" aria-label="后台任务">
+            <div class="section-heading">
+              <h3>后台任务</h3>
+              <button id="task-refresh">刷新任务状态</button>
+            </div>
+            <div id="task-list" aria-live="polite"></div>
+          </section>
           <div class="composer">
             <textarea
               id="chat-input"

@@ -354,7 +354,7 @@ button:disabled {
 .chat-messages {
   width: min(900px, 100%);
   margin: 0 auto;
-  padding: 1.5rem 1rem 8rem;
+  padding: 1.5rem 1rem 18rem;
   flex: 1;
   scroll-behavior: smooth;
 }
@@ -713,4 +713,28 @@ button:disabled {
   .chat-messages {
     scroll-behavior: auto;
   }
+}
+
+.task-panel {
+  width: min(900px, 100%);
+  margin: 0 auto 0.5rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.5rem 1rem;
+  max-height: 8rem;
+  overflow-y: auto;
+}
+
+.task-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+}
+
+.task-row button {
+  flex-shrink: 0;
 }
