@@ -1,5 +1,6 @@
 /** Node HTTP adapter for the local Doggie Hono application. */
 
+import { once } from "node:events";
 import {
   createServer,
   type IncomingMessage,
@@ -8,6 +9,9 @@ import {
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
+import { finished } from "node:stream/promises";
+
+import type { TaskQueue } from "../application/task-queue.ts";
 
 import {
   createDoggieApp,
@@ -21,6 +25,7 @@ export const MAX_HTTP_REQUEST_BYTES = 1024 * 1024;
 export const DEFAULT_MAX_HTTP_CONNECTIONS = 32;
 export const DEFAULT_HTTP_HEADERS_TIMEOUT_MS = 10_000;
 export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 120_000;
+export const DEFAULT_HTTP_EXECUTION_TIMEOUT_MS = 120_000;
 
 export type DoggieNodeServerOptions = {
   readonly assets?: readonly StaticAsset[];
@@ -28,6 +33,9 @@ export type DoggieNodeServerOptions = {
   readonly maxConnections?: number;
   readonly headersTimeoutMs?: number;
   readonly requestTimeoutMs?: number;
+  readonly executionTimeoutMs?: number;
+  readonly signal?: AbortSignal;
+  readonly tasks?: TaskQueue;
 };
 
 type RequestFailure = {
@@ -40,6 +48,19 @@ type ServerFailure = {
   readonly status: 400 | 500;
   readonly message: string;
 };
+
+const activeHandlers = new WeakMap<Server, Set<Promise<void>>>();
+
+/** Call after stopping new connections, and before closing the database. */
+export async function drainDoggieNodeServer(server: Server): Promise<void> {
+  const handlers = activeHandlers.get(server);
+  if (handlers === undefined) return;
+  // Disconnect/deadline only abort the signal, not the actual handler promise.
+  // A handler ignoring cancellation must finish before database teardown.
+  while (handlers.size > 0) {
+    await Promise.allSettled([...handlers]);
+  }
+}
 
 export function createDoggieNodeServer(
   api: DoggieHttpApi,
@@ -59,30 +80,44 @@ export function createDoggieNodeServer(
     options.requestTimeoutMs ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS,
     "requestTimeoutMs",
   );
+  const executionTimeoutMs = positiveInteger(
+    options.executionTimeoutMs ?? DEFAULT_HTTP_EXECUTION_TIMEOUT_MS,
+    "executionTimeoutMs",
+  );
   let app: ReturnType<typeof createDoggieApp> | undefined;
   let appAuthority: string | undefined;
 
+  const handlers = new Set<Promise<void>>();
   const server = createServer(
     {
       joinDuplicateHeaders: false,
       maxHeaderSize: maxRequestBytes,
       requireHostHeader: false,
     },
-    (request, response) => {
-      void handleRequest(request, response).catch((error: unknown) => {
-        if (!response.headersSent) {
-          writeJsonError(
-            response,
-            500,
-            "internal server error",
-            isHeadMethod(request.method),
-          );
-        } else {
-          response.destroy(error instanceof Error ? error : undefined);
+    async (request, response) => {
+      const handler = handleRequest(request, response);
+      handlers.add(handler);
+      try {
+        await handler;
+      } catch {
+        if (!response.destroyed) {
+          if (response.headersSent) response.destroy();
+          else {
+            writeJsonError(
+              response,
+              500,
+              "internal server error",
+              isHeadMethod(request.method),
+            );
+          }
         }
-      });
+      } finally {
+        handlers.delete(handler);
+      }
     },
   );
+
+  activeHandlers.set(server, handlers);
 
   // Keep the local MVP bounded even when a browser tab or a faulty client
   // opens many sockets. Node's parser still owns HTTP framing; these are
@@ -104,33 +139,107 @@ export function createDoggieNodeServer(
     incoming: IncomingMessage,
     outgoing: ServerResponse,
   ): Promise<void> {
+    const lifecycle = requestLifecycle(
+      incoming,
+      outgoing,
+      executionTimeoutMs,
+      options.signal,
+    );
     try {
       validateRawHeaders(incoming.rawHeaders);
       const authority = boundAuthority(server);
       if (app === undefined || appAuthority !== authority) {
-        app = createDoggieApp(api, assets, [authority]);
+        app = createDoggieApp(api, assets, [authority], options.tasks);
         appAuthority = authority;
       }
       const body = await readRequestBody(
         incoming,
         maxRequestBytes - requestHeadBytes(incoming),
         maxRequestBytes,
+        lifecycle.signal,
       );
-      const request = toFetchRequest(incoming, authority, body);
+      const request = toFetchRequest(
+        incoming,
+        authority,
+        body,
+        lifecycle.signal,
+      );
       const response = await app.fetch(request);
-      await writeFetchResponse(outgoing, response, incoming.method ?? "GET");
+      await writeFetchResponse(
+        outgoing,
+        response,
+        incoming.method ?? "GET",
+        lifecycle.signal,
+      );
     } catch (error) {
+      if (lifecycle.signal.aborted || outgoing.destroyed) return;
+      if (outgoing.headersSent) {
+        outgoing.destroy();
+        return;
+      }
       const failure = requestFailure(error);
+      const completion = finished(outgoing, { cleanup: true });
       writeJsonError(
         outgoing,
         failure.status,
         failure.message,
         isHeadMethod(incoming.method),
       );
+      await completion.catch(() => {});
+    } finally {
+      lifecycle.dispose();
     }
   }
 
   return server;
+}
+
+/** A completed request body is not a disconnect: IncomingMessage.close is normal. */
+function requestLifecycle(
+  incoming: IncomingMessage,
+  outgoing: ServerResponse,
+  executionTimeoutMs: number,
+  shutdownSignal: AbortSignal | undefined,
+): { readonly signal: AbortSignal; readonly dispose: () => void } {
+  const controller = new AbortController();
+  const dispose = (): void => {
+    clearTimeout(deadline);
+    incoming.off("aborted", onAborted);
+    outgoing.off("close", onClose);
+    outgoing.off("error", onError);
+    shutdownSignal?.removeEventListener("abort", onShutdown);
+  };
+  const abort = (reason: unknown): void => {
+    controller.abort(reason);
+    dispose();
+  };
+  const onAborted = (): void =>
+    abort(new DOMException("HTTP request disconnected", "AbortError"));
+  const onClose = (): void => {
+    if (!outgoing.writableFinished) onAborted();
+    else dispose();
+  };
+  const onError = (): void => {
+    onAborted();
+    outgoing.destroy();
+  };
+  const onShutdown = (): void => {
+    abort(shutdownSignal?.reason);
+    outgoing.destroy();
+  };
+  const deadline = setTimeout(() => {
+    abort(new DOMException("HTTP execution deadline exceeded", "TimeoutError"));
+    // Destroy even when the handler or a stream producer ignores cancellation.
+    // No Error argument: never emit an unhandled socket error or expose details.
+    outgoing.destroy();
+  }, executionTimeoutMs);
+  deadline.unref();
+  incoming.once("aborted", onAborted);
+  outgoing.once("close", onClose);
+  outgoing.once("error", onError);
+  shutdownSignal?.addEventListener("abort", onShutdown, { once: true });
+  if (shutdownSignal?.aborted) onShutdown();
+  return { signal: controller.signal, dispose };
 }
 
 function positiveInteger(value: number, name: string): number {
@@ -200,7 +309,9 @@ function readRequestBody(
   request: IncomingMessage,
   remainingBytes: number,
   maxRequestBytes: number,
+  signal: AbortSignal,
 ): Promise<Buffer> {
+  signal.throwIfAborted();
   if (remainingBytes < 0 || request.socket.bytesRead > maxRequestBytes) {
     request.resume();
     return Promise.reject(badRequest("request is too large"));
@@ -220,14 +331,18 @@ function readRequestBody(
     let total = 0;
     let settled = false;
 
-    const finishFailure = (failure: RequestFailure) => {
-      if (settled) return;
-      settled = true;
-      chunks.length = 0;
+    const dispose = (): void => {
       request.off("end", onEnd);
       request.off("aborted", onAborted);
       request.off("error", onError);
       request.off("data", onData);
+      signal.removeEventListener("abort", onCancellation);
+    };
+    const finishFailure = (failure: RequestFailure) => {
+      if (settled) return;
+      settled = true;
+      chunks.length = 0;
+      dispose();
       request.resume();
       reject(failure);
     };
@@ -246,12 +361,15 @@ function readRequestBody(
     const onEnd = () => {
       if (settled) return;
       settled = true;
+      dispose();
       resolve(Buffer.concat(chunks, total));
     };
     const onAborted = () =>
       finishFailure(badRequest("request ended before body"));
     const onError = () => finishFailure(badRequest("invalid request body"));
+    const onCancellation = () => finishFailure(badRequest("request cancelled"));
 
+    signal.addEventListener("abort", onCancellation, { once: true });
     request.on("data", onData);
     request.once("end", onEnd);
     request.once("aborted", onAborted);
@@ -263,6 +381,7 @@ function toFetchRequest(
   incoming: IncomingMessage,
   authority: string,
   body: Buffer,
+  signal: AbortSignal,
 ): Request {
   const method = incoming.method ?? "GET";
   const target = incoming.url ?? "/";
@@ -285,8 +404,11 @@ function toFetchRequest(
   }
 
   return new Request(`http://${authority}${target}`, {
-    method,
+    // Hono discards HEAD bodies before returning them. Dispatch as GET so the
+    // adapter can compute the representation length, then suppress wire bytes.
+    method: method.toUpperCase() === "HEAD" ? "GET" : method,
     headers,
+    signal,
     ...(decodedBody === undefined || method === "GET" || method === "HEAD"
       ? {}
       : { body: decodedBody }),
@@ -297,13 +419,76 @@ async function writeFetchResponse(
   outgoing: ServerResponse,
   response: Response,
   method: string,
+  signal: AbortSignal,
 ): Promise<void> {
-  const body = Buffer.from(await response.arrayBuffer());
+  const streaming =
+    response.headers
+      .get("content-type")
+      ?.split(";")[0]
+      ?.trim()
+      .toLowerCase() === "text/event-stream";
+  const reader = response.body?.getReader();
+  let complete = reader === undefined;
+  let cancelled = false;
+  const cancelReader = (): void => {
+    if (reader === undefined || complete || cancelled) return;
+    cancelled = true;
+    // A producer's cancel hook may itself stall. Initiate and observe it, but
+    // never let it hold the socket or lifecycle listeners past cancellation.
+    void reader.cancel(signal.reason).catch(() => {});
+  };
+  signal.addEventListener("abort", cancelReader, { once: true });
+  try {
+    signal.throwIfAborted();
+    const chunks: Buffer[] = [];
+    if (streaming) {
+      setResponseHeaders(outgoing, response);
+      outgoing.removeHeader("Content-Length");
+      outgoing.flushHeaders();
+    }
+    // HEAD on an SSE route must not wait for an indefinitely open event stream.
+    if (streaming && isHeadMethod(method)) {
+      cancelReader();
+    } else if (reader !== undefined) {
+      while (true) {
+        const chunk = await reader.read();
+        signal.throwIfAborted();
+        if (chunk.done) {
+          complete = true;
+          break;
+        }
+        if (streaming) {
+          if (!outgoing.write(chunk.value)) {
+            await once(outgoing, "drain", { signal });
+          }
+        } else {
+          chunks.push(Buffer.from(chunk.value));
+        }
+      }
+    }
+    signal.throwIfAborted();
+    const body = streaming ? undefined : Buffer.concat(chunks);
+    if (body !== undefined) {
+      setResponseHeaders(outgoing, response);
+      outgoing.setHeader("Content-Length", body.length);
+    }
+    const completion = finished(outgoing, { cleanup: true });
+    outgoing.end(isHeadMethod(method) ? undefined : body);
+    await completion;
+  } finally {
+    signal.removeEventListener("abort", cancelReader);
+    cancelReader();
+    reader?.releaseLock();
+  }
+}
+
+function setResponseHeaders(
+  outgoing: ServerResponse,
+  response: Response,
+): void {
   outgoing.statusCode = response.status;
   response.headers.forEach((value, name) => outgoing.setHeader(name, value));
-  outgoing.setHeader("Content-Length", body.length);
   outgoing.setHeader("Connection", "close");
-  outgoing.end(method.toUpperCase() === "HEAD" ? undefined : body);
 }
 
 function writeJsonError(
@@ -312,7 +497,7 @@ function writeJsonError(
   message: string,
   headRequest = false,
 ): void {
-  if (response.writableEnded) return;
+  if (response.writableEnded || response.destroyed) return;
   const body = Buffer.from(JSON.stringify({ ok: false, error: message }));
   response.statusCode = status;
   response.setHeader("Content-Type", "application/json; charset=utf-8");
