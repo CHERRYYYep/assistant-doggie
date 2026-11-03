@@ -22,6 +22,7 @@ import {
   isTerminalTask,
   watchTask,
   postEntryMove,
+  revokeEntryRequest,
 } from "./api.ts";
 import {
   buckets,
@@ -95,13 +96,16 @@ export async function refreshBuckets(): Promise<void> {
 
 export async function showBucket(bucketId: string | undefined): Promise<void> {
   if (!bucketId) throw new Error("Bucket ID 不能为空");
+  const revision = ++state.detailRequestRevision;
   state.selectedBucketId = bucketId;
+  detail.textContent = "正在加载记录…";
   selectedBucketLabel.textContent = "自动关联最近和热门 Bucket";
   document
     .querySelectorAll<HTMLElement>(".bucket[data-bucket-id]")
     .forEach((node) => node.classList.toggle("selected", node.dataset["bucketId"] === bucketId));
   try {
     const data = await fetchBucketDetail(bucketId);
+    if (revision !== state.detailRequestRevision || state.selectedBucketId !== bucketId) return;
     const bucket = data.detail.bucket;
     const entries = data.detail.entries;
     detail.innerHTML =
@@ -110,10 +114,11 @@ export async function showBucket(bucketId: string | undefined): Promise<void> {
       entries
         .map(
           (entry) =>
-            `<div class="detail-entry"><b>Entry</b><br>${renderMarkdown(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary || "")}</span></div>`,
+            `<div class="detail-entry"><b>Entry</b><br>${renderMarkdown(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary || "")}</span><br><button data-action="revoke-entry" data-entry-id="${escapeHtml(entry.id)}">撤销记录</button></div>`,
         )
         .join("");
   } catch (error) {
+    if (revision !== state.detailRequestRevision || state.selectedBucketId !== bucketId) return;
     detail.innerHTML = `<span class="warning">${escapeHtml(errorMessage(error))}</span>`;
   }
 }
@@ -136,6 +141,7 @@ export async function loadHistory(): Promise<void> {
 }
 
 export async function runMemoryQuery(): Promise<void> {
+  const revision = ++state.queryRequestRevision;
   const query = memoryQueryInput.value.trim();
   if (!query) {
     memoryQueryResult.textContent = "请输入自然语言查询。";
@@ -144,8 +150,10 @@ export async function runMemoryQuery(): Promise<void> {
   memoryQueryResult.textContent = "查询中…";
   try {
     const data = await fetchMemoryQuery(query);
+    if (revision !== state.queryRequestRevision) return;
     renderMemoryQuery(data);
   } catch (error) {
+    if (revision !== state.queryRequestRevision) return;
     memoryQueryResult.innerHTML = `<span class="warning">${escapeHtml(errorMessage(error))}</span>`;
   }
 }
@@ -235,6 +243,7 @@ export async function confirmArchive(button: HTMLButtonElement): Promise<void> {
 }
 
 export async function moveEntry(button: HTMLButtonElement): Promise<void> {
+  if (button.disabled) return;
   const card = button.closest<HTMLElement>(".archive-card");
   const entryId = button.dataset["entryId"];
   const targetBucketId = card?.querySelector<HTMLSelectElement>('[data-role="move-target"]')?.value;
@@ -250,8 +259,31 @@ export async function moveEntry(button: HTMLButtonElement): Promise<void> {
     if (status) {
       status.innerHTML = `<span class="success">已移动到${bucketLabel(bucketById(targetBucketId) || { id: targetBucketId })}。</span>`;
     }
-    await refreshBuckets();
+    await Promise.all([refreshBuckets(), loadHistory()]);
+    if (state.selectedBucketId) await showBucket(state.selectedBucketId);
   } finally {
+    button.disabled = false;
+  }
+}
+
+export async function revokeEntry(button: HTMLButtonElement): Promise<void> {
+  const entryId = requireDataset(button, "entryId");
+  if (button.disabled || state.revokingEntries.has(entryId)) return;
+  if (!confirm("撤销这条记录？它及其专属派生记忆将不再用于回答，聊天与审计仍保留。")) return;
+  state.revokingEntries.add(entryId);
+  button.disabled = true;
+  setStatus("正在撤销记录…");
+  try {
+    await revokeEntryRequest(entryId);
+    // Discard reads begun before the mutation, including their error handlers.
+    ++state.detailRequestRevision;
+    ++state.queryRequestRevision;
+    memoryQueryResult.textContent = "记忆已更新，请重新查询。";
+    await Promise.all([refreshBuckets(), loadHistory()]);
+    if (state.selectedBucketId) await showBucket(state.selectedBucketId);
+    setStatus("记录已撤销。为避免引用旧事实，后续回答从新的聊天上下文继续。");
+  } finally {
+    state.revokingEntries.delete(entryId);
     button.disabled = false;
   }
 }
@@ -268,6 +300,9 @@ export async function deleteBucket(bucketId: string | undefined): Promise<void> 
   }
   setStatus("正在删除 Bucket…");
   await deleteBucketRequest(bucketId);
+  ++state.detailRequestRevision;
+  ++state.queryRequestRevision;
+  memoryQueryResult.textContent = "记忆已更新，请重新查询。";
   if (state.selectedBucketId === bucketId) {
     state.selectedBucketId = null;
     detail.innerHTML = '<span class="muted">选择左侧 Bucket 查看详情。</span>';

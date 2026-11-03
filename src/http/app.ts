@@ -57,6 +57,7 @@ export type DoggieHttpApi = {
   ) => unknown | Promise<unknown>;
   readonly bucketDetail: (bucketId: string) => unknown | Promise<unknown>;
   readonly deleteBucket: (bucketId: string) => unknown | Promise<unknown>;
+  readonly revokeEntry: (entryId: string) => unknown | Promise<unknown>;
   readonly archive: (
     request: ArchiveRequest,
     signal?: AbortSignal,
@@ -240,6 +241,16 @@ export function createDoggieApp(
   app.delete("/api/buckets/:bucketId", async (context) =>
     json(context, await api.deleteBucket(context.req.param("bucketId"))),
   );
+  app.delete("/api/entries/:entryId", async (context) => {
+    if (context.req.raw.body !== null) {
+      throw new HttpBoundaryError(
+        400,
+        "entry revocation does not accept a body",
+      );
+    }
+    const id = z.string().trim().min(1).parse(context.req.param("entryId"));
+    return json(context, await api.revokeEntry(id));
+  });
   app.post("/api/archive", async (context) =>
     json(
       context,

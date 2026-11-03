@@ -166,10 +166,12 @@ export class ArchiveRuntime {
   ): Promise<ArchiveExecution> {
     throwIfAborted(signal);
     const text = requiredText(rawText, "text");
+    const memoryRevision = this.#store.getMemoryContextRevision();
     const candidates = this.#candidates(focusBucketId);
     const raw = await withCancellation(signal, () =>
       this.#model.classify(text, candidates, signal),
     );
+    this.#assertMemoryRevision(memoryRevision);
     const classification = postprocessClassification(
       text,
       raw,
@@ -182,10 +184,20 @@ export class ArchiveRuntime {
         : await withCancellation(signal, () =>
             this.#model.extract(text, signal),
           );
+    this.#assertMemoryRevision(memoryRevision);
     return this.#execute(text, classification, extraction, candidates, {
       focusBucketId,
       signal,
     });
+  }
+
+  #assertMemoryRevision(revision: number): void {
+    if (revision !== this.#store.getMemoryContextRevision()) {
+      throw new StorageError(
+        "memory_context_changed",
+        "记忆已更新，此次归档未执行，请重新提交。",
+      );
+    }
   }
 
   async appendConfirmed(

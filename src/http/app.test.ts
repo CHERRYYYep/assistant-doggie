@@ -18,6 +18,7 @@ function fakeApi(calls: string[]): DoggieHttpApi {
     memoryQueryJson: (request) => called("queryJson", request),
     bucketDetail: (bucketId) => called("detail", bucketId),
     deleteBucket: (bucketId) => called("delete", bucketId),
+    revokeEntry: (entryId) => called("revoke", entryId),
     archive: (request) => called("archive", request),
     chat: (request) => called("chat", request),
     confirmChat: (request) => called("confirm", request),

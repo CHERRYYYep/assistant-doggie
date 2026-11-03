@@ -22,6 +22,9 @@ export type FrontendState = {
   resumingTasks: boolean;
   historyRequestRevision: number;
   bucketsRequestRevision: number;
+  detailRequestRevision: number;
+  queryRequestRevision: number;
+  revokingEntries: Set<string>;
 };
 
 export const state: FrontendState = {
@@ -35,6 +38,9 @@ export const state: FrontendState = {
   resumingTasks: false,
   historyRequestRevision: 0,
   bucketsRequestRevision: 0,
+  detailRequestRevision: 0,
+  queryRequestRevision: 0,
+  revokingEntries: new Set(),
 };
 
 export function bucketById(id: string): BucketDto | undefined {

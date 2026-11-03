@@ -53,6 +53,7 @@ import type {
   ChatHistoryResponse,
   ChatResponse as HttpChatResponse,
   DeleteBucketResponse,
+  EntryRevocationResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
 } from "./dto.ts";
@@ -187,6 +188,21 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     } as const;
   }
 
+  revokeEntry(entryId: string): EntryRevocationResponse {
+    const result = this.#correction.deleteEntry(
+      entryId,
+      "用户撤销 Entry；聊天和审计保留。",
+    );
+    return {
+      ok: true,
+      entry_id: result.entryId,
+      bucket_id: result.bucketId,
+      correction_id: result.correctionId,
+      revoked_at: result.revokedAt,
+      memory_item_ids: [...result.memoryItemIds],
+    };
+  }
+
   async archive(
     request: ArchiveRequest,
     signal?: AbortSignal,
@@ -205,6 +221,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     signal?: AbortSignal,
   ): Promise<HttpChatResponse> {
     throwIfAborted(signal);
+    const contextRevision = this.#store.getMemoryContextRevision();
     const userMessage = this.#store.appendChatMessage({
       role: "user",
       content: request.message,
@@ -229,12 +246,17 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       this.#throwChatFailure(request.message, userMessage, error);
     }
 
-    const archive = decorateChatArchive(this.#projectExecution(execution!));
-    const history = this.#store.listChatMessages(CHAT_HISTORY_LIMIT);
+    let archive: ArchiveResponse = decorateChatArchive(
+      this.#projectExecution(execution!),
+    );
+    const history = this.#store.listModelChatMessages(CHAT_HISTORY_LIMIT);
     let assistantText = archiveAssistantText(archive);
     let toolMessages: readonly ChatToolMessage[] = [];
     let chatError: string | null = null;
-    if (this.#chatResponder !== undefined) {
+    if (
+      this.#chatResponder !== undefined &&
+      contextRevision === this.#store.getMemoryContextRevision()
+    ) {
       try {
         const responder = this.#chatResponder;
         const response = await withCancellation(signal, () =>
@@ -255,6 +277,15 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
         if (!signal?.aborted && !isAbortError(error))
           chatError = normalizeHttpError(error).message;
       }
+    }
+
+    // Old tool results and model answers have no complete dependency graph.
+    // A concurrent revocation invalidates this answer before any reply is saved.
+    if (contextRevision !== this.#store.getMemoryContextRevision()) {
+      toolMessages = [];
+      chatError = "记忆已更新，请重新提问。";
+      assistantText = chatError;
+      archive = this.#currentArchive(archive);
     }
 
     const persistedMessages: ReturnType<typeof projectChatMessage>[] = [
@@ -477,7 +508,10 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
             .map((memory) => memory.id) ?? []);
     return projectArchive(execution.result, {
       candidates: execution.candidates,
-      bucket: execution.bucket,
+      bucket:
+        execution.result.bucketId === undefined
+          ? undefined
+          : this.#store.getBucket(execution.result.bucketId),
       memoryItemIds,
     });
   }
@@ -515,13 +549,47 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     const projected = projectChatMessage(message);
     const details = cloneRecord(projected.details);
     const archive = cloneRecord(details?.["archive"]);
+    if (details !== undefined && archive !== undefined) {
+      const entryId = archive["entry_id"];
+      if (typeof entryId === "string") {
+        const revocation = this.#store.getEntryRevocation(entryId);
+        if (revocation !== undefined) {
+          archive["archive_state"] = "revoked";
+          archive["revoked_at"] = revocation.revokedAt;
+          archive["memory_item_ids"] = [];
+          archive["extraction"] = null;
+          archive["available_actions"] = [];
+          archive["pending_confirmation"] = false;
+          delete archive["confirmation_options"];
+          details["archive"] = archive;
+          details["pending_confirmation"] = false;
+          return { ...projected, details };
+        }
+        const current = this.#store.getEntry(entryId);
+        if (current !== undefined) {
+          archive["bucket_id"] = current.bucketId;
+          const bucket = this.#store.getBucket(current.bucketId);
+          archive["bucket"] =
+            bucket === undefined ? null : projectBucket(bucket);
+          archive["available_actions"] = ["move_entry", "revoke_entry"];
+          details["archive"] = archive;
+        } else {
+          archive["archive_state"] = "deleted";
+          archive["available_actions"] = [];
+          archive["pending_confirmation"] = false;
+          details["archive"] = archive;
+          details["pending_confirmation"] = false;
+          return { ...projected, details };
+        }
+      }
+    }
     if (
       details === undefined ||
       archive === undefined ||
       archive["archive_state"] !== "needs_confirmation" ||
       typeof archive["attempt_id"] !== "string"
     ) {
-      return projected;
+      return details === undefined ? projected : { ...projected, details };
     }
     const attempt = this.#store.getArchiveAttempt(archive["attempt_id"]);
     if (
@@ -538,7 +606,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       const detail = this.#store.getBucketDetail(attempt.bucketId);
       if (detail !== undefined) {
         archive["bucket"] = projectBucket(detail.bucket);
-        archive["available_actions"] = ["move_entry"];
+        archive["available_actions"] = ["move_entry", "revoke_entry"];
       } else {
         delete archive["available_actions"];
       }
@@ -549,6 +617,43 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     details["archive"] = archive;
     details["pending_confirmation"] = false;
     return { ...projected, details } as const;
+  }
+
+  #currentArchive(archive: ArchiveResponse): ArchiveResponse {
+    const revocation =
+      archive.entry_id === null
+        ? undefined
+        : this.#store.getEntryRevocation(archive.entry_id);
+    const deleted =
+      archive.entry_id !== null &&
+      revocation === undefined &&
+      this.#store.getEntry(archive.entry_id) === undefined;
+    return {
+      ...archive,
+      bucket:
+        archive.bucket_id === null
+          ? null
+          : (() => {
+              const bucket = this.#store.getBucket(archive.bucket_id);
+              return bucket === undefined ? null : projectBucket(bucket);
+            })(),
+      ...(revocation !== undefined
+        ? {
+            archive_state: "revoked" as const,
+            revoked_at: revocation.revokedAt,
+            extraction: null,
+            memory_item_ids: [],
+            available_actions: [],
+          }
+        : deleted
+          ? {
+              archive_state: "deleted" as const,
+              extraction: null,
+              memory_item_ids: [],
+              available_actions: [],
+            }
+          : {}),
+    };
   }
 
   #throwChatFailure(
@@ -635,7 +740,7 @@ function decorateChatArchive<T extends Readonly<Record<string, unknown>>>(
     };
   }
   if (archive["archive_state"] === "archived" && archive["entry_id"] != null) {
-    return { ...archive, available_actions: ["move_entry"] };
+    return { ...archive, available_actions: ["move_entry", "revoke_entry"] };
   }
   return archive;
 }

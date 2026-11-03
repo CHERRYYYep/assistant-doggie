@@ -119,3 +119,7 @@ npm run check
 真实 CLI/模型另行 smoke，不进入自动门禁。手工测试先填写 CLI 配置，确认创建提案不启动进程、批准后只读运行、恢复保持 workspace/backend、取消能结束进程。不要用真实数据或收费模型冒充 fake 测试结果。
 
 Q1 收口追加 `src/agent/control.test.ts` 回归：提前创建的恢复提案在前次失败/取消后拒绝批准和启动；未 reconcile 的 queue 终态也不能绕过检查；通用取消后超过 200 条队列历史淘汰不破坏 Agent 列表；入队失败同步回滚；遗留缺队列记录稳定失败；反向成功状态 fail closed。完整门禁 368 后端 + 53 前端通过。
+
+## Q2：Entry 撤销
+
+新增 `src/storage/entry-revocation.test.ts`、`src/http/entry-revocation.test.ts`，并扩展 Agent/UI 回归，覆盖撤销幂等、单事务回滚、v5→v6、数据库重开、有效查询/MCP/TODO/标签、历史保留与模型 history fence、分类/回答期间撤销或删桶的晚结果、session 版本失效，以及页面确认/重复点击/失败/旧详情竞态。测试用例与保留数据限制见 [ENTRY_REVOCATION.md](ENTRY_REVOCATION.md)。完整门禁为 388 后端 + 57 前端通过。

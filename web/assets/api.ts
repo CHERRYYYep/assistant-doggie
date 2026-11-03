@@ -13,6 +13,7 @@ import type {
   ChatHistoryResponse,
   ChatResponse,
   DeleteBucketResponse,
+  EntryRevocationResponse,
   ErrorResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
@@ -25,6 +26,7 @@ export const ROUTES = {
   chatHistory: "/api/chat/history",
   activeBuckets: "/api/buckets/active",
   bucket: "/api/buckets/",
+  entry: "/api/entries/",
   memoryQuery: "/api/memory/query",
   correctionMove: "/api/corrections/move",
 } as const;
@@ -103,6 +105,10 @@ export function deleteBucketRequest(bucketId: string): Promise<DeleteBucketRespo
   return jsonRequest(ROUTES.bucket + encodeURIComponent(bucketId), {
     method: "DELETE",
   });
+}
+
+export function revokeEntryRequest(entryId: string): Promise<EntryRevocationResponse> {
+  return jsonRequest(ROUTES.entry + encodeURIComponent(entryId), { method: "DELETE" });
 }
 
 /** Background tasks deliberately have no result payload: history is authoritative. */

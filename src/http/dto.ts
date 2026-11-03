@@ -95,12 +95,15 @@ export type ArchiveActionDto =
   | "append_alternative"
   | "create_new"
   | "discard"
-  | "move_entry";
+  | "move_entry"
+  | "revoke_entry";
 
 export type ArchiveProjectionDto = {
   readonly ok: true;
   readonly attempt_id: string;
-  readonly archive_state: "archived" | "needs_confirmation";
+  readonly archive_state:
+    "archived" | "needs_confirmation" | "revoked" | "deleted";
+  readonly revoked_at?: string;
   readonly bucket_id: string | null;
   readonly entry_id: string | null;
   readonly memory_item_ids: readonly string[];
@@ -281,6 +284,15 @@ export type DeleteBucketResponse = {
   readonly deleted_memory_item_ids: readonly string[];
   readonly updated_archive_attempt_ids: readonly string[];
   readonly correction_id: string;
+};
+
+export type EntryRevocationResponse = {
+  readonly ok: true;
+  readonly entry_id: string;
+  readonly bucket_id: string;
+  readonly correction_id: string;
+  readonly revoked_at: string;
+  readonly memory_item_ids: readonly string[];
 };
 
 export type BucketStatusResponse = {

@@ -37,6 +37,7 @@ function fakeApi(
     memoryQueryJson: ok,
     bucketDetail: ok,
     deleteBucket: ok,
+    revokeEntry: ok,
     archive: ok,
     chat,
     confirmChat: ok,

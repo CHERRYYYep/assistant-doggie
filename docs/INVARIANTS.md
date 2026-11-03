@@ -85,6 +85,8 @@
 | 4.14 | 追加 Entry 刷新 Bucket 活动时间；缺失 Bucket 类型化拒绝 | `[P]` `test_append_entry_updates_bucket_activity_and_detail` / `test_append_entry_rejects_missing_bucket` |
 | 4.15 | 活跃列表排除非 active Bucket | `[P]` `test_list_active_buckets_excludes_non_active_buckets` |
 
+Q2 增补（新产品合同，不改写历史 fixture）：普通 Entry 删除是逻辑撤销，原文/外键/审计保留，退出有效读取与派生上下文；同事务更新依赖与审计，重复操作稳定，失败回滚。历史空来源 Memory 不推测清理。撤销/删桶使旧模型历史与 CLI session 失效，拒绝并发晚结果回流。可执行验收见 `src/storage/entry-revocation.test.ts`、`src/http/entry-revocation.test.ts`、`src/agent/control.test.ts` 和 `web/tests/ui-tasks.test.ts`，完整行为见 [撤销合同](ENTRY_REVOCATION.md)。
+
 ## 5. 自然语言查询
 
 | # | 不变量 | 来源 |

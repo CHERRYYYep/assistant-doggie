@@ -47,6 +47,7 @@ function fakeApi(): DoggieHttpApi {
     memoryQueryJson: ok,
     bucketDetail: ok,
     deleteBucket: ok,
+    revokeEntry: ok,
     archive: ok,
     chat: ok,
     confirmChat: ok,

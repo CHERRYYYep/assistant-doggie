@@ -47,6 +47,7 @@ export const sessionSchema = z
     workspaceId: z.string().uuid().nullable(),
     backend: agentBackendSchema,
     remoteId: z.string().uuid().nullable(),
+    memoryRevision: z.number().int().nonnegative().default(0),
     createdAt: z.string(),
   })
   .strict();
@@ -84,6 +85,7 @@ export class AgentError extends Error {
     | "missing"
     | "conflict"
     | "binding_mismatch"
+    | "memory_changed"
     | "process_failed"
     | "output_limit"
     | "invalid_event"

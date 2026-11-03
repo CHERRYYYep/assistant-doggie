@@ -82,6 +82,24 @@ const proposal = {
   instruction: "读取记忆并总结",
 } as const;
 
+function revocableMemory(store: Store) {
+  const archived = store.archive(
+    "temporary source has 12 records",
+    createNew(BucketType.Task, "revocation fixture", 0.99, "fixture"),
+    minimalExtraction("temporary evidence"),
+    { candidateBucketIds: [], promptVersion: "fixture", modelName: "fake" },
+  );
+  assert.ok(archived.entryId);
+  assert.ok(archived.bucketId);
+  return { entryId: archived.entryId, bucketId: archived.bucketId };
+}
+
+async function waitForTask(queue: TaskQueue, id: string): Promise<void> {
+  await new Response(
+    taskEventStream(queue, id, new AbortController().signal),
+  ).text();
+}
+
 test("T13 six workspace checks: canonical roots, symlink escape, repo root, content and HEAD baseline", async () => {
   const f = await fixture();
   try {
@@ -818,6 +836,181 @@ test("T13 queue capacity rejection rolls back approval; changed baseline between
     assert.equal(f.store.task(scoped.id).failureCode, "workspace_changed");
     store.finish(queued.id, "failed", "execution_failed");
   } finally {
+    await f.cleanup();
+  }
+});
+
+for (const target of ["entry", "bucket"] as const) {
+  test(`revoking a ${target} blocks successful CLI session recovery and earlier pending approval`, async () => {
+    const f = await fixture();
+    const memory = new Store(f.db);
+    const source = revocableMemory(memory);
+    let runs = 0;
+    const { service, queue } = setupService(f, {
+      async run(request) {
+        runs++;
+        return {
+          output: "current context",
+          remoteId: request.session.remoteId ?? randomUUID(),
+        };
+      },
+    });
+    try {
+      const first = await service.propose(proposal);
+      const admitted = await service.approve(first.id, first.instruction);
+      await waitForTask(queue, admitted.queueTask.id);
+      assert.equal(service.get(first.id).status, "succeeded");
+      const pending = await service.propose({
+        ...proposal,
+        sessionId: first.sessionId,
+      });
+      const revision = f.store.session(first.sessionId).memoryRevision;
+      if (target === "entry")
+        memory.deleteEntry(source.entryId, "revoke fixture");
+      else memory.deleteBucket(source.bucketId, "delete fixture bucket");
+      assert.ok(memory.getMemoryContextRevision() > revision);
+      await assert.rejects(
+        service.propose({ ...proposal, sessionId: first.sessionId }),
+        /memory_changed/,
+      );
+      await assert.rejects(
+        service.approve(pending.id, pending.instruction),
+        /memory_changed/,
+      );
+      assert.equal(service.get(pending.id).status, "pending");
+      assert.equal(
+        service.reject(pending.id, pending.instruction).status,
+        "rejected",
+      );
+      const fresh = await service.propose(proposal);
+      assert.equal(
+        f.store.session(fresh.sessionId).memoryRevision,
+        memory.getMemoryContextRevision(),
+      );
+      const next = await service.approve(fresh.id, fresh.instruction);
+      await waitForTask(queue, next.queueTask.id);
+      assert.equal(service.get(fresh.id).status, "succeeded");
+      assert.equal(runs, 2);
+    } finally {
+      await queue.close();
+      await f.cleanup();
+    }
+  });
+}
+
+test("queued CLI work revoked before start fails without spawning and leaves the worker healthy", async () => {
+  const f = await fixture();
+  const memory = new Store(f.db);
+  const source = revocableMemory(memory);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = () => {};
+  const claimed = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let runs = 0;
+  const service = new AgentService({
+    store: f.store,
+    policy: f.policy,
+    runner: {
+      async run() {
+        runs++;
+        return { output: "new context", remoteId: randomUUID() };
+      },
+    },
+    databasePath: join(f.root, "test.db"),
+    enabled: ["codex"],
+  });
+  const queue = new TaskQueue(new TaskStore(f.db), async (payload, signal) => {
+    if (!("agent_task_id" in payload)) throw new Error("not an agent task");
+    entered();
+    await gate;
+    await service.execute(payload.agent_task_id, signal);
+  });
+  service.attachQueue(queue);
+  try {
+    const task = await service.propose(proposal);
+    const admitted = await service.approve(task.id, task.instruction);
+    await claimed;
+    assert.equal(f.store.task(task.id).status, "queued");
+    memory.deleteEntry(source.entryId, "revoke before CLI starts");
+    release();
+    await waitForTask(queue, admitted.queueTask.id);
+    assert.equal(queue.get(admitted.queueTask.id).status, "failed");
+    assert.equal(service.get(task.id).status, "failed");
+    assert.equal(service.get(task.id).failureCode, "memory_changed");
+    assert.equal(runs, 0);
+    assert.equal(
+      memory.getPendingAction(task.pendingActionId)?.status,
+      "failed",
+    );
+    const fresh = await service.propose(proposal);
+    const next = await service.approve(fresh.id, fresh.instruction);
+    await waitForTask(queue, next.queueTask.id);
+    assert.equal(service.get(fresh.id).status, "succeeded");
+    assert.equal(runs, 1);
+  } finally {
+    release();
+    await queue.close();
+    await f.cleanup();
+  }
+});
+
+test("revocation during CLI execution discards late output and remote identity without faulting the worker", async () => {
+  const f = await fixture();
+  const memory = new Store(f.db);
+  const source = revocableMemory(memory);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let began = () => {};
+  const started = new Promise<void>((resolve) => {
+    began = resolve;
+  });
+  let runs = 0;
+  const { service, queue } = setupService(f, {
+    async run() {
+      runs++;
+      if (runs === 1) {
+        began();
+        await gate;
+        return { output: "stale revoked evidence", remoteId: randomUUID() };
+      }
+      return { output: "current evidence", remoteId: randomUUID() };
+    },
+  });
+  try {
+    const task = await service.propose(proposal);
+    const admitted = await service.approve(task.id, task.instruction);
+    await started;
+    memory.deleteEntry(source.entryId, "revoke while CLI awaits");
+    release();
+    await waitForTask(queue, admitted.queueTask.id);
+    assert.equal(queue.get(admitted.queueTask.id).status, "failed");
+    assert.equal(service.get(task.id).status, "failed");
+    assert.equal(service.get(task.id).failureCode, "memory_changed");
+    assert.equal(service.get(task.id).output, "");
+    assert.equal(f.store.session(task.sessionId).remoteId, null);
+    assert.equal(
+      memory.getPendingAction(task.pendingActionId)?.status,
+      "failed",
+    );
+    assert.equal(
+      memory.getPendingAction(task.pendingActionId)?.failureCode,
+      "memory_changed",
+    );
+    const fresh = await service.propose(proposal);
+    const next = await service.approve(fresh.id, fresh.instruction);
+    await waitForTask(queue, next.queueTask.id);
+    assert.equal(service.get(fresh.id).status, "succeeded");
+    assert.equal(service.get(fresh.id).output, "current evidence");
+    assert.equal(runs, 2);
+  } finally {
+    release();
+    await queue.close();
     await f.cleanup();
   }
 });

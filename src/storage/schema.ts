@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -85,8 +85,8 @@ CREATE TABLE bucket_tags (
 
 -- One table for every structured memory kind: summary, todo, evidence,
 -- timeline, decision, hypothesis, entity, tag.
--- entry_id is SET NULL rather than CASCADE: deleting one Entry must not erase
--- memory that other Entries in the Bucket still support.
+-- Legacy physical deletion leaves entry_id NULL. Current Entry revocation
+-- preserves this link, and effective reads exclude a revoked source.
 CREATE TABLE memory_items (
     id            TEXT PRIMARY KEY,
     bucket_id     TEXT NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
@@ -258,6 +258,17 @@ CREATE TRIGGER agent_task_binding_immutable BEFORE UPDATE OF id,session_id,works
 BEGIN SELECT RAISE(ABORT, 'task binding is immutable'); END;
 `;
 
+const ADD_ENTRY_REVOCATION_V6 = `
+ALTER TABLE entries ADD COLUMN revoked_at TEXT;
+CREATE INDEX ix_entries_effective_bucket_created
+    ON entries(bucket_id, created_at, id) WHERE revoked_at IS NULL;
+ALTER TABLE agent_sessions ADD COLUMN memory_revision INTEGER NOT NULL DEFAULT 0;
+DROP TRIGGER agent_session_binding_immutable;
+CREATE TRIGGER agent_session_binding_immutable
+BEFORE UPDATE OF id,workspace_id,backend,created_at,memory_revision ON agent_sessions
+BEGIN SELECT RAISE(ABORT, 'session binding is immutable'); END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -268,6 +279,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 3, name: "add_pending_actions_v3", sql: ADD_PENDING_ACTIONS_V3 },
   { version: 4, name: "add_background_tasks_v4", sql: ADD_BACKGROUND_TASKS_V4 },
   { version: 5, name: "add_agent_control_v5", sql: ADD_AGENT_CONTROL_V5 },
+  { version: 6, name: "add_entry_revocation_v6", sql: ADD_ENTRY_REVOCATION_V6 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */

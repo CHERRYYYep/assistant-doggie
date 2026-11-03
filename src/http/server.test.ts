@@ -24,6 +24,7 @@ function fakeApi(chatMessages: string[] = []): DoggieHttpApi {
     memoryQueryJson: ok,
     bucketDetail: ok,
     deleteBucket: ok,
+    revokeEntry: ok,
     archive: ok,
     chat: (request) => {
       chatMessages.push(request.message);

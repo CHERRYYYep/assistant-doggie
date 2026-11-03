@@ -22,6 +22,7 @@ export type StorageErrorKind =
   | "missing_record"
   | "invalid_write"
   | "inactive_bucket"
+  | "memory_context_changed"
   | "archive_attempt_not_found"
   | "archive_attempt_text_mismatch"
   | "archive_attempt_not_pending"
@@ -309,6 +310,8 @@ function assertSchemaShape(database: DatabaseSync): void {
       ],
     ],
     ["buckets", ["workspace_id"]],
+    ["entries", ["revoked_at"]],
+    ["agent_sessions", ["memory_revision"]],
   ] as const) {
     const columns = new Set(
       database

@@ -23,9 +23,10 @@ import {
   finishPendingAction,
 } from "./pending-actions.ts";
 import { TaskStore } from "./tasks.ts";
+import { Store } from "./store.ts";
 
 const taskSelect = `SELECT id, session_id AS sessionId, workspace_id AS workspaceId, backend, instruction, pending_action_id AS pendingActionId, queue_id AS queueId, status, output, failure_code AS failureCode, created_at AS createdAt, updated_at AS updatedAt FROM agent_tasks`;
-const sessionSelect = `SELECT id, workspace_id AS workspaceId, backend, remote_id AS remoteId, created_at AS createdAt FROM agent_sessions`;
+const sessionSelect = `SELECT id, workspace_id AS workspaceId, backend, remote_id AS remoteId, memory_revision AS memoryRevision, created_at AS createdAt FROM agent_sessions`;
 const workspaceSelect = `SELECT id,path,base_commit AS baseCommit,git_status AS gitStatus,created_at AS createdAt FROM agent_workspaces`;
 export class AgentStore {
   readonly #db: DatabaseSync;
@@ -84,6 +85,13 @@ export class AgentStore {
     if (row === undefined) throw new AgentError("missing");
     return sessionSchema.parse(row);
   }
+  assertMemoryContextCurrent(sessionId: string): void {
+    if (
+      this.session(sessionId).memoryRevision !==
+      new Store(this.#db).getMemoryContextRevision()
+    )
+      throw new AgentError("memory_changed");
+  }
   task(id: string): AgentTask {
     const row = this.#db.prepare(taskSelect + " WHERE id=?").get(id);
     if (row === undefined) throw new AgentError("missing");
@@ -124,13 +132,16 @@ export class AgentStore {
       } else {
         const sid = randomUUID();
         this.#db
-          .prepare("INSERT INTO agent_sessions VALUES (?,?,?,?,?)")
+          .prepare(
+            "INSERT INTO agent_sessions (id,workspace_id,backend,remote_id,created_at,memory_revision) VALUES (?,?,?,?,?,?)",
+          )
           .run(
             sid,
             proposal.workspaceId,
             proposal.backend,
             null,
             new Date().toISOString(),
+            new Store(this.#db).getMemoryContextRevision(),
           );
         session = this.session(sid);
       }
@@ -252,6 +263,8 @@ export class AgentStore {
       this.#bound(task, task.instruction, "approved");
       if (task.status !== "running" && task.status !== "queued")
         throw new AgentError("conflict");
+      if (outcome.status === "succeeded")
+        this.assertMemoryContextCurrent(task.sessionId);
       if (Buffer.byteLength(outcome.output) > 64 * 1024)
         throw new AgentError("output_limit");
       if (outcome.remoteId !== undefined) {
@@ -295,6 +308,7 @@ export class AgentStore {
     new TaskStore(this.#db).reconcileAgentTasks();
   }
   #assertSessionReusable(sessionId: string): void {
+    this.assertMemoryContextCurrent(sessionId);
     // Queue cancellation/restart can precede agent projection reconciliation.
     // Treat that outstanding work as failed without relying on a GET request
     // to reconcile it first. Successfully committed agent results stay valid.

@@ -211,7 +211,10 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
   const hydratedArchive = details["archive"] as Record<string, unknown>;
   assert.equal(details["pending_confirmation"], false);
   assert.equal(hydratedArchive["archive_state"], "archived");
-  assert.deepEqual(hydratedArchive["available_actions"], ["move_entry"]);
+  assert.deepEqual(hydratedArchive["available_actions"], [
+    "move_entry",
+    "revoke_entry",
+  ]);
   assert.equal(
     (hydratedArchive["bucket"] as Record<string, unknown>)["id"],
     target.bucketId,

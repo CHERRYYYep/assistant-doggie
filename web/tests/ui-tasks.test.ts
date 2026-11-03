@@ -20,10 +20,141 @@ afterEach(async () => {
   state.cancellingTasks.clear();
   state.history = [];
   state.activeBuckets = [];
+  state.selectedBucketId = null;
+  state.revokingEntries.clear();
   renderTranscript([]);
   element("chat-send").disabled = false;
   element("chat-input").value = "";
   globalThis.fetch = originalFetch;
+});
+
+test("Entry revocation requires explicit confirmation, coalesces clicks and clears stale query results", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "confirm");
+  const button = new StubElement();
+  button.dataset["entryId"] = "entry-1";
+  let deletes = 0;
+  let release: (value: Response) => void = () => {};
+  const pending = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  const calls = mockServer();
+  const fallback = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "/api/entries/entry-1") {
+      deletes++;
+      return pending;
+    }
+    return fallback(input, init);
+  };
+  try {
+    Object.defineProperty(globalThis, "confirm", { value: () => false, configurable: true });
+    await views.revokeEntry(button as unknown as HTMLButtonElement);
+    assert.equal(deletes, 0);
+    Object.defineProperty(globalThis, "confirm", { value: () => true, configurable: true });
+    const revoking = views.revokeEntry(button as unknown as HTMLButtonElement);
+    assert.equal(button.disabled, true);
+    await views.revokeEntry(button as unknown as HTMLButtonElement);
+    assert.equal(deletes, 1);
+    release(
+      json({
+        ok: true,
+        entry_id: "entry-1",
+        bucket_id: "bucket-1",
+        correction_id: "correction-1",
+        revoked_at: "2026-11-03T00:00:00.000Z",
+        memory_item_ids: [],
+      }),
+    );
+    await revoking;
+    assert.equal(button.disabled, false);
+    assert.match(element("memory-query-result").textContent ?? "", /重新查询/);
+    assert.match(element("chat-status").textContent ?? "", /已撤销/);
+    assert.ok(calls.some((call) => call.includes("/api/chat/history")));
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "confirm", descriptor);
+    else Reflect.deleteProperty(globalThis, "confirm");
+  }
+});
+
+test("failed Entry revocation leaves existing query visible and permits an explicit retry", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "confirm");
+  Object.defineProperty(globalThis, "confirm", { value: () => true, configurable: true });
+  const button = new StubElement();
+  button.dataset["entryId"] = "entry-1";
+  element("memory-query-result").textContent = "原查询";
+  globalThis.fetch = async () => json({ ok: false, error: "storage failed" }, 500);
+  try {
+    await assert.rejects(
+      views.revokeEntry(button as unknown as HTMLButtonElement),
+      /storage failed/,
+    );
+    assert.equal(button.disabled, false);
+    assert.equal(state.revokingEntries.size, 0);
+    assert.equal(element("memory-query-result").textContent, "原查询");
+  } finally {
+    if (descriptor) Object.defineProperty(globalThis, "confirm", descriptor);
+    else Reflect.deleteProperty(globalThis, "confirm");
+  }
+});
+
+test("Bucket detail ignores an older response when the user selects another Bucket", async () => {
+  let release: (value: Response) => void = () => {};
+  const old = new Promise<Response>((resolve) => {
+    release = resolve;
+  });
+  const bucket = (id: string) => ({
+    id,
+    title: id,
+    type: "task",
+    status: "active",
+    summary: "",
+    tags: [],
+    created_at: "2026-11-03T00:00:00Z",
+    updated_at: "2026-11-03T00:00:00Z",
+    last_active_at: "2026-11-03T00:00:00Z",
+    archived_at: null,
+  });
+  globalThis.fetch = async (input) =>
+    String(input).endsWith("/old")
+      ? old
+      : json({ ok: true, detail: { bucket: bucket("new"), entries: [], memories: [] } });
+  const loading = views.showBucket("old");
+  await views.showBucket("new");
+  release(json({ ok: true, detail: { bucket: bucket("old"), entries: [], memories: [] } }));
+  await loading;
+  assert.match(element("detail").innerHTML, /new/);
+  assert.doesNotMatch(element("detail").innerHTML, /old/);
+});
+
+test("revoked archive cards have no move/revoke controls and explain retained history", async () => {
+  const { renderArchiveCard } = await import("../assets/render-archive.ts");
+  const html = renderArchiveCard(
+    {
+      ok: true,
+      attempt_id: "attempt",
+      archive_state: "revoked",
+      bucket_id: "bucket",
+      entry_id: "entry",
+      memory_item_ids: [],
+      action: "create_new",
+      confidence: 1,
+      reason: "",
+      question: null,
+      candidate_bucket_ids: [],
+      recommended_bucket_id: null,
+      recommended_bucket: null,
+      candidate_buckets: [],
+      bucket_title: "task",
+      bucket_type: "task",
+      bucket: null,
+      extraction: null,
+      source_attempt_id: null,
+    },
+    "original",
+  );
+  assert.match(html, /已撤销/);
+  assert.match(html, /聊天与审计保留/);
+  assert.doesNotMatch(html, /data-action="(?:move-entry|revoke-entry)"/);
 });
 function element(id: string): StubElement {
   const node = dom.elements.get(id);

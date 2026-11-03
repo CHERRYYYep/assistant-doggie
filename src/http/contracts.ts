@@ -180,6 +180,7 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
         : error.code === "disabled" || error.code === "unavailable"
           ? 503
           : error.code === "conflict" ||
+              error.code === "memory_changed" ||
               error.code === "workspace_changed" ||
               error.code === "binding_mismatch"
             ? 409
@@ -209,6 +210,7 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
       case "missing_record":
         return new HttpBoundaryError(404, error.message);
       case "inactive_bucket":
+      case "memory_context_changed":
       case "archive_attempt_not_found":
       case "archive_attempt_text_mismatch":
       case "archive_attempt_not_pending":

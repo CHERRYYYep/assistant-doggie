@@ -8,6 +8,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
 
 import type {
   BucketStatus,
@@ -191,6 +192,20 @@ export type SaveExtractionInput = {
   readonly entryId: string;
   readonly extraction: ExtractionResult;
 };
+
+export type EntryRevocation = {
+  readonly entryId: string;
+  readonly bucketId: string;
+  readonly correctionId: string;
+  readonly revokedAt: string;
+  readonly memoryItemIds: readonly string[];
+};
+
+const revocationAuditSchema = z.object({
+  bucket_id: z.string().min(1),
+  revoked_at: z.string().min(1),
+  memory_item_ids: z.array(z.string().min(1)),
+});
 
 export type DeleteBucketOutcome = {
   readonly bucketId: string;
@@ -551,7 +566,7 @@ export class Store {
     dedupeExisting = false,
   ): string[] {
     const seen = dedupeExisting
-      ? this.#existingMemoryKeys(bucketId)
+      ? this.#existingMemoryKeys(entryId)
       : new Set<string>();
     const insert = this.#database.prepare(
       `INSERT INTO memory_items
@@ -582,12 +597,12 @@ export class Store {
     return insertedIds;
   }
 
-  #existingMemoryKeys(bucketId: string): Set<string> {
+  #existingMemoryKeys(entryId: string): Set<string> {
     const rows = this.#database
       .prepare(
-        "SELECT kind, text, occurred_at FROM memory_items WHERE bucket_id = ?",
+        "SELECT kind, text, occurred_at FROM memory_items WHERE entry_id = ?",
       )
-      .all(bucketId) as {
+      .all(entryId) as {
       kind: string;
       text: string;
       occurred_at: string | null;
@@ -903,7 +918,9 @@ export class Store {
 
     return withTransaction(this.#database, () => {
       const source = this.#database
-        .prepare("SELECT bucket_id FROM entries WHERE id = ?")
+        .prepare(
+          "SELECT bucket_id FROM entries WHERE id = ? AND revoked_at IS NULL",
+        )
         .get(entryId) as { bucket_id: string } | undefined;
       if (source === undefined)
         throw StorageError.missingRecord("entries", entryId);
@@ -934,6 +951,9 @@ export class Store {
       this.#database
         .prepare("UPDATE memory_items SET bucket_id = ? WHERE entry_id = ?")
         .run(targetBucketId, entryId);
+      const tags = this.#entryTags(entryId);
+      this.#removeUnsupportedTags(sourceBucketId, tags);
+      this.#mergeBucketTags(targetBucketId, tags);
       this.#database
         .prepare(
           "UPDATE buckets SET updated_at = ?, last_active_at = ? WHERE id = ?",
@@ -1024,7 +1044,7 @@ export class Store {
   #rebuildSummary(bucketId: string, timestamp: string): void {
     const rows = this.#database
       .prepare(
-        `SELECT summary FROM entries WHERE bucket_id = ?
+        `SELECT summary FROM entries WHERE bucket_id = ? AND revoked_at IS NULL
          ORDER BY created_at ASC, id ASC LIMIT ?`,
       )
       .all(bucketId, DEFAULT_REBUILD_ENTRY_LIMIT) as {
@@ -1073,14 +1093,15 @@ export class Store {
       this.#database
         .prepare(
           `INSERT INTO corrections
-             (id, command_text, action, target_type, target_id, before_json, created_at)
-           VALUES (?, ?, 'delete_bucket', 'bucket', ?, ?, ?)`,
+             (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+           VALUES (?, ?, 'delete_bucket', 'bucket', ?, ?, ?, ?)`,
         )
         .run(
           correctionId,
           command,
           bucketId,
           JSON.stringify({ bucket_id: bucketId }),
+          JSON.stringify(this.#nextMemoryContext()),
           this.#now(),
         );
       return {
@@ -1093,33 +1114,193 @@ export class Store {
     });
   }
 
-  /** Delete one Entry, leaving its Bucket and the other Entries intact. */
-  deleteEntry(entryId: string, commandText: string): void {
+  /** Revoke one Entry. Source text and audit survive outside effective memory. */
+  deleteEntry(entryId: string, commandText: string): EntryRevocation {
+    const id = requiredField(entryId, "entry_id");
     const command = requiredField(commandText, "command_text");
-    withTransaction(this.#database, () => {
+    return withTransaction(this.#database, () => {
+      const previous = this.getEntryRevocation(id);
+      if (previous !== undefined) return previous;
       const entry = this.#database
-        .prepare("SELECT bucket_id FROM entries WHERE id = ?")
-        .get(entryId) as { bucket_id: string } | undefined;
-      if (entry === undefined)
-        throw StorageError.missingRecord("entries", entryId);
+        .prepare(
+          "SELECT bucket_id FROM entries WHERE id = ? AND revoked_at IS NULL",
+        )
+        .get(id) as { bucket_id: string } | undefined;
+      if (entry === undefined) throw StorageError.missingRecord("entries", id);
 
       const timestamp = this.#now();
-      this.#database.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
+      const memoryItemIds = this.#database
+        .prepare("SELECT id FROM memory_items WHERE entry_id = ? ORDER BY id")
+        .all(id)
+        .map((row) => z.string().parse(row["id"]));
+      const tags = this.#entryTags(id);
+      this.#database
+        .prepare("UPDATE entries SET revoked_at = ? WHERE id = ?")
+        .run(timestamp, id);
+      this.#removeUnsupportedTags(entry.bucket_id, tags);
       this.#rebuildSummary(entry.bucket_id, timestamp);
       this.#database
         .prepare(
+          `UPDATE archive_attempts SET archive_state = 'revoked', corrected = 1, resolved_at = ?
+           WHERE entry_id = ?`,
+        )
+        .run(timestamp, id);
+      const correctionId = newId();
+      this.#database
+        .prepare(
           `INSERT INTO corrections
-             (id, command_text, action, target_type, target_id, before_json, created_at)
-           VALUES (?, ?, 'delete_entry', 'entry', ?, ?, ?)`,
+             (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+           VALUES (?, ?, 'delete_entry', 'entry', ?, ?, ?, ?)`,
         )
         .run(
-          newId(),
+          correctionId,
           command,
-          entryId,
+          id,
           JSON.stringify({ bucket_id: entry.bucket_id }),
+          JSON.stringify({
+            bucket_id: entry.bucket_id,
+            revoked_at: timestamp,
+            memory_item_ids: memoryItemIds,
+            ...this.#nextMemoryContext(),
+          }),
           timestamp,
         );
+      return {
+        entryId: id,
+        bucketId: entry.bucket_id,
+        correctionId,
+        revokedAt: timestamp,
+        memoryItemIds,
+      };
     });
+  }
+
+  /** The revocation audit is durable even if its Bucket is later deleted. */
+  getEntryRevocation(entryId: string): EntryRevocation | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, after_json FROM corrections
+         WHERE action = 'delete_entry' AND target_type = 'entry' AND target_id = ?
+           AND after_json IS NOT NULL ORDER BY created_at ASC, id ASC LIMIT 1`,
+      )
+      .get(entryId);
+    if (row === undefined) return undefined;
+    try {
+      const audit = revocationAuditSchema.parse(
+        JSON.parse(z.string().parse(row["after_json"])) as unknown,
+      );
+      return {
+        entryId,
+        bucketId: audit.bucket_id,
+        correctionId: z.string().parse(row["id"]),
+        revokedAt: audit.revoked_at,
+        memoryItemIds: audit.memory_item_ids,
+      };
+    } catch {
+      throw StorageError.invalidWrite(
+        "entry_revocation",
+        "has invalid stored data",
+      );
+    }
+  }
+
+  /** Equality token for rejecting model results produced before a revocation. */
+  getMemoryContextRevision(): number {
+    return this.#memoryContextMaximum("context_revision");
+  }
+
+  #memoryContextMaximum(
+    field: "context_revision" | "history_sequence",
+  ): number {
+    const row = this.#database
+      .prepare(
+        `SELECT COALESCE(MAX(CASE WHEN json_valid(after_json)
+           THEN CASE WHEN json_type(after_json, '$.${field}') = 'integer'
+             THEN json_extract(after_json, '$.${field}') ELSE 0 END
+           ELSE 0 END), 0) AS maximum
+         FROM corrections WHERE action IN ('delete_entry', 'delete_bucket')`,
+      )
+      .get();
+    const maximum = row?.["maximum"];
+    if (
+      typeof maximum !== "number" ||
+      !Number.isSafeInteger(maximum) ||
+      maximum < 0
+    ) {
+      throw StorageError.invalidWrite(
+        "memory_context",
+        "has invalid stored revision",
+      );
+    }
+    return maximum;
+  }
+
+  #nextMemoryContext(): {
+    readonly context_revision: number;
+    readonly history_sequence: number;
+  } {
+    const revision = this.getMemoryContextRevision() + 1;
+    if (!Number.isSafeInteger(revision))
+      throw StorageError.invalidWrite(
+        "memory_context",
+        "revision limit reached",
+      );
+    const row = this.#database
+      .prepare(
+        "SELECT COALESCE(MAX(sequence), 0) AS maximum FROM conversation_messages",
+      )
+      .get();
+    return {
+      context_revision: revision,
+      history_sequence: z.number().int().nonnegative().parse(row?.["maximum"]),
+    };
+  }
+
+  #entryTags(entryId: string): readonly string[] {
+    return this.#database
+      .prepare(
+        "SELECT text FROM memory_items WHERE entry_id = ? AND kind = 'tag'",
+      )
+      .all(entryId)
+      .map((row) => z.string().parse(row["text"]));
+  }
+
+  /** Remove only known contributions with no effective support; keep legacy tags. */
+  #removeUnsupportedTags(
+    bucketId: string,
+    contributed: readonly string[],
+  ): void {
+    if (contributed.length === 0) return;
+    const contributedKeys = new Set(contributed.map(normalizedKey));
+    const supportedKeys = new Set(
+      this.#database
+        .prepare(
+          `SELECT text FROM memory_items WHERE bucket_id = ? AND kind = 'tag'
+           AND (entry_id IS NULL OR EXISTS (
+             SELECT 1 FROM entries source WHERE source.id = memory_items.entry_id AND source.revoked_at IS NULL
+           ))`,
+        )
+        .all(bucketId)
+        .map((row) => normalizedKey(z.string().parse(row["text"]))),
+    );
+    const tags = this.#database
+      .prepare(
+        "SELECT tag FROM bucket_tags WHERE bucket_id = ? ORDER BY position",
+      )
+      .all(bucketId)
+      .map((row) => z.string().parse(row["tag"]))
+      .filter(
+        (tag) =>
+          !contributedKeys.has(normalizedKey(tag)) ||
+          supportedKeys.has(normalizedKey(tag)),
+      );
+    this.#database
+      .prepare("DELETE FROM bucket_tags WHERE bucket_id = ?")
+      .run(bucketId);
+    const insert = this.#database.prepare(
+      "INSERT INTO bucket_tags (bucket_id, tag, position) VALUES (?, ?, ?)",
+    );
+    tags.forEach((tag, position) => insert.run(bucketId, tag, position));
   }
 
   // ── Bucket lifecycle ─────────────────────────────────────────────────────
@@ -1195,6 +1376,18 @@ export class Store {
     };
   }
 
+  /** Older history remains visible, but cannot silently restore revoked facts. */
+  listModelChatMessages(limit: number): ChatMessageRow[] {
+    const fence = this.#memoryContextMaximum("history_sequence");
+    return (
+      this.listChatMessages(limit)
+        .filter((message) => message.sequence > fence)
+        // Audit details can include old source text even when reply content has
+        // already been replaced after concurrent revocation. They are UI data.
+        .map((message) => ({ ...message, details: undefined }))
+    );
+  }
+
   /** Most recent `limit` messages, returned oldest-first for rendering. */
   listChatMessages(limit: number): ChatMessageRow[] {
     const rows = this.#database
@@ -1254,7 +1447,7 @@ export class Store {
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
                 classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries WHERE id = ?`,
+         FROM entries WHERE id = ? AND revoked_at IS NULL`,
       )
       .get(entryId) as EntryColumns | undefined;
     return row === undefined ? undefined : toEntryRow(row);
@@ -1265,7 +1458,7 @@ export class Store {
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
                 classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries ORDER BY created_at DESC, id DESC LIMIT 1`,
+         FROM entries WHERE revoked_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
       .get() as EntryColumns | undefined;
     return row === undefined ? undefined : toEntryRow(row);
@@ -1334,8 +1527,11 @@ export class Store {
       .prepare(
         `SELECT b.id, b.title, b.kind, b.lifecycle, b.summary,
                 b.created_at, b.updated_at, b.last_active_at, b.archived_at,
-                  (SELECT COUNT(*) FROM entries e WHERE e.bucket_id = b.id)
-                + (SELECT COUNT(*) FROM memory_items m WHERE m.bucket_id = b.id) AS volume
+                  (SELECT COUNT(*) FROM entries e WHERE e.bucket_id = b.id AND e.revoked_at IS NULL)
+                + (SELECT COUNT(*) FROM memory_items m WHERE m.bucket_id = b.id
+                   AND (m.entry_id IS NULL OR EXISTS (
+                     SELECT 1 FROM entries source WHERE source.id = m.entry_id AND source.revoked_at IS NULL
+                   ))) AS volume
          FROM buckets b WHERE b.lifecycle = 'active'
          ORDER BY volume DESC, b.last_active_at DESC, b.id ASC LIMIT ?`,
       )
@@ -1388,7 +1584,7 @@ export class Store {
         .prepare(
           `SELECT e.id
            FROM entries e JOIN buckets b ON b.id = e.bucket_id
-           WHERE ${clauses.join(" OR ")}
+           WHERE e.revoked_at IS NULL AND (${clauses.join(" OR ")})
            ORDER BY e.created_at ASC, e.id ASC`,
         )
         .all(...parameters) as { id: string }[];
@@ -1441,7 +1637,7 @@ export class Store {
       .prepare(
         `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
                 classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
+         FROM entries WHERE bucket_id = ? AND revoked_at IS NULL ORDER BY created_at ASC, id ASC`,
       )
       .all(bucketId) as EntryColumns[];
 
@@ -1449,7 +1645,10 @@ export class Store {
       .prepare(
         `SELECT id, bucket_id, entry_id, kind, text, status, due_at, occurred_at,
                 source, reason, created_at, updated_at, metadata_json
-         FROM memory_items WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
+         FROM memory_items WHERE bucket_id = ?
+           AND (entry_id IS NULL OR EXISTS (
+             SELECT 1 FROM entries source WHERE source.id = memory_items.entry_id AND source.revoked_at IS NULL
+           )) ORDER BY created_at ASC, id ASC`,
       )
       .all(bucketId) as MemoryColumns[];
 

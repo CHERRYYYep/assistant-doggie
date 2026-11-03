@@ -23,7 +23,7 @@ export function renderMoveEntryCard(archive: ArchiveCardData): string {
   if (!archive.entry_id) return "";
   const options = renderBucketOptions(archive.bucket_id);
   const hasTarget = state.activeBuckets.some((bucket) => bucket.id !== archive.bucket_id);
-  return `<div class="move-entry"><h4>修改 Bucket</h4>${hasTarget ? `<select data-role="move-target">${options}</select><button data-action="move-entry" data-entry-id="${escapeHtml(archive.entry_id)}">修改 Bucket</button>` : '<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<div data-role="move-status" class="muted"></div></div>`;
+  return `<div class="move-entry"><h4>管理记录</h4>${hasTarget ? `<select data-role="move-target">${options}</select><button data-action="move-entry" data-entry-id="${escapeHtml(archive.entry_id)}">修改 Bucket</button>` : '<span class="muted">暂无其他活跃 Bucket 可供移动。</span>'}<button data-action="revoke-entry" data-entry-id="${escapeHtml(archive.entry_id)}">撤销记录</button><div data-role="move-status" class="muted"></div></div>`;
 }
 
 export function renderArchiveCard(
@@ -71,6 +71,10 @@ export function renderArchiveCard(
     html += renderMoveEntryCard(cardData);
   } else if (stateName === "discarded") {
     html += '<p class="muted">这条内容没有保存为正式 Entry。</p>';
+  } else if (stateName === "revoked") {
+    html += '<p class="muted">此记录已撤销，其专属派生记忆不再用于回答。聊天与审计保留。</p>';
+  } else {
+    html += '<p class="muted">此历史记录已变更或删除，请以当前 Bucket 详情为准。</p>';
   }
   html += "</div>";
   return html;

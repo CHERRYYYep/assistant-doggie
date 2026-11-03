@@ -10,7 +10,7 @@ import { AgentStore } from "./agents.ts";
 import { Store } from "./store.ts";
 import { TaskStore } from "./tasks.ts";
 
-test("T13 genuine v4 migrates to v5 preserving conversation, pending and queued work", () => {
+test("T13 genuine v4 migrates through v5 to the current schema preserving conversation, pending and queued work", () => {
   const root = mkdtempSync(join(tmpdir(), "doggie-v5-test-"));
   const path = join(root, "test.db");
   let db = new DatabaseSync(path);
@@ -46,7 +46,7 @@ test("T13 genuine v4 migrates to v5 preserving conversation, pending and queued 
       db
         .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
         .get()?.["value"],
-      "5",
+      "6",
     );
     assert.equal(
       new Store(db).listChatMessages(10)[0]?.content,

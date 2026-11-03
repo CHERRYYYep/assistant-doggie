@@ -99,9 +99,8 @@ export class AgentService {
     return this.#store.task(id);
   }
   async execute(id: string, signal: AbortSignal): Promise<void> {
-    const task = this.#store.start(id);
-    let completed: { output: string; remoteId: string };
     try {
+      const task = this.#store.start(id);
       throwIfAborted(signal);
       this.#requireBackend(task.backend);
       const workspace =
@@ -125,6 +124,7 @@ export class AgentService {
         task.sessionId,
         async (cwd) => {
           throwIfAborted(signal);
+          this.#store.assertMemoryContextCurrent(task.sessionId);
           return this.#runner.run({
             task,
             session,
@@ -135,12 +135,19 @@ export class AgentService {
         },
       );
       throwIfAborted(signal);
+      this.#store.assertMemoryContextCurrent(task.sessionId);
       // A resumed CLI must return the same remote identity; otherwise do not
       // rebind a stored session to an unrelated conversation.
       if (session.remoteId !== null && session.remoteId !== result.remoteId)
         throw new AgentError("binding_mismatch");
-      completed = result;
+      this.#complete(id, {
+        status: "succeeded",
+        output: result.output,
+        failureCode: null,
+        remoteId: result.remoteId,
+      });
     } catch (error) {
+      if (error instanceof TaskError && error.kind === "faulted") throw error;
       const code = signal.aborted
         ? "cancelled"
         : error instanceof AgentError
@@ -158,17 +165,13 @@ export class AgentService {
         error instanceof AgentError ? error.code : "process_failed",
       );
     }
-    this.#complete(id, {
-      status: "succeeded",
-      output: completed.output,
-      failureCode: null,
-      remoteId: completed.remoteId,
-    });
   }
   #complete(id: string, outcome: Parameters<AgentStore["complete"]>[1]): void {
     try {
       this.#store.complete(id, outcome);
-    } catch {
+    } catch (error) {
+      if (error instanceof AgentError && error.code === "memory_changed")
+        throw error;
       throw new TaskError("faulted");
     }
   }

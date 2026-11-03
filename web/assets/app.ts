@@ -26,6 +26,7 @@ import {
   deleteBucket,
   loadHistory,
   moveEntry,
+  revokeEntry,
   refreshBuckets,
   runMemoryQuery,
   sendMessage,
@@ -48,6 +49,7 @@ chatMessages.addEventListener("click", async (event: MouseEvent) => {
   try {
     if (button.dataset["action"] === "chat-confirm") await confirmArchive(button);
     else if (button.dataset["action"] === "move-entry") await moveEntry(button);
+    else if (button.dataset["action"] === "revoke-entry") await revokeEntry(button);
     else if (button.dataset["action"] === "show-bucket") {
       await showBucket(button.dataset["bucketId"]);
     }
@@ -67,9 +69,11 @@ buckets.addEventListener("click", (event: MouseEvent) => {
 
 detail.addEventListener("click", async (event: MouseEvent) => {
   const button = closestActionButton(event);
-  if (button?.dataset["action"] !== "delete-bucket") return;
+  if (!button) return;
   try {
-    await deleteBucket(button.dataset["bucketId"]);
+    if (button.dataset["action"] === "delete-bucket")
+      await deleteBucket(button.dataset["bucketId"]);
+    else if (button.dataset["action"] === "revoke-entry") await revokeEntry(button);
   } catch (error) {
     setStatus(errorMessage(error), "warning");
   }
