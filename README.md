@@ -25,6 +25,8 @@
 | 运行与日常测试 | 纯 TypeScript / Node，前端独立于旧源码目录 |
 | 历史参考源码 | 暂留至 Harness 验收，退出条件见 PLAN 第九章 |
 
+近期先收口现有 T13、Entry 撤销语义、API/OpenAPI 契约和核心流程 MVP，再决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
+
 协作者第一次查看仓库时，建议按这个顺序阅读：
 
 1. 本 README：启动项目、理解当前能力和目录；
@@ -175,6 +177,9 @@ Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品
 | 文档 | 用途 |
 |---|---|
 | [`docs/PLAN.md`](docs/PLAN.md) | 当前进度、后续阶段和 Rust oracle 删除门槛 |
+| [`docs/PRODUCT_DECISIONS.md`](docs/PRODUCT_DECISIONS.md) | 个人定位、撤销语义、前端 MVP、API/架构和下一步决定 |
+| [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) | 手机接入电脑端的未来接口与安全边界，仅文档预留 |
+| [`docs/REVIEW_FIXES.md`](docs/REVIEW_FIXES.md) | 已确认问题的修复、验证与剩余实施事项 |
 | [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md) | TypeScript 项目拆解、数据流、核心设计和代码阅读指南 |
 | [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 从历史实现固化的可执行行为规格 |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | TypeScript 日常门禁和分层回归要求 |

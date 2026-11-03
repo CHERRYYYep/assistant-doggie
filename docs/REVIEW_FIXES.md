@@ -15,11 +15,11 @@
 
 工作区元数据扫描最多 100,000 个条目、10,000 个目录、5 秒；超预算拒绝工作区，不跳过某个目录后继续声称完成检查。扫描不读取普通文件内容，不跟随目录符号链接。原 Git buffer、未跟踪文件数量/内容预算仍保留。它仍不是文件系统沙箱或锁，不能消除检查后的外部修改竞态，也不限制 CLI 通过绝对路径访问本机其他位置。
 
-## 删除 Entry 后 Memory 的规则待定
+## 删除 Entry 后 Memory：语义已决定，实现待完成
 
-当前 schema 明确保留删除 Entry 后的 Memory（`ON DELETE SET NULL`），而 `INVARIANTS.md` §5.3 明确自然语言查询以有原文的 Entry 为结果单元。保留的 Memory 仍可在 Bucket detail 读取，但不会独立成为 Entry 查询命中。
+本轮初次审查时该规则待定；后续讨论已明确采用“撤销 Entry，并让仅由其支持的派生记忆退出有效记忆”。独立 Memory 检索不作为保留失效事实的修复，彻底清除另设合同。
 
-这属于数据保留与检索合同需要共同决定的设计问题，不能用把 Memory 挂到其他 Entry、伪造原文或自动删除保留数据来补救。本轮保留现有数据规则，等待决定独立 Memory 检索或专属 Memory 随 Entry 删除的语义。
+当前代码仍是删除 Entry、`ON DELETE SET NULL` 保留 Memory；它们可在 Bucket detail 读取，但不独立参与 Entry 查询。本文记录的六项修复没有改变该行为，也不包含新撤销入口。下一阶段须处理查询、摘要、TODO、模型上下文、审计及历史展示的一致性，决定与执行顺序见 [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md)。
 
 ## 验证
 
