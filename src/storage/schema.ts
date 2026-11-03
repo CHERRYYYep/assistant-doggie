@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -228,6 +228,36 @@ CREATE TABLE background_task_executor (
 );
 `;
 
+const ADD_AGENT_CONTROL_V5 = `
+CREATE TABLE agent_workspaces (
+ id TEXT PRIMARY KEY, path TEXT NOT NULL, base_commit TEXT NOT NULL,
+ git_status TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(path,base_commit,git_status)
+);
+ALTER TABLE buckets ADD COLUMN workspace_id TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL;
+CREATE TABLE agent_sessions (
+ id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES agent_workspaces(id),
+ backend TEXT NOT NULL CHECK (backend IN ('claude','codex')), remote_id TEXT,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE agent_tasks (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+ workspace_id TEXT REFERENCES agent_workspaces(id), backend TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+ instruction TEXT NOT NULL, pending_action_id TEXT NOT NULL UNIQUE REFERENCES pending_actions(id),
+ queue_id TEXT UNIQUE REFERENCES background_tasks(id) ON DELETE SET NULL,
+ status TEXT NOT NULL CHECK (status IN ('pending','queued','running','succeeded','failed','cancelled','rejected')),
+ output TEXT NOT NULL DEFAULT '', failure_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX ix_agent_workspace_busy ON agent_tasks(workspace_id) WHERE status IN ('queued','running') AND workspace_id IS NOT NULL;
+CREATE UNIQUE INDEX ix_agent_session_busy ON agent_tasks(session_id) WHERE status IN ('queued','running');
+CREATE INDEX ix_agent_task_created ON agent_tasks(created_at, id);
+CREATE TRIGGER agent_workspace_immutable BEFORE UPDATE ON agent_workspaces
+BEGIN SELECT RAISE(ABORT, 'workspace baseline is immutable'); END;
+CREATE TRIGGER agent_session_binding_immutable BEFORE UPDATE OF id,workspace_id,backend,created_at ON agent_sessions
+BEGIN SELECT RAISE(ABORT, 'session binding is immutable'); END;
+CREATE TRIGGER agent_task_binding_immutable BEFORE UPDATE OF id,session_id,workspace_id,backend,instruction,pending_action_id,created_at ON agent_tasks
+BEGIN SELECT RAISE(ABORT, 'task binding is immutable'); END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -237,6 +267,7 @@ export const MIGRATIONS: readonly Migration[] = [
   },
   { version: 3, name: "add_pending_actions_v3", sql: ADD_PENDING_ACTIONS_V3 },
   { version: 4, name: "add_background_tasks_v4", sql: ADD_BACKGROUND_TASKS_V4 },
+  { version: 5, name: "add_agent_control_v5", sql: ADD_AGENT_CONTROL_V5 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */
@@ -251,6 +282,9 @@ export const OWNED_TABLES: readonly string[] = [
   "pending_actions",
   "background_tasks",
   "background_task_executor",
+  "agent_workspaces",
+  "agent_sessions",
+  "agent_tasks",
   "corrections",
   "conversation_messages",
 ];

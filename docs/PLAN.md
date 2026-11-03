@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-10-08 · 当前分支 `dev_ts` · T12 已完成，下一阶段 T13（Agent Harness / 编排）
+> 最后更新：2026-11-03 · 当前分支 `dev_ts` · T13 已完成，TS 重构验收通过，后续 T14–T17 为产品扩展
 
 ---
 
@@ -9,26 +9,26 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TS 测试 | **299 通过** |
-| 前端测试 | **50 通过** |
-| Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
+| TS 测试 | **368 通过**（2026-11-03 Q1 收口回归；初始 T13 验收为 331） |
+| 前端测试 | **53 通过** |
+| 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **76 条**（§1–§6 + §8 全部） |
-| 剩余 | **9 条**（**只剩 §7 Agent Harness 边界**） |
+| 已覆盖 | **85 条**（§1–§8 全部，§7 已由 T13 补齐） |
+| 重构剩余 | **0 条**；T14–T17 不属于语言迁移验收 |
 
 ```
-进度  ███████████████████████████░░░  76 / 85
+进度  ██████████████████████████████  85 / 85
 ```
 
-**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。T11 已完成通用批准状态机，前端已独立到 `web/`，T12 已补齐后台任务、SSE 和取消；下一步 T13，§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
+**M1–M3 已闭环，TypeScript 重构完成。** T13 补齐只读模型 Harness、三表 Agent 控制面、显式批准后的 Claude/Codex CLI 编排和浏览器入口。删除前后均通过 TS 全量门禁，已按第九章移除当前分支的 Rust workspace。只读 CLI、真实账号 smoke 与进程隔离的实际边界见 [AGENT_CONTROL.md](AGENT_CONTROL.md)，验收记录见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。
 
 ### 近期执行优先级（2026-11-03 讨论结论）
 
 当前以个人助手为主，保留单入口、多 Bucket；多人协作只记录远期假设。个人多设备指手机安全接入电脑端，现阶段仅预留文档接口，不实现远程服务、配对或认证。完整决定见 [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md)，远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md)。
 
-T13 代码功能已通过验收，但当前工作区仍有未提交阶段内容；功能完成不等于 Git 收口完成。接下来按顺序推进：
+T13 已完成 Q1 基线审查与阶段收口；实现记录见 [QUALITY_IMPLEMENTATION.md](QUALITY_IMPLEMENTATION.md)。后续按顺序推进：
 
-1. **Q1：T13 基线收口**——审查现有未提交实现、修复、测试和文档，运行门禁，完成可回退阶段提交，保留本地数据和用户文件。
+1. **Q1：T13 基线收口（完成）**——已审查现有实现、补修 session 恢复/队列清理边界，完整门禁通过，保留本地数据和用户文件。
 2. **Q2：Entry 撤销**——语义已决定但未实现：撤销记录及仅由它支持的有效记忆；先定最小 API 合同，再完成事务、检索和必要 UI 链路。彻底清除另行设计。
 3. **Q3：API 与架构规范**——统一请求/响应/错误/SSE 合同并建立 OpenAPI 验证；评估框架演进，当前不迁移 Hono、不做分布式实现。
 4. **Q4：核心流程联合验收**——输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复走通，形成后续视觉改版的功能基线。
@@ -340,7 +340,7 @@ T10b 最终实现与验证：
 |---|---|---|
 | **T11** ✅ | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
 | **T12** ✅ | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
-| **T13** | Agent 编排 | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
+| **T13** ✅ | Agent 编排（只读 MVP） | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
 
 **T11 的关键洞察**：`ask_user` → 确认卡片 → 服务端执行，**已经是 agent action approval 的正确形态**。扩展不需要发明新安全模型，只需泛化：
 
@@ -396,16 +396,16 @@ Bucket ──N:1──► Workspace ──1:N──► AgentSession
 - **`agent_tasks.workspace_id` 可空**——非 coding 任务（会议、想法）不需要目录，只开 WebSearch + doggie MCP，不给文件系统工具
 - 六项目录检测：路径规范化、边界白名单、存在性、git 状态与 base commit、并发互斥、session↔目录一致性
 
-**已核实的 CLI 接口**：
+**T13 已完成（2026-11-03）**：
 
-```bash
-claude -p "指令" --output-format stream-json --include-partial-messages \
-  --session-id <uuid> --resume <uuid> --permission-mode manual \
-  --allowedTools "Read Grep Glob" --add-dir <workspace> \
-  --mcp-config <doggie> --strict-mcp-config
-```
+- `src/agent/harness.ts`：生产聊天回答进入有界多轮检索；固定只读工具表、严格参数、数据错误、写工具过滤；Responses / Chat Completions 对等，保留无状态 reasoning 数据且不接受模型伪造系统角色。§7 九条已有可执行测试。
+- schema v5：三张 agent 表和 `buckets.workspace_id`；工作区 Git 内容基线和 session/task proposal 不可变；批准与 PendingAction、后台队列单事务绑定，禁止跳过或重复批准。
+- `WorkspacePolicy`：真实路径、白名单、存在性、Git HEAD/状态/内容摘要、跨基线同路径互斥和 session↔工作区一致性。过大快照/子模块 fail closed。
+- `AgentService` + `CliAgentRunner`：后台 worker 调用固定 CLI，指令只通过 stdin；独立配置、只读工具、有限 JSONL、显式远端 session 恢复、取消/超时回收。无目录任务关闭文件工具并使用稳定私有 cwd。
+- 浏览器侧栏提供登记目录、关联 Bucket、选择 CLI/工作区、恢复会话、创建提案、批准/拒绝、最终结果和取消；复用 T12 SSE，刷新不自动重复提交。
+- 重启不重放 running，失败会话不复用；成功落盘故障停止 worker，不误报取消。默认不启用任何 CLI；本阶段不开放 coding 写入、自动提交、部署或调度。
 
-`--strict-mcp-config` 保证定时任务拿到确定的工具面，不受个人 MCP 配置影响。Codex 侧对应 `codex exec` / `codex exec resume`。
+删除前完整门禁 **329 后端 + 51 前端 = 380 测试通过**，无失败/跳过。新增验证含真实 HTTP runtime（fake runner）、进程组强制取消、输出预算、v4→v5 数据保留、工作区变化、绑定防伪造、只读 MCP 和 XSS。未调用真实模型或访问真实用户数据。CLI 参数依据当前 `--help` 和官方接口核对，旧计划的 `--permission-mode manual`、同时传 `--session-id/--resume` 已纠正；详见 [AGENT_CONTROL.md](AGENT_CONTROL.md)。
 
 ### M4 — 日常长期助手
 
@@ -537,7 +537,7 @@ locale 下验证（提交 `8d8f3ae`）。
 
 沿用至今的做法，如需调整请指出：
 
-1. **每完成一个阶段 = 一次提交 + 一份总结 + 等你确认**
+1. **每完成一个阶段 = 一次提交 + 一份总结**；在用户已授权的连续实施范围内继续下一阶段，新增范围或关键产品歧义才另行讨论
 2. **每条不变量都要有可执行测试**——不允许用"代码看起来做了这件事"代替
 3. **能对拍就对拍**——固定测试只覆盖想得到的输入，差分测试覆盖想不到的
 4. **发现规格错误就地修正**并在总结里说明（已发生 2 次：Unicode 数字、Prettier 表格）
@@ -547,7 +547,6 @@ locale 下验证（提交 `8d8f3ae`）。
 
 ```bash
 npm run check      # format:check + typecheck + test + test:web
-cargo test --workspace --offline    # M1 期间保持 Rust 参考可运行
 ```
 
 ---
@@ -562,76 +561,17 @@ git stash && git checkout dev && .venv/bin/python -m pytest tests -q   # 跑 Pyt
 
 ---
 
-## 九、Rust 版本的冻结与删除
+## 九、Rust 退出验收（已完成，2026-11-03）
 
-### 9.1 为什么不是"M1 完成就删"
-
-原计划（D3）写的是"M1 完成后统一删"。**这个判断错了**，有两个具体原因：
-
-1. **§7 的 9 条不变量还没覆盖**，而它们唯一活的参考实现就是 `crates/doggie-agent-runtime`
-   （工具 allow-list、非法参数数据化、tool round 上限、写工具过滤）。T10/T13 要照着它做。
-2. **Rust oracle 仍在抓真 bug**。2026-08-25 那次 `localeCompare` 排序不确定性（见 D12），
-   就是靠 `crates/doggie-storage-sqlite/examples/scenario.rs` 重新生成 fixture 才定位并验证的。
-
-### 9.2 现在的状态：**已冻结，未删除**
-
-从现在到删除之前，Rust 代码的定位是**只读 oracle**：
-
-| 允许 | 不允许 |
+| 条件 | 验证 |
 |---|---|
-| 跑 `cargo test` 回答"Rust 到底怎么做的" | 加新功能 |
-| 跑 `examples/` 重新生成 parity fixture | 修 clippy 警告（除非影响 `cargo test`） |
-| 读源码作为移植依据 | 跟着 TS 侧的改动同步修改 |
+| §7 全部九条有 TS 可执行测试 | `src/agent/harness.test.ts`，双 API mode，含 32/64 KiB 预算、100 条历史和写权限过滤 |
+| 历史 fixture 保留且生成来源可追溯 | `tests/fixtures/README.md`，两份 parity fixture 原样保留，另迁出 protocol fixture |
+| 前端独立与本地 CI 同命令门禁通过 | `web/` + `npm run check`；远程 CI 需推送后运行，不声称已执行 |
+| 最近连续两阶段不依赖 Cargo 裁决 | T11、T12 及 T13 都以 TS 测试验收 |
 
-**CI 不跑 Rust**（`ci.yml` 只跑 `npm run check`）。这是有意的——它已经不是目标实现，
-但也意味着**它会静默腐烂**，这正是不能无限期留着它的理由。
+满足条件后，删除当前分支 Git 跟踪的 `crates/`、`apps/`、`Cargo.toml`、`Cargo.lock`，清理配置中的旧目录排除和文档中的运行指引。未删除用户未跟踪 PDF、忽略的本地文件、数据库或任何其他分支。
 
-### 9.3 删除的前置条件（全部满足才动手）
+参考源码仍可从移除前提交 `bc88675` 或既有历史分支读取，不需要在当前产品目录重新安装 Rust 工具链。`tests/fixtures/README.md` 记录在隔离历史工作树中的再生成方式。fixture 是历史合同快照；有意改变行为时同时更新测试并说明原因。
 
-| # | 条件 | 当前 |
-|---|---|---|
-| 1 | **§7 全部 9 条在 TS 侧有可执行测试** | ⬜ 等 T10 + T13 |
-| 2 | 所有 parity fixture 已提交，且文件头记录了再生成命令 | ✅ `low-information-gate.tsv`、`storage-parity.json` 都有 |
-| 3 | 前端已独立到 `web/`，TS server 与 CI 等价门禁通过 | ✅ T11 同期完成；远程 CI 仍需推送触发 |
-| 4 | 最近连续两个阶段都没有需要 `cargo test` 来裁决行为 | ✅ T10b、T11 均仅以 TS 测试验收 |
-
-> 前端已提前搬迁，不再需要等待 Rust 删除。当前唯一未完成的删除门槛是 §7 完整 Harness 测试；T11 不能冒充 T13。用户希望尽早纯 TS，因此后续优先补齐验收再删除，不继续投入 Rust 产品能力。
-
-### 9.4 执行清单
-
-```bash
-# ① 用 TS 门禁确认 §7 九条均已有可执行测试；必要时只查历史 oracle
-npm run check
-
-# ② 前端已在 web/，无需再次搬迁；不要删除 web/ 或历史 fixture
-
-# ③ 所有门槛满足后删除历史 Rust workspace（只删除 tracked 文件）
-git rm -r crates apps Cargo.toml Cargo.lock
-#    清理 .gitignore 和 AGENTS.md 的已过时 oracle 说明
-
-# ④ 验证
-npm run check
-```
-
-### 9.5 删除之后会发生什么变化（必须提前接受）
-
-**parity fixture 变成不可再生。** `tests/fixtures/low-information-gate.tsv`（919 行）
-和 `tests/fixtures/storage-parity.json` 在 Rust 消失后无法重新生成。后果：
-
-- 这些 fixture 从"Rust 权威判定的快照"降级为"**历史行为的冻结记录**"；
-- 之后要有意改这些行为，只能**手工编辑 fixture 并在提交信息里写明为什么**；
-- 因此 fixture 必须保持人类可读（TSV / 格式化 JSON），**不能压缩或二进制化**。
-
-这是可接受的——T2 的 low-information fixture 从写下来那天起就是这个定位。
-删除当前分支源码不等于删除 Git 历史；历史 fixture 如需再生，可以从移除前提交恢复到隔离临时工作树。条件 1 和 4 仍是验收要求，不以历史可恢复为理由跳过。
-
-### 9.6 其他两个分支
-
-| 分支 | 处理 |
-|---|---|
-| `dev`（Python + Rust，128 测试） | **永久保留**。它是 §9 评测 fixture 的来源，也是唯一还能跑的 Python 参考 |
-| `dev_rust`（纯 Rust） | **永久保留**。删除发生在 `dev_ts` 上，历史仍可 `git show dev_rust:...` 取回 |
-
-**删除 `dev_ts` 上的 Rust 代码 ≠ 丢失 Rust 实现。** 两个参考分支都不动，
-所以 9.5 里"不可再生"的准确含义是"**不能在 CI/日常流程里自动再生**"，
-真要考古仍可 `git checkout dev_rust` 重建环境——只是成本从"一条命令"变成"一次切分支"。
+验收结论及现实限制见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。后续 T14 TODO、T15 调度通知、T16 插件、T17 导入导出是新增产品能力，语言迁移不再等待它们。

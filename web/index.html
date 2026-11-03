@@ -37,6 +37,41 @@
             系统会解析实体、主题、时间范围和状态，并合并多个 Bucket 的证据。
           </div>
         </section>
+        <section class="sidebar-section agent-panel" aria-label="Agent 只读任务">
+          <div class="section-heading">
+            <h2>Agent 只读任务</h2>
+            <button id="agent-refresh">刷新</button>
+          </div>
+          <label
+            >CLI
+            <select id="agent-backend">
+              <option value="codex">codex</option>
+              <option value="claude">claude</option>
+            </select></label
+          >
+          <label>目录绝对路径 <input id="agent-path" placeholder="/home/user/project" /></label>
+          <label>关联 Bucket ID（可选）<input id="agent-bucket" /></label>
+          <button id="agent-register">登记目录和 Git 基线</button>
+          <label
+            >工作区
+            <select id="agent-workspace">
+              <option value="">无目录</option>
+            </select></label
+          >
+          <label>恢复会话 ID（可选，来自下方任务）<input id="agent-session" /></label>
+          <label
+            >任务指令
+            <textarea
+              id="agent-instruction"
+              rows="3"
+              maxlength="12000"
+              placeholder="例如：阅读项目并说明架构"
+            ></textarea>
+          </label>
+          <button id="agent-propose" class="primary">创建待批准提案</button>
+          <p id="agent-status" role="status"></p>
+          <div id="agent-list" aria-live="polite"></div>
+        </section>
         <div class="side-footer">自动归档由服务端完成；低信息输入会先询问，不会静默写错。</div>
       </aside>
       <main class="chat-panel">

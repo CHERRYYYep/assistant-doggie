@@ -178,3 +178,47 @@ test("dotenv parse failures are sanitized and never echo file contents", () => {
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test("T13 agent opt-in config is strict, absolute and errors never echo invalid input", () => {
+  const env = { OPENAI_API_KEY: "fixture-key", OPENAI_MODEL: "fixture-model" };
+  assert.deepEqual(resolveRuntimeConfig(env, {}, "/tmp").agent, {
+    workspaceRoots: [],
+  });
+  const config = resolveRuntimeConfig(
+    {
+      ...env,
+      DOGGIE_AGENT_WORKSPACE_ROOTS: '["/tmp/project"]',
+      DOGGIE_AGENT_CODEX_COMMAND: "/usr/bin/codex",
+    },
+    {},
+    "/tmp",
+  );
+  assert.deepEqual(config.agent, {
+    workspaceRoots: ["/tmp/project"],
+    codex: "/usr/bin/codex",
+  });
+  for (const roots of ["secret-invalid-json", '["relative"]', "{}"]) {
+    assert.throws(
+      () =>
+        resolveRuntimeConfig(
+          { ...env, DOGGIE_AGENT_WORKSPACE_ROOTS: roots },
+          {},
+          "/tmp",
+        ),
+      (error: unknown) =>
+        error instanceof RuntimeConfigurationError &&
+        error.kind === "invalid_agent_config" &&
+        !error.message.includes(roots),
+    );
+  }
+  assert.equal(
+    errorKind(() =>
+      resolveRuntimeConfig(
+        { ...env, DOGGIE_AGENT_CLAUDE_COMMAND: "relative" },
+        {},
+        "/tmp",
+      ),
+    ),
+    "invalid_agent_config",
+  );
+});

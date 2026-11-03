@@ -31,9 +31,10 @@ function setup(model?: MemoryModel) {
     },
   );
   const api = new ConcreteDoggieHttpApi(store, runtime);
-  const tasks = new TaskQueue(new TaskStore(db), async (payload, signal) =>
-    api.chat(payload, signal),
-  );
+  const tasks = new TaskQueue(new TaskStore(db), async (payload, signal) => {
+    if (!("message" in payload)) throw new Error("unexpected agent dispatch");
+    return api.chat(payload, signal);
+  });
   const app = createDoggieApp(api, [], [], tasks);
   const request = (
     path: string,

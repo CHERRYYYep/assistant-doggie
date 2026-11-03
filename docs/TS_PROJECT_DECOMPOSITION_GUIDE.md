@@ -2,7 +2,7 @@
 
 > 面向对 TypeScript 不熟悉、但希望理解 Doggie 设计与实现方式的读者。
 >
-> 本文**只讲当前 TypeScript 重构版**。仓库中的 Rust 代码是历史参考，不作为当前实现路径。
+> 本文**只讲当前 TypeScript 重构版**。当前分支已在 T13 验收后移除 Rust 源码；历史参考保留在 Git 中。
 
 ---
 
@@ -177,25 +177,20 @@ Prettier 格式检查
 ```text
 src/
 ├── domain/       纯领域规则，不访问数据库、不访问 HTTP、不访问模型
-├── application/  归档、确认、查询、纠错、状态服务
+├── application/  归档、确认、查询、纠错、状态服务与后台队列
 ├── storage/      SQLite 数据库、schema、事务、查询和写入
 ├── llm/          模型端点、transport、结构化输出、wire response
 ├── http/         Hono 路由、HTTP DTO、安全策略、Node server adapter
+├── agent/        多轮只读 Harness、工作区与 CLI 编排
+├── mcp/          MCP stdio 工具服务
+├── runtime/      环境配置和生产组装
 └── evaluation/   分类/提取评测，不属于在线请求主路径
 
 web/
 └── assets/       浏览器端 TypeScript UI
 ```
 
-仓库中还存在空的历史目录：
-
-```text
-src/agent/
-src/protocol/
-src/server/
-```
-
-当前真正被使用的 TS 实现主要位于上面列出的 `domain`、`application`、`storage`、`llm`、`http` 和 frontend 目录。阅读时应以实际 import 关系为准，而不是只看旧文档里的目录草图。
+目录及产品状态已在 T13 更新，完整验收见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。阅读时以实际 import、入口和测试为准。
 
 ---
 
@@ -1126,56 +1121,32 @@ response.archive_state
 
 ---
 
-## 15. Agent 部分：当前 TS 版本应该如何理解
+## 15. Agent 部分：两层受控执行
 
-历史文档中曾规划：
+T13 已实现 `src/agent/`，详细讲解和配置见 [AGENT_CONTROL.md](AGENT_CONTROL.md)。
 
-```text
-src/agent/
-src/server/
-src/protocol/
-```
-
-但当前实际 TS 文件中，Agent 相关能力主要体现为：
-
-- `src/llm/wire-response.ts` 对 tool call 的解析；
-- `src/http/api.ts` 的 `ChatResponder` 接口；
-- HTTP chat 流程对 tool message 的持久化；
-- `src/http/security.test.ts`、`src/http/api.test.ts` 对聊天边界的验证。
-
-也就是说，当前 branch 的 TS 重构重点已经完成了：
+第一层是网页回答的 `AgentHarness`：
 
 ```text
-domain / archive / confirmation / query / storage / HTTP / frontend
+模型 function call → 固定 Map 工具表 → Zod 参数校验 → 只读 executor
+       ↑                                             ↓
+       └──────────── 工具结果作为数据回传 ────────────┘
 ```
 
-而一个完整的、独立的多轮 Agent Harness 如果需要继续扩展，应当作为新的应用层组件加入，而不是把工具执行逻辑直接塞进 Hono route。
+工具名必须已注册且在允许列表中，写工具永远不进入回答阶段。`unknown` 参数先经 Zod 缩小类型，非法字段得到数据错误。轮数、每轮调用数和 UTF-8 字节预算由服务端控制；不能靠 prompt 约定无限循环会自行停止。Responses 和 Chat Completions 的 wire 差异仅体现在请求/续接格式，执行权限相同。
 
-建议未来把它设计成：
+第二层是独立的 CLI 控制面：
 
-```ts
-export type AgentTool = {
-  readonly name: string;
-  readonly input: z.ZodType;
-  readonly execute: (input: unknown) => Promise<unknown>;
-};
-
-export type AgentHarnessOptions = {
-  readonly maxRounds: number;
-  readonly maxCallsPerRound: number;
-  readonly allowedTools: readonly string[];
-};
+```text
+workspace（真实路径 + Git 内容基线）
+  → session（不可换目录/backend）
+  → task + pending action（不可改写提案）
+  → 用户显式批准的事务 → T12 queue → 固定 argv spawn
 ```
 
-关键原则：
+数据库 schema v5 保存工作区、会话、任务和原文审批。`AgentService` 负责批准前及执行前校验，`CliAgentRunner` 负责 stdin、只读 CLI 配置、有界 JSONL 和进程组取消。无目录任务只给搜索和 Doggie 读取工具，使用稳定的 0700 私有 cwd。真实 CLI 使用自身登录，和网页 `OPENAI_API_KEY` 分开。
 
-- 默认 deny，而不是默认开放所有工具；
-- 工具参数先 Zod 校验；
-- 工具结果限制大小；
-- tool round 有上限；
-- 工具结果是数据，不是系统指令；
-- 写入工具与只读工具分离；
-- 归档确认仍由 `ArchiveRuntime` 和 `ConcreteDoggieHttpApi` 掌控。
+前端 `web/assets/agents.ts` 提供提案、批准/拒绝、结果、刷新恢复和取消；不会把模型返回值当作授权或可执行 HTML。本阶段只读，不开放文件写入、自动 Git 提交或部署。
 
 ---
 
@@ -1543,6 +1514,9 @@ src/application
 src/storage
 src/llm
 src/http
+src/agent
+src/mcp
+src/runtime
 web
 ```
 
@@ -1773,7 +1747,7 @@ schema v3 增加 `pending_actions`，自动在迁移事务中回填 TS v2 库的
 
 ### 此阶段不实现什么
 
-`agent_task`、`scheduled_run` 和 `bulk_mutation` 只有严格数据契约与 durable 状态转换。没有任务进程、调度 tick 或批量写 executor；MCP 依然只允许三个读取工具和 `propose_entry`。执行队列、取消传播、SSE、多轮 Harness 属于 T12/T13。
+T11 当时只提供三类数据契约；T12/T13 现已新增队列、取消/SSE、只读 Harness，以及显式批准后执行的 CLI Agent 任务。`scheduled_run` / `bulk_mutation` 仍不执行，普通 MCP 仍只有读取工具和 `propose_entry`。
 
 代码阅读顺序：`src/domain/pending-action.ts` → `src/storage/schema.ts` 的 v3 → `src/storage/pending-actions.ts` → `src/storage/store.ts` → `src/application/archive-runtime.ts` → `src/storage/pending-actions.test.ts`。
 

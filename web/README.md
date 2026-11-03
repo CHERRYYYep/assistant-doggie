@@ -13,6 +13,7 @@
 - `assets/render-archive.ts`：归档结果、确认和 Entry 修改渲染。
 - `assets/render-chat.ts`：聊天消息渲染。
 - `assets/render-query.ts`：记忆查询计划和结果渲染。
+- `assets/agents.ts`：只读 CLI 提案/批准/结果与状态恢复控制器。
 - `assets/views.ts`：请求、状态更新和视图控制器。
 - `assets/app.ts`：应用入口、事件绑定和页面初始化。
 

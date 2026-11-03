@@ -1,10 +1,11 @@
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { openDatabase } from "../storage/database.ts";
-import { MIGRATIONS } from "../storage/schema.ts";
+import { MIGRATIONS, SCHEMA_KIND } from "../storage/schema.ts";
 import {
   TaskStore,
   MAX_ACTIVE_TASKS,
@@ -241,10 +242,18 @@ test("T12 worker failures and listener failures expose only stable codes", async
 test("T12 v3 databases migrate queue tables preserving existing pending archive records", () => {
   const dir = mkdtempSync(join(tmpdir(), "doggie-task-migration-"));
   const path = join(dir, "test.db");
-  let db = openDatabase(path);
-  db.exec(
-    "DROP TRIGGER background_task_payload_immutable; DROP TABLE background_tasks; DROP TABLE background_task_executor; DELETE FROM schema_migrations WHERE version=4; UPDATE schema_meta SET value='3' WHERE key='schema_version'",
-  );
+  let db = new DatabaseSync(path);
+  for (const migration of MIGRATIONS.filter((m) => m.version <= 3)) {
+    db.exec(migration.sql);
+    db.prepare("INSERT INTO schema_migrations VALUES (?,?,?)").run(
+      migration.version,
+      migration.name,
+      new Date().toISOString(),
+    );
+  }
+  db.prepare(
+    "INSERT INTO schema_meta VALUES ('schema_kind',?),('schema_version','3')",
+  ).run(SCHEMA_KIND);
   db.close();
   db = openDatabase(path);
   try {

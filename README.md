@@ -21,9 +21,9 @@
 |---|---|
 | M1：TypeScript 功能对等 | ✅ 已完成 |
 | M2：评测、MCP 与可启动 Web MVP | ✅ 已完成（T10b） |
-| M3：Agent 控制面 | 🚧 T11 已完成，下一步 T12（队列/SSE/取消） |
+| M3：Agent 控制面 | ✅ T11–T13 已完成（CLI 只读 MVP） |
 | 运行与日常测试 | 纯 TypeScript / Node，前端独立于旧源码目录 |
-| 历史参考源码 | 暂留至 Harness 验收，退出条件见 PLAN 第九章 |
+| TypeScript 重构 | ✅ 验收完成；当前分支已移除 Rust workspace，历史 fixture 保留 |
 
 近期先收口现有 T13、Entry 撤销语义、API/OpenAPI 契约和核心流程 MVP，再决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
 
@@ -37,7 +37,7 @@
 
 ## 当前能力
 
-T11 已把待确认归档泛化为 `PendingAction`。用户确认的原文、选择和执行结果可重开数据库追踪；任务/调度/批量操作只有数据契约，还不能自动执行。详见 [T11 实现说明](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md)。
+T11–T13 已完成通用 `PendingAction`、后台队列/SSE/取消、只读模型工具循环和经批准的 Claude/Codex CLI 编排。调度和批量操作仍只有数据契约。详见 [Agent 使用与实现](docs/AGENT_CONTROL.md) 及 [TS 验收报告](docs/TS_ACCEPTANCE.md)。
 
 - **ChatGPT 风格单会话**：保存 user、assistant 和 tool 消息，重启后恢复对话历史。
 - **自动归档**：安全地追加到已有 Bucket 或创建新 Bucket，并保留 Entry 原文和结构化 memory。
@@ -81,7 +81,7 @@ DOGGIE_DATABASE_PATH=/home/cherry/assistant-doggie/doggie.db
 npm run check
 ```
 
-当前 Web MVP 的 assistant 回复聚焦归档状态、确认和确定性记忆查询。带只读工具循环的完整模型回答以及 Claude/Codex 任务编排仍属于计划中的 T13，不在 T10b 提前实现。
+当前 assistant 回答可以多轮调用三个记忆检索工具。侧栏的 Agent 任务先创建提案，再批准只读执行；CLI 需要另行安装、认证并填写可执行路径，见 [配置教程](docs/AGENT_CONTROL.md)。
 
 ## 配置
 
@@ -94,8 +94,10 @@ npm run check
 | `OPENAI_BASE_URL` | 官方为 `https://api.openai.com/v1` | OpenAI-compatible API 根地址；官方站点留空 |
 | `OPENAI_API_MODE` | `responses` | `responses` 或 `chat_completions` |
 | `OPENAI_API_KEY` | 无 | 必填；模型端点 API Key |
-| `OPENAI_MODEL` | 无 | 必填；分类和提取使用的模型名 |
+| `OPENAI_MODEL` | 无 | 必填；分类、提取和 Harness 回答使用的模型名 |
 | `OPENAI_TIMEOUT_SECONDS` | `30` | 单次模型 HTTP 请求超时，范围 1–300 秒 |
+| `DOGGIE_AGENT_CODEX_COMMAND` / `DOGGIE_AGENT_CLAUDE_COMMAND` | 无（禁用） | 已安装/认证 CLI 的绝对可执行路径，只读执行 |
+| `DOGGIE_AGENT_WORKSPACE_ROOTS` | `[]` | 可登记 Git 工作区根目录白名单，JSON 数组 |
 
 自定义远程 endpoint 必须使用 HTTPS；HTTP 只允许指向本机 loopback。`OPENAI_SITE=official` 时 `OPENAI_BASE_URL` 必须留空。`OPENAI_BASE_URL` 应填写 API 根地址（通常以 `/v1` 结尾），不要附加 `/responses` 或 `/chat/completions`。
 
@@ -166,9 +168,10 @@ curl -G http://127.0.0.1:8787/api/memory/query \
 | `src/llm/` | endpoint、HTTP transport、结构化输出和 wire response |
 | `src/http/` | Hono API、DTO、安全边界和 Node HTTP adapter |
 | `src/mcp/` | Doggie MCP stdio server 和受控记忆工具 |
+| `src/agent/` | 有界模型 Harness、工作区/会话与只读 CLI 编排 |
 | `web/` | 无 bundler 的浏览器 TypeScript UI |
 
-Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品启动路径。
+当前分支已移除 Rust workspace。历史行为通过冻结 fixture 和 Git 记录追溯，产品仅依赖 Node/TypeScript。
 
 ## 文档索引
 
@@ -176,10 +179,12 @@ Rust workspace 目前只作为冻结的迁移行为 oracle 保留，不是产品
 
 | 文档 | 用途 |
 |---|---|
-| [`docs/PLAN.md`](docs/PLAN.md) | 当前进度、后续阶段和 Rust oracle 删除门槛 |
+| [`docs/PLAN.md`](docs/PLAN.md) | 当前进度、后续阶段和已完成的迁移退出验收 |
 | [`docs/PRODUCT_DECISIONS.md`](docs/PRODUCT_DECISIONS.md) | 个人定位、撤销语义、前端 MVP、API/架构和下一步决定 |
 | [`docs/REMOTE_ACCESS.md`](docs/REMOTE_ACCESS.md) | 手机接入电脑端的未来接口与安全边界，仅文档预留 |
 | [`docs/REVIEW_FIXES.md`](docs/REVIEW_FIXES.md) | 已确认问题的修复、验证与剩余实施事项 |
+| [`docs/AGENT_CONTROL.md`](docs/AGENT_CONTROL.md) | T13 使用配置、TypeScript 设计、HTTP 和权限边界 |
+| [`docs/TS_ACCEPTANCE.md`](docs/TS_ACCEPTANCE.md) | TS 重构最终验收结果及限制 |
 | [`docs/TS_PROJECT_DECOMPOSITION_GUIDE.md`](docs/TS_PROJECT_DECOMPOSITION_GUIDE.md) | TypeScript 项目拆解、数据流、核心设计和代码阅读指南 |
 | [`docs/INVARIANTS.md`](docs/INVARIANTS.md) | 从历史实现固化的可执行行为规格 |
 | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) | TypeScript 日常门禁和分层回归要求 |

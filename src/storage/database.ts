@@ -283,6 +283,32 @@ function assertSchemaShape(database: DatabaseSync): void {
       ],
     ],
     ["background_task_executor", ["singleton", "owner_id", "process_id"]],
+    [
+      "agent_workspaces",
+      ["id", "path", "base_commit", "git_status", "created_at"],
+    ],
+    [
+      "agent_sessions",
+      ["id", "workspace_id", "backend", "remote_id", "created_at"],
+    ],
+    [
+      "agent_tasks",
+      [
+        "id",
+        "session_id",
+        "workspace_id",
+        "backend",
+        "instruction",
+        "pending_action_id",
+        "queue_id",
+        "status",
+        "output",
+        "failure_code",
+        "created_at",
+        "updated_at",
+      ],
+    ],
+    ["buckets", ["workspace_id"]],
   ] as const) {
     const columns = new Set(
       database

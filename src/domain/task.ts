@@ -2,7 +2,7 @@
 import { z } from "zod";
 
 export const MAX_TASK_PAYLOAD_BYTES = 128 * 1024;
-export const taskPayloadSchema = z
+export const chatTaskPayloadSchema = z
   .object({
     message: z.string().trim().min(1),
     focus_bucket_id: z.string().trim().min(1).optional(),
@@ -14,6 +14,13 @@ export const taskPayloadSchema = z
       MAX_TASK_PAYLOAD_BYTES,
     "task payload is too large",
   );
+export const agentQueuePayloadSchema = z
+  .object({ agent_task_id: z.string().uuid() })
+  .strict();
+export const taskPayloadSchema = z.union([
+  chatTaskPayloadSchema,
+  agentQueuePayloadSchema,
+]);
 export type TaskPayload = z.infer<typeof taskPayloadSchema>;
 export const taskSnapshotSchema = z
   .object({

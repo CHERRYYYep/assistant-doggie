@@ -66,6 +66,7 @@ export class StubElement {
 class StubInput extends StubElement {}
 class StubTextarea extends StubElement {}
 class StubButton extends StubElement {}
+class StubSelect extends StubElement {}
 
 export function installDom(): {
   readonly elements: Map<string, StubElement>;
@@ -80,6 +81,8 @@ export function installDom(): {
     "selected-bucket-label",
     "memory-query-result",
     "task-list",
+    "agent-list",
+    "agent-status",
   ]) {
     elements.set(id, new StubElement());
   }
@@ -89,9 +92,16 @@ export function installDom(): {
     "new-chat",
     "refresh-buckets",
     "task-refresh",
+    "agent-propose",
+    "agent-register",
+    "agent-refresh",
   ]) {
     elements.set(id, new StubButton());
   }
+  for (const id of ["agent-backend", "agent-workspace"]) elements.set(id, new StubSelect());
+  for (const id of ["agent-path", "agent-bucket", "agent-session"])
+    elements.set(id, new StubInput());
+  elements.set("agent-instruction", new StubTextarea());
   elements.set("chat-input", new StubTextarea());
   elements.set("memory-query", new StubInput());
   const globals = {
@@ -100,6 +110,7 @@ export function installDom(): {
     HTMLInputElement: StubInput,
     HTMLTextAreaElement: StubTextarea,
     HTMLButtonElement: StubButton,
+    HTMLSelectElement: StubSelect,
     document: {
       querySelector: (selector: string) => elements.get(selector.slice(1)) ?? null,
       querySelectorAll: () => [],

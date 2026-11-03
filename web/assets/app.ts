@@ -109,3 +109,28 @@ taskList.addEventListener("click", (event: MouseEvent) => {
 });
 taskRefresh.addEventListener("click", () => void resumeTasks());
 void Promise.all([refreshBuckets(), loadHistory(), resumeTasks()]);
+
+import { agentList, agentPropose, agentRegister, agentRefresh } from "./dom.ts";
+import { refreshAgents, registerWorkspace, proposeAgent, actOnAgent } from "./agents.ts";
+agentPropose.addEventListener("click", () => void proposeAgent());
+agentRegister.addEventListener("click", () => void registerWorkspace());
+agentRefresh.addEventListener("click", () => void refreshAgents());
+agentList.addEventListener("click", (event: MouseEvent) => {
+  const button = closestActionButton(event);
+  const action = button?.dataset["action"];
+  const id = button?.dataset["taskId"];
+  if (
+    !button ||
+    !id ||
+    (action !== "agent-approve" && action !== "agent-reject" && action !== "agent-cancel")
+  )
+    return;
+  button.disabled = true;
+  void actOnAgent(
+    id,
+    action === "agent-approve" ? "approve" : action === "agent-reject" ? "reject" : "cancel",
+  ).finally(() => {
+    button.disabled = false;
+  });
+});
+void refreshAgents();

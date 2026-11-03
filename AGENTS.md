@@ -4,7 +4,7 @@
 
 本仓库当前分支 `dev_ts` 的目标实现是 **TypeScript 本地优先个人工作记忆 Agent**。所有新功能、修复、测试和文档都必须以 TypeScript 路径为准。
 
-Rust workspace 仅作为冻结的行为参考（oracle）保留，用于查询历史行为、运行差分测试或重新生成 parity fixture。除非任务明确要求维护参考实现，否则不得在 `crates/`、Rust Web server 或 Cargo 产品路径中新增功能，也不得把 `cargo run` 写成当前产品的启动方式。
+当前分支已在 T13 验收后删除历史 Rust workspace。需要查询迁移前行为时使用 Git 历史和冻结 fixture；产品启动、开发、CI 只使用 TypeScript/Node。验收范围见 `docs/TS_ACCEPTANCE.md`。
 
 当前 TypeScript 主路径：
 
@@ -14,6 +14,8 @@ Rust workspace 仅作为冻结的行为参考（oracle）保留，用于查询�
 - `src/llm/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport、结构化输出和 wire response 归一化。
 - `src/http/`：Hono 路由、HTTP DTO/contract、安全策略和 Node HTTP adapter。
 - `src/mcp/`：Doggie MCP stdio server、严格工具 schema 和受控工具执行边界。
+- `src/agent/`：有界只读 Harness、工作区/session 绑定和受批准 CLI 任务。
+- `src/runtime/`：配置和生产组装。
 - `src/evaluation/`：分类与提取评测；真实模型评测不得进入普通测试链。
 - `web/`：独立浏览器 TypeScript UI，复用 `src/http/` 的共享 DTO；生产资源与日常测试不依赖 Rust 目录。
 - `bin/doggie-mcp`：本地 MCP 可执行入口。
@@ -100,7 +102,7 @@ npm start
 - 推荐 Bucket、备选 Bucket、判断理由、创建新 Bucket 和“不保存”选项；
 - confirmation 与 `pending_actions`、原始输入和用户选择严格绑定；`archive_attempts` 保留为审计/兼容 projection；
 - 归档批准、Entry/Memory 和双审计状态在同一事务内提交，失败时动作仍可确认；
-- `agent_task` / `scheduled_run` / `bulk_mutation` 当前只存储 proposal，不注册执行器或新增 MCP 写工具；
+- `agent_tasks` 只有严格绑定并经用户显式批准的只读 CLI 任务可进入后台队列；generic `scheduled_run` / `bulk_mutation` 仍不执行；
 - 归档后的 Bucket 修改入口；
 - Entry 原文、结构化 memory、审计记录和可重放防护。
 
@@ -140,13 +142,7 @@ MCP 边界必须继续强制：
 
 真实模型评测必须显式运行，并把模型、端点、API mode、prompt version 和生成时间记录到报告；不得把真实调用混入 `npm run check`。
 
-Rust 参考实现只在以下场景使用：
-
-- 需要裁决迁移前行为；
-- 需要重新生成或核对 parity fixture；
-- 任务明确要求验证 Rust oracle。
-
-Cargo 检查不是 TypeScript 日常门禁。不得为了让 Rust 参考代码跟随 TS 新功能而修改它。
+历史 oracle 仅用于查阅旧合同或再生 fixture，操作方式见 `tests/fixtures/README.md`；不要把历史 Cargo 工具链恢复为当前产品依赖。
 
 ## Agent 协作与执行规范
 

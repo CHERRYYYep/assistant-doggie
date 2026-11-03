@@ -13,7 +13,7 @@
 
 Rust 版本用 **19,010 行**实现了 Python 版本 **3,542 行**的同一个产品（5.4×）。差距不在业务逻辑，在生态税：HTTP 服务器、SQLite schema/迁移、JSON 契约校验、LLM 适配、Agent 工具循环——这些在 Python/TS 生态里是白给的，在 Rust 里全部手写。
 
-而接下来要做的东���（Agent 编排、插件、任务队列、SSE）恰好是 Rust 最吃亏的方向：没有官方 Anthropic SDK，没有 Claude Agent SDK，没有稳定 ABI 因此没有像样的插件方案，而且现有代码是同步的，加后台执行器意味着引入 tokio 重构全栈。
+而接下来要做的东西（Agent 编排、插件、任务队列、SSE）恰好是 Rust 最吃亏的方向：没有官方 Anthropic SDK，没有 Claude Agent SDK，没有稳定 ABI 因此没有像样的插件方案，而且现有代码是同步的，加后台执行器意味着引入 tokio 重构全栈。
 
 ## 技术选型
 
@@ -34,13 +34,15 @@ Rust 版本用 **19,010 行**实现了 Python 版本 **3,542 行**的同一个�
 
 ```
 src/
-  domain/       领域类型与确定性规则（无 IO）
-  protocol/     zod schema，模型输出与 HTTP 边界校验
+  domain/       领域类型、Zod 契约与确定性规则
   storage/      node:sqlite，canonical schema 与事务
-  application/  归档、确认、纠错、查询服务
-  llm/          模型端点与结构化输出
-  agent/        工具 harness 与 MCP
-  server/       Hono 路由与安全边界
+  application/  归档、确认、纠错、查询与后台队列
+  llm/          模型端点、结构化输出与 wire 协议
+  agent/        多轮只读 Harness、工作区与 CLI 编排
+  http/         Hono 路由、DTO、安全边界、Node adapter
+  mcp/          MCP stdio 服务与严格工具
+  runtime/      配置和生产组装
+web/            浏览器 TypeScript UI
 docs/
   INVARIANTS.md ← 重写的验收标准
 ```
@@ -58,7 +60,7 @@ git show dev_rust:crates/doggie-domain/tests/classification.rs   # Rust 行为
 git show dev:app/services/archive_service.py                     # Python 行为
 ```
 
-Rust 代码在本分支上**原样保留**，作为可运行的参考——可以直接 `cargo test` 验证某个行为到底是什么。全部迁移完成后统一删除。
+2026-11-03，T13 完成并通过全部 85 条不变量验收，当前分支已删除 Rust workspace。参考源码保留在 Git 历史（移除前 `bc88675`），parity fixture 保留在 `tests/fixtures/`。启动、测试、CI 均只需要 Node/TypeScript。完整范围和限制见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。
 
 ## 命令
 

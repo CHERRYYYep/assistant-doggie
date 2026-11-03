@@ -1,6 +1,5 @@
 node_modules/
 target/
-crates/
 package-lock.json
 *.db
 

@@ -1,3 +1,13 @@
+import {
+  AgentHarness,
+  createMemoryHarnessTools,
+  createHarnessChatResponder,
+} from "../agent/harness.ts";
+import { AgentService } from "../agent/service.ts";
+import { WorkspacePolicy } from "../agent/workspace.ts";
+import { CliAgentRunner, type AgentProcessRunner } from "../agent/process.ts";
+import { AgentStore } from "../storage/agents.ts";
+import type { ChatResponder } from "../http/api.ts";
 /** Composition root for the local TypeScript Web application. */
 
 import { once } from "node:events";
@@ -27,6 +37,8 @@ export type LocalWebDependencies = {
   readonly model?: MemoryModel | undefined;
   readonly fetchImplementation?: typeof fetch | undefined;
   readonly assets?: readonly StaticAsset[] | undefined;
+  readonly agentRunner?: AgentProcessRunner;
+  readonly chatResponder?: ChatResponder;
 };
 
 export class DoggieLocalWeb {
@@ -34,6 +46,7 @@ export class DoggieLocalWeb {
   readonly database: DatabaseSync;
   readonly store: Store;
   readonly tasks: TaskQueue;
+  readonly agents: AgentService;
   readonly url: string;
   readonly #shutdownController: AbortController;
   #closePromise: Promise<void> | undefined;
@@ -43,6 +56,7 @@ export class DoggieLocalWeb {
     readonly database: DatabaseSync;
     readonly store: Store;
     readonly tasks: TaskQueue;
+    readonly agents: AgentService;
     readonly url: string;
     readonly shutdownController: AbortController;
   }) {
@@ -50,6 +64,7 @@ export class DoggieLocalWeb {
     this.database = input.database;
     this.store = input.store;
     this.tasks = input.tasks;
+    this.agents = input.agents;
     this.url = input.url;
     this.#shutdownController = input.shutdownController;
   }
@@ -100,12 +115,41 @@ export async function startDoggieLocalWeb(
       dependencies.model ??
       createProductionModel(config, dependencies, shutdownController.signal);
     const runtime = new ArchiveRuntime(store, model);
-    const api = new ConcreteDoggieHttpApi(store, runtime);
+    const chatResponder =
+      dependencies.chatResponder ??
+      (dependencies.model === undefined
+        ? createHarnessChatResponder(
+            new AgentHarness(
+              config.endpoint,
+              config.createTransport(
+                dependencies.fetchImplementation,
+                shutdownController.signal,
+              ),
+              config.model,
+              createMemoryHarnessTools(store),
+            ),
+          )
+        : undefined);
+    const api = new ConcreteDoggieHttpApi(store, runtime, { chatResponder });
+    const agents = new AgentService({
+      store: new AgentStore(database),
+      policy: new WorkspacePolicy(config.agent.workspaceRoots),
+      runner: dependencies.agentRunner ?? new CliAgentRunner(config.agent),
+      databasePath: config.databasePath,
+      enabled: [
+        ...(config.agent.claude === undefined ? [] : ["claude" as const]),
+        ...(config.agent.codex === undefined ? [] : ["codex" as const]),
+      ],
+    });
     tasks = new TaskQueue(new TaskStore(database), async (payload, signal) =>
-      api.chat(payload, signal),
+      "agent_task_id" in payload
+        ? agents.execute(payload.agent_task_id, signal)
+        : api.chat(payload, signal),
     );
+    agents.attachQueue(tasks);
     server = createDoggieNodeServer(api, {
       tasks,
+      agents,
       signal: shutdownController.signal,
       ...(dependencies.assets === undefined
         ? {}
@@ -118,6 +162,7 @@ export async function startDoggieLocalWeb(
       database,
       store,
       tasks,
+      agents,
       url: serverUrl(server),
       shutdownController,
     });

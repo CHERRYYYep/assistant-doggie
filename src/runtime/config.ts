@@ -1,3 +1,4 @@
+import { z } from "zod";
 /** Production configuration for the local TypeScript Web process. */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -14,6 +15,7 @@ export const MAX_MODEL_NAME_BYTES = 200;
 export const MAX_RUNTIME_LLM_TIMEOUT_SECONDS = 300;
 
 export type RuntimeConfigurationErrorKind =
+  | "invalid_agent_config"
   | "invalid_dotenv"
   | "missing_api_key"
   | "missing_model"
@@ -48,6 +50,7 @@ export class DoggieRuntimeConfig {
   readonly endpoint: LlmEndpointConfig;
   readonly model: string;
   readonly timeoutMs: number;
+  readonly agent: AgentRuntimeConfig;
   readonly #apiKey: string;
 
   constructor(input: {
@@ -57,6 +60,7 @@ export class DoggieRuntimeConfig {
     readonly model: string;
     readonly timeoutMs: number;
     readonly apiKey: string;
+    readonly agent?: AgentRuntimeConfig;
   }) {
     this.databasePath = parseDatabasePath(input.databasePath, process.cwd());
     this.server = parseServerBinding(formatServerBinding(input.server));
@@ -68,6 +72,7 @@ export class DoggieRuntimeConfig {
     this.model = validateModel(input.model);
     this.timeoutMs = validateTimeoutMs(input.timeoutMs);
     this.#apiKey = validateApiKey(input.apiKey);
+    this.agent = parseAgentConfig(input.agent ?? { workspaceRoots: [] });
   }
 
   createTransport(
@@ -162,6 +167,15 @@ export function resolveRuntimeConfig(
     model,
     timeoutMs,
     apiKey,
+    agent: parseAgentConfig({
+      workspaceRoots: parseAgentRoots(value("DOGGIE_AGENT_WORKSPACE_ROOTS")),
+      ...(value("DOGGIE_AGENT_CLAUDE_COMMAND") === undefined
+        ? {}
+        : { claude: value("DOGGIE_AGENT_CLAUDE_COMMAND") }),
+      ...(value("DOGGIE_AGENT_CODEX_COMMAND") === undefined
+        ? {}
+        : { codex: value("DOGGIE_AGENT_CODEX_COMMAND") }),
+    }),
   });
 }
 
@@ -320,4 +334,46 @@ function invalidServerAddress(): RuntimeConfigurationError {
     "invalid_server_address",
     "DOGGIE_SERVER_ADDRESS must use the literal loopback 127.0.0.1 or [::1], for example 127.0.0.1:8787",
   );
+}
+
+export type AgentRuntimeConfig = {
+  readonly workspaceRoots: readonly string[];
+  readonly claude?: string;
+  readonly codex?: string;
+};
+function parseAgentConfig(value: unknown): AgentRuntimeConfig {
+  const path = z
+    .string()
+    .max(4096)
+    .refine((value) => isAbsolute(value) && !value.includes("\0"));
+  const config = z
+    .object({
+      workspaceRoots: z.array(path).max(100),
+      claude: path.optional(),
+      codex: path.optional(),
+    })
+    .strict()
+    .safeParse(value);
+  if (!config.success)
+    throw new RuntimeConfigurationError(
+      "invalid_agent_config",
+      "Agent roots and executables must use absolute local paths",
+    );
+  const parsed = config.data;
+  return Object.freeze({
+    workspaceRoots: Object.freeze(parsed.workspaceRoots),
+    ...(parsed.claude === undefined ? {} : { claude: parsed.claude }),
+    ...(parsed.codex === undefined ? {} : { codex: parsed.codex }),
+  });
+}
+
+function parseAgentRoots(raw: string | undefined): unknown {
+  try {
+    return JSON.parse(raw ?? "[]");
+  } catch {
+    throw new RuntimeConfigurationError(
+      "invalid_agent_config",
+      "DOGGIE_AGENT_WORKSPACE_ROOTS must be a JSON array of absolute paths",
+    );
+  }
 }

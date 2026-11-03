@@ -44,3 +44,17 @@ export function setStatus(text: unknown, kind: "" | "warning" = ""): void {
   chatStatus.className = `chat-status ${kind}`;
   chatStatus.textContent = text ? String(text) : "";
 }
+
+const isSelect: ElementGuard<HTMLSelectElement> = (element): element is HTMLSelectElement =>
+  element instanceof HTMLSelectElement;
+export const agentBackend = requireElement("#agent-backend", isSelect);
+export const agentWorkspace = requireElement("#agent-workspace", isSelect);
+export const agentPath = requireElement("#agent-path", isHtmlInputElement);
+export const agentBucket = requireElement("#agent-bucket", isHtmlInputElement);
+export const agentSession = requireElement("#agent-session", isHtmlInputElement);
+export const agentInstruction = requireElement("#agent-instruction", isHtmlTextAreaElement);
+export const agentPropose = requireElement("#agent-propose", isHtmlButtonElement);
+export const agentRegister = requireElement("#agent-register", isHtmlButtonElement);
+export const agentRefresh = requireElement("#agent-refresh", isHtmlButtonElement);
+export const agentList = requireElement("#agent-list", isHtmlElement);
+export const agentStatus = requireElement("#agent-status", isHtmlElement);

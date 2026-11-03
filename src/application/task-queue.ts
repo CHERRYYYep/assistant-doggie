@@ -33,11 +33,17 @@ export class TaskQueue {
   submit(payload: unknown): TaskSnapshot {
     if (this.#fault !== undefined) throw this.#fault;
     if (this.#closed) throw new TaskError("closed");
-    const task = this.#store.enqueue(payload);
+    return this.submitUsing(() => this.#store.enqueue(payload));
+  }
+  submitUsing(enqueue: () => TaskSnapshot): TaskSnapshot {
+    if (this.#fault !== undefined) throw this.#fault;
+    if (this.#closed) throw new TaskError("closed");
+    const task = enqueue();
     this.#publish(task);
     this.#wake();
     return task;
   }
+
   get(id: string): TaskSnapshot {
     return this.#store.get(id);
   }
@@ -132,7 +138,9 @@ export class TaskQueue {
         let errorCode: TaskSnapshot["errorCode"] = null;
         try {
           await this.#execute(work.payload, controller.signal);
-        } catch {
+        } catch (error) {
+          if (error instanceof TaskError && error.kind === "faulted")
+            throw error;
           status = controller.signal.aborted ? "cancelled" : "failed";
           errorCode = status === "failed" ? "execution_failed" : null;
         }

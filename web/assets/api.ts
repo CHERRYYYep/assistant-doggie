@@ -352,3 +352,156 @@ async function streamTask(
     reader?.releaseLock();
   }
 }
+
+// Agent DTO imports erase at runtime; the browser never loads Zod or Node modules.
+import type {
+  AgentBackend,
+  AgentProposal,
+  AgentTask,
+  AgentWorkspace,
+} from "../../src/domain/agent.ts";
+const AGENT = "/api/agent";
+function isUuid(value: unknown): value is string {
+  return typeof value === "string" && UUID.test(value);
+}
+function isNullableId(value: unknown): value is string | null {
+  return value === null || isUuid(value);
+}
+function isDate(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 64 && Number.isFinite(Date.parse(value));
+}
+function parseAgentTask(value: unknown): AgentTask {
+  const {
+    id,
+    sessionId,
+    workspaceId,
+    backend,
+    instruction,
+    pendingActionId,
+    queueId,
+    status,
+    output,
+    failureCode,
+    createdAt,
+    updatedAt,
+  } = record(value);
+  if (
+    !isUuid(id) ||
+    !isUuid(sessionId) ||
+    !isNullableId(workspaceId) ||
+    !isUuid(pendingActionId) ||
+    !isNullableId(queueId) ||
+    (backend !== "codex" && backend !== "claude") ||
+    (status !== "pending" &&
+      status !== "queued" &&
+      status !== "running" &&
+      status !== "succeeded" &&
+      status !== "failed" &&
+      status !== "cancelled" &&
+      status !== "rejected") ||
+    typeof instruction !== "string" ||
+    instruction.length > 12000 ||
+    typeof output !== "string" ||
+    new TextEncoder().encode(output).length > 65536 ||
+    (failureCode !== null && (typeof failureCode !== "string" || failureCode.length > 100)) ||
+    !isDate(createdAt) ||
+    !isDate(updatedAt)
+  )
+    throw new Error("Agent 响应格式无效");
+  return {
+    id,
+    sessionId,
+    workspaceId,
+    backend,
+    instruction,
+    pendingActionId,
+    queueId,
+    status,
+    output,
+    failureCode,
+    createdAt,
+    updatedAt,
+  };
+}
+function parseAgentWorkspace(value: unknown): AgentWorkspace {
+  const { id, path, baseCommit, gitStatus, createdAt } = record(value);
+  if (
+    !isUuid(id) ||
+    typeof path !== "string" ||
+    path.length > 4096 ||
+    typeof baseCommit !== "string" ||
+    !/^[a-f0-9]{40,64}$/u.test(baseCommit) ||
+    typeof gitStatus !== "string" ||
+    gitStatus.length > 65536 ||
+    !isDate(createdAt)
+  )
+    throw new Error("工作区响应无效");
+  return { id, path, baseCommit, gitStatus, createdAt };
+}
+export async function fetchAgentCapabilities(): Promise<{ backends: AgentBackend[] }> {
+  const item = record(await taskRequest(`${AGENT}/capabilities`));
+  if (
+    item["ok"] !== true ||
+    item["permission"] !== "read_only" ||
+    !Array.isArray(item["backends"]) ||
+    item["backends"].length > 2 ||
+    item["backends"].some((v) => v !== "claude" && v !== "codex")
+  )
+    throw new Error("Agent 能力响应无效");
+  const backends: AgentBackend[] = item["backends"].map((name: unknown) => {
+    if (name !== "codex" && name !== "claude") throw new Error("Agent 能力响应无效");
+    return name;
+  });
+  return { backends };
+}
+export function fetchAgentWorkspaces(): Promise<{ workspaces: AgentWorkspace[] }> {
+  return taskRequest(`${AGENT}/workspaces`).then((raw) => {
+    const item = record(raw);
+    const values = item["workspaces"];
+    if (item["ok"] !== true || !Array.isArray(values) || values.length > 100)
+      throw new Error("工作区响应无效");
+    return { workspaces: values.map(parseAgentWorkspace) };
+  });
+}
+export async function fetchAgentTasks(): Promise<{ tasks: AgentTask[] }> {
+  const item = record(await taskRequest(`${AGENT}/tasks`));
+  const values = item["tasks"];
+  if (item["ok"] !== true || !Array.isArray(values) || values.length > 100)
+    throw new Error("Agent 列表格式无效");
+  const tasks = values.map(parseAgentTask);
+  if (new Set(tasks.map((task) => task.id)).size !== tasks.length)
+    throw new Error("Agent 列表包含重复 ID");
+  return { tasks };
+}
+export async function registerAgentWorkspace(input: {
+  path: string;
+  bucketId?: string;
+}): Promise<{ workspace: AgentWorkspace }> {
+  const raw = record(await taskPost(`${AGENT}/workspaces`, input));
+  if (raw["ok"] !== true) throw new Error("工作区响应无效");
+  return { workspace: parseAgentWorkspace(raw["workspace"]) };
+}
+export async function postAgentProposal(input: AgentProposal): Promise<{ task: AgentTask }> {
+  const raw = record(await taskPost(`${AGENT}/tasks`, input));
+  if (raw["ok"] !== true) throw new Error("Agent 响应格式无效");
+  return { task: parseAgentTask(raw["task"]) };
+}
+export async function postAgentAction(
+  task: Pick<AgentTask, "id" | "instruction">,
+  action: "approve" | "reject" | "cancel",
+): Promise<{ task: AgentTask }> {
+  const payload =
+    action === "cancel"
+      ? {}
+      : {
+          instruction: task.instruction,
+          ...(action === "approve" ? { confirmation_granted: true } : {}),
+        };
+  const raw = record(
+    await taskPost(`${AGENT}/tasks/${encodeURIComponent(task.id)}/${action}`, payload),
+  );
+  if (raw["ok"] !== true) throw new Error("Agent 响应格式无效");
+  const result = parseAgentTask(raw["task"]);
+  if (result.id !== task.id) throw new Error("Agent ID 不匹配");
+  return { task: result };
+}

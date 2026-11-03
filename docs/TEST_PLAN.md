@@ -9,7 +9,7 @@ npm run check
 git diff --check
 ```
 
-Rust workspace 只在需要裁决迁移前行为或重新生成 parity fixture 时运行，不属于 TypeScript 产品的日常门禁。
+当前分支已移除 Rust workspace。历史 fixture 保留；需要考古时使用隔离的历史工作树，当前产品门禁只运行 TypeScript。
 
 ## 2. 测试分层
 
@@ -102,3 +102,20 @@ npm run check
 既有 T10b shutdown 测试原来要求进程关闭时返回 500 并追加 error assistant。T12 明确将 shutdown 纳入 Request 生命周期，关闭 socket，取消不冒充模型错误；测试更新为客户端连接终止、用户原文仍保留、无正式归档及 executor ownership 已释放。测试没有删除或跳过。
 
 完整门禁仍为 `npm run check`。真实 socket / subprocess 测试需沙箱外权限；测试全部使用 fake model/transport 和临时或内存 SQLite，不读用户库、密钥，不调用真实模型。
+
+
+## T13 与 TypeScript 最终验收（2026-11-03）
+
+- `src/agent/harness.test.ts`：§7.1–7.9 全部，双 API、allow-list、严格参数、预算、轮数、tool data 角色隔离、取消和 reasoning continuation。
+- `src/agent/control.test.ts`：真实临时 Git 仓库、路径/基线变化、会话绑定、审批防伪造、事务故障回滚、队列入场、取消/恢复、中断不重放和成功落盘故障停止 worker。
+- `src/agent/process.test.ts`：两套 JSONL 协议、固定 argv/stdin、只读配置、子进程错误/限制、stubborn 进程组取消、稳定 0700 cwd 与符号链接拒绝。
+- `src/storage/agents.test.ts`：真实旧 v4 schema 迁移，保留原文对话、pending action 和 queued task，外键检查为空。
+- `src/runtime/local-web.test.ts`：真实 loopback HTTP → 明确批准 → fake runner → SSE → 最终结果、类型剥离的新增 UI 资源。
+- `src/mcp/server.test.ts`：CLI 子 MCP 在协议层仅注册三个只读工具；`propose_entry` 不存在且不写入。
+- `web/tests/ui-tasks.test.ts`：创建提案不批准、原指令绑定、模型文本/HTML 转义和完成状态。
+
+完整 `npm run check` 删除前通过 329 后端 + 51 前端；最终删除后通过 331 后端 + 53 前端（384 项），详见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。旧资产测试从 10 个浏览器模块更新为 11 个，并明确断言新增 `agents.ts`，仍逐一检查类型已剥离；v3 迁移测试改为构造真实 v3 schema，避免把最新数据库仅删表伪装成旧库。无测试被跳过或删除。
+
+真实 CLI/模型另行 smoke，不进入自动门禁。手工测试先填写 CLI 配置，确认创建提案不启动进程、批准后只读运行、恢复保持 workspace/backend、取消能结束进程。不要用真实数据或收费模型冒充 fake 测试结果。
+
+Q1 收口追加 `src/agent/control.test.ts` 回归：提前创建的恢复提案在前次失败/取消后拒绝批准和启动；未 reconcile 的 queue 终态也不能绕过检查；通用取消后超过 200 条队列历史淘汰不破坏 Agent 列表；入队失败同步回滚；遗留缺队列记录稳定失败；反向成功状态 fail closed。完整门禁 368 后端 + 53 前端通过。

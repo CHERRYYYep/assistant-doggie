@@ -374,3 +374,86 @@ test("late history responses cannot overwrite a newer terminal refresh", async (
   await first;
   assert.equal(state.history[0]?.id, "newer");
 });
+
+test("T13 browser proposals require distinct bound approval; model output and instructions stay escaped", async () => {
+  const { refreshAgents, proposeAgent, actOnAgent, renderAgentTasks } =
+    await import("../assets/agents.ts");
+  const instruction = "<img src=x onerror=alert(1)> summarize";
+  const task = {
+    id: "00000000-0000-4000-8000-000000000011",
+    sessionId: "00000000-0000-4000-8000-000000000012",
+    workspaceId: null,
+    backend: "codex" as const,
+    instruction,
+    pendingActionId: "00000000-0000-4000-8000-000000000013",
+    queueId: null,
+    status: "pending" as const,
+    output: "<script>alert(1)</script>",
+    failureCode: null,
+    createdAt: "2026-11-03T00:00:00Z",
+    updatedAt: "2026-11-03T00:00:00Z",
+  };
+  const requests: { path: string; body: unknown }[] = [];
+  let proposed = false;
+  let approved = false;
+  globalThis.fetch = async (input, options) => {
+    const path = String(input);
+    const body: unknown = options?.body ? JSON.parse(String(options.body)) : null;
+    requests.push({ path, body });
+    if (path.endsWith("/capabilities"))
+      return json({ ok: true, backends: ["codex"], permission: "read_only" });
+    if (path.endsWith("/workspaces")) return json({ ok: true, workspaces: [] });
+    if (path.endsWith("/approve")) {
+      approved = true;
+      return json({ ok: true, task: { ...task, status: "succeeded" } });
+    }
+    if (options?.method === "POST") {
+      proposed = true;
+      return json({ ok: true, task }, 201);
+    }
+    return json({
+      ok: true,
+      tasks: proposed ? [{ ...task, status: approved ? "succeeded" : "pending" }] : [],
+    });
+  };
+  element("agent-backend").value = "codex";
+  element("agent-instruction").value = instruction;
+  await refreshAgents();
+  await proposeAgent();
+  assert.equal(requests.filter((item) => item.path.endsWith("/approve")).length, 0);
+  assert.match(element("agent-list").innerHTML, /批准只读执行/);
+  assert.ok(!renderAgentTasks([task]).includes("<script>"));
+  assert.ok(!renderAgentTasks([task]).includes("<img "));
+  element("agent-instruction").value = "edited after proposal";
+  await actOnAgent(task.id, "approve");
+  assert.deepEqual(requests.find((item) => item.path.endsWith("/approve"))?.body, {
+    instruction,
+    confirmation_granted: true,
+  });
+  assert.match(element("agent-list").innerHTML, /succeeded/);
+});
+
+test("T13 agent refresh schedules a follow-up when requested during an in-flight snapshot", async () => {
+  const { refreshAgents } = await import("../assets/agents.ts");
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let capabilities = 0;
+  globalThis.fetch = async (input) => {
+    const path = String(input);
+    if (path.endsWith("/capabilities")) {
+      capabilities++;
+      if (capabilities === 1) await blocked;
+      return json({ ok: true, backends: [], permission: "read_only" });
+    }
+    if (path.endsWith("/workspaces")) return json({ ok: true, workspaces: [] });
+    return json({ ok: true, tasks: [] });
+  };
+  const first = refreshAgents();
+  const second = refreshAgents();
+  release();
+  await Promise.all([first, second]);
+  assert.equal(capabilities, 2);
+  assert.equal(element("agent-propose").disabled, true);
+});

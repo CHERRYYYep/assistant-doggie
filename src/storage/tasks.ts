@@ -10,6 +10,10 @@ import {
   type TaskSnapshot,
 } from "../domain/task.ts";
 import { withTransaction } from "./database.ts";
+import {
+  finishPendingAction,
+  requirePendingAction,
+} from "./pending-actions.ts";
 
 const rowSchema = z.object({
   id: z.string(),
@@ -70,32 +74,113 @@ export class TaskStore {
   }
   enqueue(input: unknown): TaskSnapshot {
     const payload = taskPayloadSchema.parse(input);
-    return withTransaction(this.#db, () => {
-      const count = z
-        .object({ count: z.number() })
-        .parse(
-          this.#db
-            .prepare(
-              "SELECT COUNT(*) AS count FROM background_tasks WHERE status IN ('queued','running')",
-            )
-            .get(),
-        ).count;
-      if (count >= MAX_ACTIVE_TASKS) throw new TaskError("capacity");
-      this.#db
-        .prepare(
-          "DELETE FROM background_tasks WHERE id IN (SELECT id FROM background_tasks WHERE status NOT IN ('queued','running') ORDER BY sequence DESC LIMIT -1 OFFSET ?)",
-        )
-        .run(MAX_RETAINED_TASKS - count - 1);
-      const id = randomUUID();
-      const now = new Date().toISOString();
-      this.#db
-        .prepare(
-          "INSERT INTO background_tasks (id,sequence,payload_json,status,revision,created_at,updated_at) VALUES (?,(SELECT COALESCE(MAX(sequence),0)+1 FROM background_tasks),?,'queued',1,?,?)",
-        )
-        .run(id, JSON.stringify(payload), now, now);
-      return this.get(id);
-    });
+    return withTransaction(this.#db, () =>
+      this.enqueueWithinTransaction(payload),
+    );
   }
+  enqueueWithinTransaction(input: unknown): TaskSnapshot {
+    if (!this.#db.isTransaction) throw new TaskError("faulted");
+    const payload = taskPayloadSchema.parse(input);
+
+    const count = z
+      .object({ count: z.number() })
+      .parse(
+        this.#db
+          .prepare(
+            "SELECT COUNT(*) AS count FROM background_tasks WHERE status IN ('queued','running')",
+          )
+          .get(),
+      ).count;
+    if (count >= MAX_ACTIVE_TASKS) throw new TaskError("capacity");
+    // Agent records outlive bounded queue history. Settle their projections
+    // before pruning can remove a cancelled/interrupted queue reference.
+    this.#reconcileAgentTasksWithinTransaction();
+    this.#db
+      .prepare(
+        "DELETE FROM background_tasks WHERE id IN (SELECT id FROM background_tasks WHERE status NOT IN ('queued','running') ORDER BY sequence DESC LIMIT -1 OFFSET ?)",
+      )
+      .run(MAX_RETAINED_TASKS - count - 1);
+    const id = randomUUID();
+    const now = new Date().toISOString();
+    this.#db
+      .prepare(
+        "INSERT INTO background_tasks (id,sequence,payload_json,status,revision,created_at,updated_at) VALUES (?,(SELECT COALESCE(MAX(sequence),0)+1 FROM background_tasks),?,'queued',1,?,?)",
+      )
+      .run(id, JSON.stringify(payload), now, now);
+    return this.get(id);
+  }
+
+  reconcileAgentTasks(): void {
+    withTransaction(this.#db, () =>
+      this.#reconcileAgentTasksWithinTransaction(),
+    );
+  }
+
+  #reconcileAgentTasksWithinTransaction(): void {
+    if (!this.#db.isTransaction) throw new TaskError("faulted");
+    // Historical v4 migration fixtures have queues but no agent control tables.
+    if (
+      this.#db
+        .prepare(
+          "SELECT name FROM sqlite_schema WHERE type='table' AND name='agent_tasks'",
+        )
+        .get() === undefined
+    )
+      return;
+    const rows = this.#db
+      .prepare(
+        "SELECT t.id,t.pending_action_id AS pendingActionId,t.instruction,t.workspace_id AS workspaceId,q.status AS queueStatus,q.error_code AS queueErrorCode FROM agent_tasks t LEFT JOIN background_tasks q ON q.id=t.queue_id WHERE t.status IN ('queued','running') AND (q.status IN ('cancelled','failed','succeeded') OR q.id IS NULL)",
+      )
+      .all();
+    for (const row of rows) {
+      const task = z
+        .object({
+          id: z.string().uuid(),
+          pendingActionId: z.string().uuid(),
+          instruction: z.string(),
+          workspaceId: z.string().uuid().nullable(),
+          queueStatus: taskSnapshotSchema.shape.status.nullable(),
+          queueErrorCode: taskSnapshotSchema.shape.errorCode,
+        })
+        .strict()
+        .parse(row);
+      // The executor commits the agent result before queue success. The reverse
+      // state is a storage fault; never infer an executed result from the queue.
+      if (task.queueStatus === "succeeded") throw new TaskError("faulted");
+      const action = requirePendingAction(
+        this.#db,
+        task.pendingActionId,
+        task.instruction,
+        "approved",
+      );
+      if (
+        action.kind !== "agent_task" ||
+        action.payload.instruction !== task.instruction ||
+        action.payload.workspaceId !== task.workspaceId
+      )
+        throw new TaskError("faulted");
+      const status = task.queueStatus === "cancelled" ? "cancelled" : "failed";
+      const failureCode =
+        task.queueStatus === null
+          ? "queue_history_missing"
+          : (task.queueErrorCode ??
+            (status === "cancelled" ? "cancelled" : "execution_failed"));
+      const now = new Date().toISOString();
+      finishPendingAction(
+        this.#db,
+        task.pendingActionId,
+        task.instruction,
+        { status: "failed", failureCode },
+        now,
+      );
+      this.#db
+        .prepare(
+          "UPDATE agent_tasks SET status=?,output='',failure_code=?,updated_at=? WHERE id=? AND status IN ('queued','running')",
+        )
+        .run(status, failureCode, now, task.id);
+    }
+  }
+
   get(id: string): TaskSnapshot {
     return snapshot(this.#read(id));
   }

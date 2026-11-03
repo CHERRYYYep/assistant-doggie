@@ -29,5 +29,5 @@
     "isolatedModules": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "web/**/*.ts"],
-  "exclude": ["node_modules", "target", "crates"]
+  "exclude": ["node_modules"]
 }

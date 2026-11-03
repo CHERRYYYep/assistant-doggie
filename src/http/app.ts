@@ -1,3 +1,9 @@
+import type { AgentService } from "../agent/service.ts";
+import {
+  agentProposalSchema,
+  agentApprovalSchema,
+  workspaceRequestSchema,
+} from "../domain/agent.ts";
 /** Hono routing surface for the local Doggie HTTP service. */
 
 import { readFileSync } from "node:fs";
@@ -6,7 +12,7 @@ import { stripTypeScriptTypes } from "node:module";
 import { Hono } from "hono";
 import { z } from "zod";
 
-import { taskPayloadSchema } from "../domain/task.ts";
+import { chatTaskPayloadSchema } from "../domain/task.ts";
 import { taskEventStream, type TaskQueue } from "../application/task-queue.ts";
 
 import type { BucketType } from "../domain/types.ts";
@@ -115,6 +121,7 @@ export type StaticAsset = {
 };
 
 const FRONTEND_FILES = [
+  ["/assets/agents.ts", "assets/agents.ts", "text/javascript; charset=utf-8"],
   ["/", "index.html", "text/html; charset=utf-8"],
   ["/index.html", "index.html", "text/html; charset=utf-8"],
   ["/assets/styles.css", "assets/styles.css", "text/css; charset=utf-8"],
@@ -171,6 +178,7 @@ export function createDoggieApp(
   assets: readonly StaticAsset[] = loadFrontendAssets(),
   additionalAllowedAuthorities: readonly string[] = [],
   tasks?: TaskQueue,
+  agents?: AgentService,
 ): Hono {
   const app = new Hono();
   const authorityPolicy = new AuthorityPolicy(additionalAllowedAuthorities);
@@ -306,7 +314,7 @@ export function createDoggieApp(
 
   if (tasks !== undefined) {
     app.post("/api/tasks", async (context) => {
-      const payload = await parseBody(context, taskPayloadSchema);
+      const payload = await parseBody(context, chatTaskPayloadSchema);
       context.req.raw.signal.throwIfAborted();
       return context.json({ ok: true, task: tasks.submit(payload) }, 202);
     });
@@ -336,6 +344,81 @@ export function createDoggieApp(
           "Cache-Control": "no-store",
           "X-Accel-Buffering": "no",
         },
+      });
+    });
+  }
+
+  if (agents !== undefined) {
+    const agentId = (id: string) => z.string().uuid().parse(id);
+    app.get("/api/agent/capabilities", (context) =>
+      context.json({ ok: true, ...agents.capabilities() }),
+    );
+    app.get("/api/agent/workspaces", (context) =>
+      context.json({ ok: true, workspaces: agents.workspaces() }),
+    );
+    app.post("/api/agent/workspaces", async (context) => {
+      const request = await parseBody(context, workspaceRequestSchema);
+      return context.json(
+        {
+          ok: true,
+          workspace: await agents.register(request.path, request.bucketId),
+        },
+        201,
+      );
+    });
+    app.get("/api/agent/tasks", (context) =>
+      context.json({ ok: true, tasks: agents.list() }),
+    );
+    app.get("/api/agent/tasks/:id", (context) =>
+      context.json({
+        ok: true,
+        task: agents.get(agentId(context.req.param("id"))),
+      }),
+    );
+    app.post("/api/agent/tasks", async (context) =>
+      context.json(
+        {
+          ok: true,
+          task: await agents.propose(
+            await parseBody(context, agentProposalSchema),
+          ),
+        },
+        201,
+      ),
+    );
+    app.post("/api/agent/tasks/:id/approve", async (context) => {
+      const request = await parseBody(context, agentApprovalSchema);
+      context.req.raw.signal.throwIfAborted();
+      return context.json(
+        {
+          ok: true,
+          ...(await agents.approve(
+            agentId(context.req.param("id")),
+            request.instruction,
+            context.req.raw.signal,
+          )),
+        },
+        202,
+      );
+    });
+    app.post("/api/agent/tasks/:id/reject", async (context) => {
+      const request = await parseBody(
+        context,
+        z.object({ instruction: z.string().min(1).max(12_000) }).strict(),
+      );
+      return context.json({
+        ok: true,
+        task: agents.reject(
+          agentId(context.req.param("id")),
+          request.instruction,
+        ),
+      });
+    });
+    app.post("/api/agent/tasks/:id/cancel", async (context) => {
+      await parseBody(context, z.object({}).strict());
+      return context.json({
+        ok: true,
+        task: await agents.cancel(agentId(context.req.param("id"))),
       });
     });
   }

@@ -9,7 +9,7 @@
 *.sqlite3
 work_memory.db
 
-# Rust build output
+# Historical local build cache (source workspace removed)
 /target/
 
 # Application runtime output
@@ -27,9 +27,12 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Python tooling/cache kept out of the Rust-only branch
+# Local Python tooling/cache
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Private CLI session directories beside the configured database
+.doggie-agent-sessions/

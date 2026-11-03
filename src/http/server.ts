@@ -1,3 +1,4 @@
+import type { AgentService } from "../agent/service.ts";
 /** Node HTTP adapter for the local Doggie Hono application. */
 
 import { once } from "node:events";
@@ -40,6 +41,7 @@ export type DoggieNodeServerOptions = {
   readonly executionTimeoutMs?: number;
   readonly signal?: AbortSignal;
   readonly tasks?: TaskQueue;
+  readonly agents?: AgentService;
 };
 
 type RequestFailure = {
@@ -153,7 +155,13 @@ export function createDoggieNodeServer(
       validateRawHeaders(incoming.rawHeaders);
       const authority = boundAuthority(server);
       if (app === undefined || appAuthority !== authority) {
-        app = createDoggieApp(api, assets, [authority], options.tasks);
+        app = createDoggieApp(
+          api,
+          assets,
+          [authority],
+          options.tasks,
+          options.agents,
+        );
         appAuthority = authority;
       }
       const body = await readRequestBody(

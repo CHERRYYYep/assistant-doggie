@@ -1,0 +1,686 @@
+{
+  "classification": {
+    "valid": [
+      {
+        "id": "append_normalizes_strings_and_candidates",
+        "input": {
+          "action": "append_existing",
+          "bucket_id": " bucket-1 ",
+          "bucket_type": "incident",
+          "confidence": 0.91,
+          "reason": " 继续描述同一故障。 ",
+          "candidate_bucket_ids": [" bucket-1 ", "bucket-1", ""]
+        },
+        "expected": {
+          "action": "append_existing",
+          "bucket_id": "bucket-1",
+          "bucket_type": "incident",
+          "title": null,
+          "confidence": 0.91,
+          "reason": "继续描述同一故障。",
+          "should_ask_user": false,
+          "question": null,
+          "candidate_bucket_ids": ["bucket-1"]
+        }
+      },
+      {
+        "id": "create_new_applies_defaults",
+        "input": {
+          "action": "create_new",
+          "bucket_type": "experiment",
+          "title": " 接口 A 压测 ",
+          "confidence": 0.86,
+          "reason": " 新实验。 "
+        },
+        "expected": {
+          "action": "create_new",
+          "bucket_id": null,
+          "bucket_type": "experiment",
+          "title": "接口 A 压测",
+          "confidence": 0.86,
+          "reason": "新实验。",
+          "should_ask_user": false,
+          "question": null,
+          "candidate_bucket_ids": []
+        }
+      },
+      {
+        "id": "ask_user_keeps_valid_candidates",
+        "input": {
+          "action": "ask_user",
+          "confidence": 0.31,
+          "reason": " 两个 Bucket 都可能匹配。 ",
+          "should_ask_user": true,
+          "question": " 属于哪一个？ ",
+          "candidate_bucket_ids": [" bucket-1 ", "bucket-2"]
+        },
+        "expected": {
+          "action": "ask_user",
+          "bucket_id": null,
+          "bucket_type": null,
+          "title": null,
+          "confidence": 0.31,
+          "reason": "两个 Bucket 都可能匹配。",
+          "should_ask_user": true,
+          "question": "属于哪一个？",
+          "candidate_bucket_ids": ["bucket-1", "bucket-2"]
+        }
+      },
+      {
+        "id": "null_candidate_list_becomes_empty",
+        "input": {
+          "action": "create_new",
+          "bucket_type": "task",
+          "title": "Rust 重构",
+          "confidence": 0.9,
+          "reason": "新任务。",
+          "candidate_bucket_ids": null
+        },
+        "expected": {
+          "action": "create_new",
+          "bucket_id": null,
+          "bucket_type": "task",
+          "title": "Rust 重构",
+          "confidence": 0.9,
+          "reason": "新任务。",
+          "should_ask_user": false,
+          "question": null,
+          "candidate_bucket_ids": []
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "unknown_field",
+        "input": {
+          "action": "create_new",
+          "bucket_type": "idea",
+          "title": "新想法",
+          "confidence": 0.9,
+          "reason": "新主题。",
+          "unknown": true
+        }
+      },
+      {
+        "id": "invalid_action",
+        "input": {
+          "action": "merge",
+          "confidence": 0.9,
+          "reason": "错误动作。"
+        }
+      },
+      {
+        "id": "inconsistent_append",
+        "input": {
+          "action": "append_existing",
+          "confidence": 0.9,
+          "reason": "缺少 Bucket。"
+        }
+      },
+      {
+        "id": "invalid_confidence",
+        "input": {
+          "action": "create_new",
+          "bucket_type": "task",
+          "title": "任务",
+          "confidence": 1.1,
+          "reason": "越界。"
+        }
+      },
+      {
+        "id": "classification_action_does_not_trim",
+        "input": {
+          "action": " create_new ",
+          "bucket_type": "task",
+          "title": "任务",
+          "confidence": 0.9,
+          "reason": "枚举必须精确匹配。"
+        }
+      }
+    ]
+  },
+  "extraction": {
+    "valid": [
+      {
+        "id": "normalizes_nested_extraction",
+        "input": {
+          "summary": " 支付回调失败，第三方返回 502。 ",
+          "todos": [" 补充复盘 ", "补充复盘", ""],
+          "evidences": [" 第三方返回 502 "],
+          "timeline_events": [
+            {
+              "event_time": " 10:20 ",
+              "text": " 开始大量失败 "
+            },
+            {
+              "event_time": "",
+              "text": " 切换备用通道后恢复 "
+            }
+          ],
+          "decisions": [" 切换备用通道 "],
+          "hypotheses": null,
+          "entities": ["支付回调", " 第三方接口 "],
+          "tags": [" payment ", "payment", "502"]
+        },
+        "expected": {
+          "summary": "支付回调失败，第三方返回 502。",
+          "todos": ["补充复盘"],
+          "evidences": ["第三方返回 502"],
+          "timeline_events": [
+            {
+              "event_time": "10:20",
+              "text": "开始大量失败"
+            },
+            {
+              "event_time": null,
+              "text": "切换备用通道后恢复"
+            }
+          ],
+          "decisions": ["切换备用通道"],
+          "hypotheses": [],
+          "entities": ["支付回调", "第三方接口"],
+          "tags": ["payment", "502"]
+        }
+      },
+      {
+        "id": "extraction_defaults",
+        "input": {
+          "summary": " 第一条输入 "
+        },
+        "expected": {
+          "summary": "第一条输入",
+          "todos": [],
+          "evidences": [],
+          "timeline_events": [],
+          "decisions": [],
+          "hypotheses": [],
+          "entities": [],
+          "tags": []
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "empty_summary",
+        "input": {
+          "summary": "   "
+        }
+      },
+      {
+        "id": "unknown_top_level_field",
+        "input": {
+          "summary": "有效摘要",
+          "unknown": []
+        }
+      },
+      {
+        "id": "unknown_timeline_field",
+        "input": {
+          "summary": "存在时间线",
+          "timeline_events": [
+            {
+              "text": "事件",
+              "unknown": true
+            }
+          ]
+        }
+      },
+      {
+        "id": "empty_timeline_text",
+        "input": {
+          "summary": "存在时间线",
+          "timeline_events": [
+            {
+              "event_time": "下午",
+              "text": ""
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "bucket_summary": {
+    "valid": [
+      {
+        "id": "bucket_summary_normalization",
+        "input": {
+          "summary": " 支付故障已恢复。 "
+        },
+        "expected": {
+          "summary": "支付故障已恢复。"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "empty_bucket_summary",
+        "input": {
+          "summary": "   "
+        }
+      },
+      {
+        "id": "bucket_summary_unknown_field",
+        "input": {
+          "summary": "有效摘要",
+          "unknown": true
+        }
+      }
+    ]
+  },
+  "archive": {
+    "valid": [
+      {
+        "id": "archived_with_extraction",
+        "input": {
+          "status": "archived",
+          "action": "append_existing",
+          "bucket_id": " bucket-1 ",
+          "bucket_title": " 支付故障 ",
+          "bucket_type": "incident",
+          "entry_id": " entry-1 ",
+          "confidence": 0.92,
+          "reason": " 已安全归档。 ",
+          "candidate_bucket_ids": [" bucket-1 ", "bucket-1", " "],
+          "extraction": {
+            "summary": " 故障恢复。 ",
+            "evidences": [" 错误率降到 0% "]
+          }
+        },
+        "expected": {
+          "status": "archived",
+          "action": "append_existing",
+          "bucket_id": "bucket-1",
+          "bucket_title": "支付故障",
+          "bucket_type": "incident",
+          "entry_id": "entry-1",
+          "confidence": 0.92,
+          "reason": "已安全归档。",
+          "question": null,
+          "candidate_bucket_ids": ["bucket-1", "bucket-1", ""],
+          "extraction": {
+            "summary": "故障恢复。",
+            "todos": [],
+            "evidences": ["错误率降到 0%"],
+            "timeline_events": [],
+            "decisions": [],
+            "hypotheses": [],
+            "entities": [],
+            "tags": []
+          }
+        }
+      },
+      {
+        "id": "confirmation_defaults",
+        "input": {
+          "status": "needs_confirmation",
+          "action": "ask_user",
+          "confidence": 0.4,
+          "reason": " 需要确认。 ",
+          "question": " 归档到哪里？ "
+        },
+        "expected": {
+          "status": "needs_confirmation",
+          "action": "ask_user",
+          "bucket_id": null,
+          "bucket_title": null,
+          "bucket_type": null,
+          "entry_id": null,
+          "confidence": 0.4,
+          "reason": "需要确认。",
+          "question": "归档到哪里？",
+          "candidate_bucket_ids": [],
+          "extraction": null
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "unknown_archive_field",
+        "input": {
+          "status": "archived",
+          "action": "create_new",
+          "confidence": 0.9,
+          "reason": "完成。",
+          "unknown": 1
+        }
+      },
+      {
+        "id": "archive_confidence_out_of_range",
+        "input": {
+          "status": "archived",
+          "action": "create_new",
+          "confidence": -0.1,
+          "reason": "越界。"
+        }
+      }
+    ]
+  },
+  "bucket_view": {
+    "valid": [
+      {
+        "id": "bucket_view_normalization",
+        "input": {
+          "id": " bucket-1 ",
+          "title": " 支付故障 ",
+          "type": "incident",
+          "status": "active",
+          "summary": " 第三方返回 502。 ",
+          "tags": [" payment ", "payment", "502"],
+          "last_active_at": "2026-08-04T10:20:00Z"
+        },
+        "expected": {
+          "id": "bucket-1",
+          "title": "支付故障",
+          "type": "incident",
+          "status": "active",
+          "summary": "第三方返回 502。",
+          "tags": ["payment", "502"],
+          "last_active_at": "2026-08-04T10:20:00Z"
+        }
+      },
+      {
+        "id": "bucket_view_datetime_is_canonicalized",
+        "input": {
+          "id": " bucket-time ",
+          "title": " 时间格式 ",
+          "type": "task",
+          "status": "active",
+          "last_active_at": "2026-08-04T10:20:00.100+00:00"
+        },
+        "expected": {
+          "id": "bucket-time",
+          "title": "时间格式",
+          "type": "task",
+          "status": "active",
+          "summary": "",
+          "tags": [],
+          "last_active_at": "2026-08-04T10:20:00.100000Z"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "bucket_view_unknown_field",
+        "input": {
+          "id": "bucket-1",
+          "title": "故障",
+          "type": "incident",
+          "status": "active",
+          "last_active_at": "2026-08-04T10:20:00Z",
+          "unknown": true
+        }
+      },
+      {
+        "id": "bucket_view_invalid_datetime",
+        "input": {
+          "id": "bucket-1",
+          "title": "故障",
+          "type": "incident",
+          "status": "active",
+          "last_active_at": "not-a-date"
+        }
+      },
+      {
+        "id": "bucket_view_datetime_rejects_surrounding_whitespace",
+        "input": {
+          "id": "bucket-time",
+          "title": "时间格式",
+          "type": "task",
+          "status": "active",
+          "last_active_at": " 2026-08-04T10:20:00Z "
+        }
+      }
+    ]
+  },
+  "chat_message": {
+    "valid": [
+      {
+        "id": "tool_message",
+        "input": {
+          "id": " message-1 ",
+          "role": "tool",
+          "content": " {\"ok\": true} ",
+          "tool_name": " search_memory ",
+          "tool_call_id": " call-1 ",
+          "details": {
+            "query": "支付"
+          },
+          "created_at": "2026-08-04T10:20:00Z"
+        },
+        "expected": {
+          "id": "message-1",
+          "role": "tool",
+          "content": "{\"ok\": true}",
+          "tool_name": "search_memory",
+          "tool_call_id": "call-1",
+          "details": {
+            "query": "支付"
+          },
+          "created_at": "2026-08-04T10:20:00Z"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "scalar_details",
+        "input": {
+          "id": "message-1",
+          "role": "tool",
+          "content": "result",
+          "details": 3,
+          "created_at": "2026-08-04T10:20:00Z"
+        }
+      },
+      {
+        "id": "chat_role_does_not_trim",
+        "input": {
+          "id": "message-1",
+          "role": " tool ",
+          "content": "result",
+          "created_at": "2026-08-04T10:20:00Z"
+        }
+      }
+    ]
+  },
+  "agent_turn": {
+    "valid": [
+      {
+        "id": "assistant_with_tool_message",
+        "input": {
+          "assistant_message": {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": " 已找到记录。 ",
+            "created_at": "2026-08-04T10:21:00Z"
+          },
+          "tool_messages": [
+            {
+              "id": "tool-1",
+              "role": "tool",
+              "content": " {\"ok\":true} ",
+              "tool_name": "search_memory",
+              "tool_call_id": "call-1",
+              "details": ["bucket-1"],
+              "created_at": "2026-08-04T10:20:30Z"
+            }
+          ]
+        },
+        "expected": {
+          "assistant_message": {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": "已找到记录。",
+            "tool_name": null,
+            "tool_call_id": null,
+            "details": null,
+            "created_at": "2026-08-04T10:21:00Z"
+          },
+          "tool_messages": [
+            {
+              "id": "tool-1",
+              "role": "tool",
+              "content": "{\"ok\":true}",
+              "tool_name": "search_memory",
+              "tool_call_id": "call-1",
+              "details": ["bucket-1"],
+              "created_at": "2026-08-04T10:20:30Z"
+            }
+          ]
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "unknown_nested_message_field",
+        "input": {
+          "assistant_message": {
+            "id": "assistant-1",
+            "role": "assistant",
+            "content": "回答",
+            "created_at": "2026-08-04T10:21:00Z",
+            "unknown": true
+          }
+        }
+      }
+    ]
+  },
+  "bucket_search": {
+    "valid": [
+      {
+        "id": "search_result_defaults",
+        "input": {
+          "bucket_id": " bucket-1 ",
+          "title": " 支付故障 ",
+          "bucket_type": "incident",
+          "status": "active",
+          "summary": " 第三方返回 502。 ",
+          "tags": [" payment ", "payment", " "],
+          "last_active_at": "2026-08-04T10:20:00Z"
+        },
+        "expected": {
+          "bucket_id": "bucket-1",
+          "title": "支付故障",
+          "bucket_type": "incident",
+          "status": "active",
+          "summary": "第三方返回 502。",
+          "tags": ["payment", "payment", ""],
+          "last_active_at": "2026-08-04T10:20:00Z",
+          "matched_entry_count": 0,
+          "score": 0
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "invalid_bucket_search_status",
+        "input": {
+          "bucket_id": "bucket-1",
+          "title": "支付故障",
+          "bucket_type": "incident",
+          "status": "deleted",
+          "summary": "摘要",
+          "last_active_at": "2026-08-04T10:20:00Z"
+        }
+      }
+    ]
+  },
+  "agent_tool_arguments": {
+    "valid": [
+      {
+        "id": "list",
+        "tool": "list_active_buckets",
+        "input": {},
+        "expected": {}
+      },
+      {
+        "id": "search",
+        "tool": "search_memory",
+        "input": {
+          "query": " 支付 "
+        },
+        "expected": {
+          "query": "支付"
+        }
+      },
+      {
+        "id": "detail",
+        "tool": "get_bucket_detail",
+        "input": {
+          "bucket_id": " bucket-1 "
+        },
+        "expected": {
+          "bucket_id": "bucket-1"
+        }
+      },
+      {
+        "id": "archive",
+        "tool": "archive_memory",
+        "input": {
+          "text": " 故障恢复。 "
+        },
+        "expected": {
+          "text": "故障恢复。"
+        }
+      },
+      {
+        "id": "save_existing",
+        "tool": "save_to_existing_bucket",
+        "input": {
+          "bucket_id": " bucket-1 ",
+          "text": " 故障恢复。 "
+        },
+        "expected": {
+          "bucket_id": "bucket-1",
+          "text": "故障恢复。"
+        }
+      },
+      {
+        "id": "create_and_save",
+        "tool": "create_bucket_and_save",
+        "input": {
+          "title": " Rust 重构 ",
+          "bucket_type": "task",
+          "text": " 开始迁移契约。 "
+        },
+        "expected": {
+          "title": "Rust 重构",
+          "bucket_type": "task",
+          "text": "开始迁移契约。"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "id": "search_unknown_field",
+        "tool": "search_memory",
+        "input": {
+          "query": "支付",
+          "limit": 10
+        }
+      },
+      {
+        "id": "detail_missing_id",
+        "tool": "get_bucket_detail",
+        "input": {}
+      },
+      {
+        "id": "invalid_new_bucket_type",
+        "tool": "create_bucket_and_save",
+        "input": {
+          "title": "任务",
+          "bucket_type": "other",
+          "text": "内容"
+        }
+      },
+      {
+        "id": "new_bucket_type_does_not_trim",
+        "tool": "create_bucket_and_save",
+        "input": {
+          "title": "任务",
+          "bucket_type": " task ",
+          "text": "内容"
+        }
+      }
+    ]
+  }
+}

@@ -106,3 +106,21 @@ test("successful empty responses still decode to an object", async () => {
   mockFetch({}, { raw: "" });
   assert.deepEqual(await jsonRequest<Record<string, never>>("/health"), {});
 });
+
+test("T13 client rejects malformed agent/workspace identity and never retries an approval POST", async () => {
+  const { fetchAgentTasks, registerAgentWorkspace, postAgentAction } =
+    await import("../assets/api.ts");
+  mockFetch({ ok: true, tasks: [{ id: "forged" }] });
+  await assert.rejects(fetchAgentTasks(), /Agent/);
+  mockFetch({ ok: true, workspace: { id: "forged", path: "/tmp/repo", baseCommit: "bad" } });
+  await assert.rejects(registerAgentWorkspace({ path: "/tmp/repo" }), /工作区/);
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests++;
+    throw new Error("unknown POST outcome");
+  };
+  const task = { id: "00000000-0000-4000-8000-000000000021", instruction: "original instruction" };
+  // Only identity and bound instruction are needed to construct this failing request.
+  await assert.rejects(postAgentAction(task, "approve"), /unknown POST outcome/);
+  assert.equal(requests, 1);
+});

@@ -193,6 +193,7 @@ test("T10b production composition wires config, transport, structured model and 
       entities: ["Doggie"],
       tags: ["t10b"],
     }),
+    "生产回复已读取归档上下文。",
   ];
   const web = await startDoggieLocalWeb(config, {
     fetchImplementation: (async (input, init) => {
@@ -211,16 +212,19 @@ test("T10b production composition wires config, transport, structured model and 
     });
     assert.equal(response.status, 200);
     assert.equal((await json(response))["archive_state"], "archived");
-    assert.equal(requests.length, 2);
+    assert.equal(requests.length, 3);
     assert.deepEqual(
       requests.map(({ url }) => url),
       [
+        "https://api.openai.com/v1/responses",
         "https://api.openai.com/v1/responses",
         "https://api.openai.com/v1/responses",
       ],
     );
     assert.equal(requests[0]?.body["model"], "fixture-model");
     assert.equal(requests[1]?.body["model"], "fixture-model");
+    assert.equal(requests[2]?.body["model"], "fixture-model");
+    assert.equal(Array.isArray(requests[2]?.body["tools"]), true);
     assert.equal(web.store.listBuckets()[0]?.title, "生产组装验证");
   } finally {
     await web.close();
@@ -483,6 +487,73 @@ test("T12 startup bind failure closes database even when executor release fails,
   } finally {
     blocker.close();
     await once(blocker, "close");
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("T13 real HTTP runtime composes approved CLI task queue, SSE and persisted result without model calls", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-t13-runtime-"));
+  let runs = 0;
+  const config = resolveRuntimeConfig(
+    {
+      OPENAI_API_KEY: "fixture-key",
+      OPENAI_MODEL: "fixture-model",
+      DOGGIE_DATABASE_PATH: join(directory, "test.db"),
+      DOGGIE_SERVER_ADDRESS: "127.0.0.1:0",
+      DOGGIE_AGENT_CODEX_COMMAND: process.execPath,
+    },
+    {},
+    directory,
+  );
+  const runtime = await startDoggieLocalWeb(config, {
+    model: new FakeModel(),
+    agentRunner: {
+      async run() {
+        runs++;
+        return {
+          output: "Runtime result",
+          remoteId: "00000000-0000-4000-8000-000000000015",
+        };
+      },
+    },
+  });
+  const post = (path: string, value: unknown) =>
+    fetch(new URL(path, runtime.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(value),
+    });
+  try {
+    const capability = await json(
+      await fetch(new URL("api/agent/capabilities", runtime.url)),
+    );
+    assert.deepEqual(capability["backends"], ["codex"]);
+    const proposal = await json(
+      await post("api/agent/tasks", {
+        backend: "codex",
+        workspaceId: null,
+        instruction: "Read-only runtime test",
+      }),
+    );
+    const task = proposal["task"] as { id: string; instruction: string };
+    assert.equal(runs, 0);
+    const accepted = await post(`api/agent/tasks/${task.id}/approve`, {
+      instruction: task.instruction,
+      confirmation_granted: true,
+    });
+    assert.equal(accepted.status, 202);
+    const queueTask = (await json(accepted))["queueTask"] as { id: string };
+    const stream = await fetch(
+      new URL(`api/tasks/${queueTask.id}/events`, runtime.url),
+    );
+    assert.match(await stream.text(), /succeeded/);
+    assert.equal(runs, 1);
+    assert.equal(runtime.agents.get(task.id).output, "Runtime result");
+    const asset = await fetch(new URL("assets/agents.ts", runtime.url));
+    assert.equal(asset.status, 200);
+    assert.doesNotMatch(await asset.text(), /\bimport type\b/);
+  } finally {
+    await runtime.close();
     rmSync(directory, { recursive: true, force: true });
   }
 });

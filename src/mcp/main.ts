@@ -25,9 +25,17 @@ const transport = new StdioServerTransport(process.stdin, process.stdout, {
   maxBufferSize: MAX_MCP_STDIO_MESSAGE_BYTES,
 });
 
-serveStdio(() => createDoggieMcpServer(store), {
-  transport,
-  onerror(error) {
-    console.error(`doggie-mcp error: ${error.message}`);
+serveStdio(
+  () =>
+    createDoggieMcpServer(
+      store,
+      undefined,
+      process.env["DOGGIE_MCP_READ_ONLY"] === "1",
+    ),
+  {
+    transport,
+    onerror(error) {
+      console.error(`doggie-mcp error: ${error.message}`);
+    },
   },
-});
+);
