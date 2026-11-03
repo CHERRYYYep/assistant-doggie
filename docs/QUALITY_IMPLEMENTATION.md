@@ -27,4 +27,6 @@ Q1 已完成。审查补修了两类已复现问题：失败/取消 session 的�
 
 Q2 已完成：schema v6、撤销事务和有效读取、HTTP/UI、旧模型历史/CLI session 失效及并发晚结果防护。新增 20 项后端与 4 项前端测试，完整门禁为 388 后端 + 57 前端通过，0 失败/跳过。未修改冻结 fixture；旧删除测试的有效读取预期保留，审计/外键保留预期按已批准新合同更新，见 [ENTRY_REVOCATION.md](ENTRY_REVOCATION.md)。
 
-真实付费 CLI/模型尚未验证，不能据 fake 测试宣称其可用。下一阶段为 Q3。
+Q3 已完成：30 个业务 method/path 的 operation 清单、严格响应/错误/SSE schema、派生 DTO、请求/响应边界校验、OpenAPI 3.1 与浏览器验证规则双产物生成及漂移门禁。保留 Hono 与本地 SQLite 的架构决策见 [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)，API 约束见 [API_CONTRACT.md](API_CONTRACT.md)。旧 HTTP/UI 测试替身改为完整合法响应，并补充不合法服务输出、重复 query/path 和浏览器资源预算回归，没有放宽 schema。联合执行 `npm run check` 通过 401 后端（含 Q4 新增两项集成验收）+ 58 前端，0 失败/跳过。
+
+真实付费 CLI/模型尚未验证，不能据 fake 测试宣称其可用。下一阶段为 Q4 真实页面检查和验收记录收口。

@@ -30,7 +30,7 @@ T13 已完成 Q1 基线审查与阶段收口；实现记录见 [QUALITY_IMPLEMEN
 
 1. **Q1：T13 基线收口（完成）**——已审查现有实现、补修 session 恢复/队列清理边界，完整门禁通过，保留本地数据和用户文件。
 2. **Q2：Entry 撤销（完成）**——逻辑撤销、存储/检索/HTTP/UI、模型历史和 CLI session 失效已实现并回归；[合同与限制](ENTRY_REVOCATION.md)。彻底清除另行设计。
-3. **Q3：API 与架构规范**——统一请求/响应/错误/SSE 合同并建立 OpenAPI 验证；评估框架演进，当前不迁移 Hono、不做分布式实现。
+3. **Q3：API 与架构规范（完成）**——30 个业务 method/path 统一请求/响应/错误/SSE schema、派生 DTO 与浏览器验证，生成 OpenAPI 3.1 并加入漂移门禁；[接口规范](API_CONTRACT.md)、[架构决策](ARCHITECTURE_DECISIONS.md)。保持 Hono 和单机 SQLite。
 4. **Q4：核心流程联合验收**——输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复走通，形成后续视觉改版的功能基线。
 
 Q1–Q4 后再决定视觉改版与 T14–T17 顺序，原 T 编号保留。远程接入不自动进入下一实现阶段。上一轮六项修复与验证见 [REVIEW_FIXES.md](REVIEW_FIXES.md)。

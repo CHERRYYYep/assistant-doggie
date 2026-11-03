@@ -1,4 +1,5 @@
 /** Every server route and JSON DTO the browser UI depends on. */
+import { MAX_RESPONSE_BYTES, validateResponse } from "./validate-response.ts";
 
 import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type {
@@ -14,7 +15,6 @@ import type {
   ChatResponse,
   DeleteBucketResponse,
   EntryRevocationResponse,
-  ErrorResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
 } from "../../src/http/dto.ts";
@@ -39,20 +39,48 @@ export async function jsonRequest<TResponse>(
   options: RequestInit = {},
 ): Promise<TResponse> {
   const response = await fetch(url, options);
-  const raw = await response.text();
-  let data: unknown = {};
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
+  if (contentType !== "application/json")
+    throw new Error(`HTTP ${response.status}: API 响应格式无效`);
+  const raw = await readJsonBody(response);
+  let data: unknown;
   try {
-    data = raw ? JSON.parse(raw) : {};
+    data = JSON.parse(raw);
   } catch {
-    data = {
-      ok: false,
-      error: raw || `HTTP ${response.status}`,
-    } satisfies ErrorResponse;
+    throw new Error(`HTTP ${response.status}: API 响应格式无效`);
   }
+  const pathname = new URL(url, "http://localhost").pathname;
+  validateResponse(data, options.method ?? "GET", pathname, response.ok);
   if (!response.ok) {
     throw new Error(errorMessage(data) ?? `HTTP ${response.status}`);
   }
   return data as TResponse;
+}
+
+async function readJsonBody(response: Response): Promise<string> {
+  if (response.body === null) throw new Error("API 响应格式无效");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const chunks: string[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      size += chunk.value.byteLength;
+      if (size > MAX_RESPONSE_BYTES) throw new Error("API 响应大小超限");
+      chunks.push(decoder.decode(chunk.value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      /* disconnected transport */
+    }
+    reader.releaseLock();
+  }
 }
 
 function errorMessage(value: unknown): string | undefined {

@@ -1,3 +1,4 @@
+import { chatResponseFixture, httpApiFixture } from "./test-fixtures.ts";
 import assert from "node:assert/strict";
 import { getEventListeners, once } from "node:events";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -26,26 +27,9 @@ type Exchange = {
 };
 
 function fakeApi(
-  chat: DoggieHttpApi["chat"] = () => ({ ok: true }),
+  chat: DoggieHttpApi["chat"] = () => chatResponseFixture(),
 ): DoggieHttpApi {
-  const ok = () => ({ ok: true });
-  return {
-    activeBuckets: ok,
-    searchBuckets: ok,
-    chatHistory: ok,
-    memoryQuery: ok,
-    memoryQueryJson: ok,
-    bucketDetail: ok,
-    deleteBucket: ok,
-    revokeEntry: ok,
-    archive: ok,
-    chat,
-    confirmChat: ok,
-    appendConfirmed: ok,
-    createConfirmed: ok,
-    moveEntry: ok,
-    setBucketStatus: ok,
-  };
+  return { ...httpApiFixture(), chat };
 }
 
 async function fixture(
@@ -171,7 +155,7 @@ test(
           { once: true },
         );
       });
-      return { ok: true };
+      return chatResponseFixture();
     });
     const { server, port } = await fixture(context, {}, api);
     const exchangePromise = captureExchange(server);
@@ -207,7 +191,7 @@ test(
       {},
       fakeApi(() => {
         calls += 1;
-        return { ok: true };
+        return chatResponseFixture();
       }),
     );
     const captured = captureExchange(server);
@@ -551,7 +535,7 @@ test(
       assert.ok(signal);
       started.resolve(signal);
       await release.promise; // deliberately ignores cancellation
-      return { ok: true };
+      return chatResponseFixture();
     });
     const { server, port } = await fixture(
       context,
@@ -597,7 +581,7 @@ test(
       { signal: shutdown.signal },
       fakeApi(() => {
         calls += 1;
-        return { ok: true };
+        return chatResponseFixture();
       }),
     );
     const socket = await socketFor(context, port);

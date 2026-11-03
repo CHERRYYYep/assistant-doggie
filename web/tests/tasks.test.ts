@@ -37,7 +37,7 @@ function sse(text: string, split = false): Response {
   );
 }
 const json = (value: unknown, status = 200): Response =>
-  new Response(JSON.stringify(value), { status });
+  new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 
 // Short, finite observation windows; no real network or timers lasting minutes.
 const fast = { pollIntervalMs: 0, maxPolls: 3, budgetMs: 1_000, streamIdleMs: 100 };

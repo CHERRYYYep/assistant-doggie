@@ -1,3 +1,4 @@
+import { chatResponseFixture, httpApiFixture } from "./test-fixtures.ts";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { connect } from "node:net";
@@ -15,26 +16,12 @@ type RawResponse = {
 };
 
 function fakeApi(chatMessages: string[] = []): DoggieHttpApi {
-  const ok = () => ({ ok: true });
   return {
-    activeBuckets: () => ({ ok: true, buckets: [] }),
-    searchBuckets: ok,
-    chatHistory: ok,
-    memoryQuery: (query) => ({ ok: true, query }),
-    memoryQueryJson: ok,
-    bucketDetail: ok,
-    deleteBucket: ok,
-    revokeEntry: ok,
-    archive: ok,
+    ...httpApiFixture(),
     chat: (request) => {
       chatMessages.push(request.message);
-      return { ok: true, echoed: request.message };
+      return chatResponseFixture(request.message);
     },
-    confirmChat: ok,
-    appendConfirmed: ok,
-    createConfirmed: ok,
-    moveEntry: ok,
-    setBucketStatus: ok,
   };
 }
 

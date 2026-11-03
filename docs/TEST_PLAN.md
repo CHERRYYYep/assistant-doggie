@@ -123,3 +123,9 @@ Q1 收口追加 `src/agent/control.test.ts` 回归：提前创建的恢复提案
 ## Q2：Entry 撤销
 
 新增 `src/storage/entry-revocation.test.ts`、`src/http/entry-revocation.test.ts`，并扩展 Agent/UI 回归，覆盖撤销幂等、单事务回滚、v5→v6、数据库重开、有效查询/MCP/TODO/标签、历史保留与模型 history fence、分类/回答期间撤销或删桶的晚结果、session 版本失效，以及页面确认/重复点击/失败/旧详情竞态。测试用例与保留数据限制见 [ENTRY_REVOCATION.md](ENTRY_REVOCATION.md)。完整门禁为 388 后端 + 57 前端通过。
+
+## Q3：HTTP 契约与生成门禁
+
+`src/http/openapi.test.ts` 检查全部显式业务路由、operationId 唯一性、生成漂移、递归引用、query 默认值、确认、DELETE 和 SSE。`src/http/browser-contracts.test.ts` 对照服务端 Zod 与生成浏览器规则、有效/缺失/多余字段、边界值及资源预算。`app.test.ts` 断言非法服务输出变为脱敏 500，请求未知/重复 query、空或畸形 path、DELETE body 在 dispatch 前拒绝。既有 transport fixture 改为合法业务 DTO，保留原安全/取消/超时断言，不再接受 `{ok:true}` 等不完整伪成功。
+
+`web/tests/api.test.ts` 覆盖完整响应、JSON Content-Type、UTF-8、8 MiB 预算和明确错误；其余任务/UI fixture 同步为完整合同。`npm run openapi:generate` 同时生成 OpenAPI 与浏览器规则，`npm run openapi:check` 已进入 `npm run check`；所有生成不启动产品、不访问数据库或模型。

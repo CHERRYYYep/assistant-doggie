@@ -25,7 +25,7 @@
 | 运行与日常测试 | 纯 TypeScript / Node，前端独立于旧源码目录 |
 | TypeScript 重构 | ✅ 验收完成；当前分支已移除 Rust workspace，历史 fixture 保留 |
 
-近期先收口现有 T13、Entry 撤销语义、API/OpenAPI 契约和核心流程 MVP，再决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
+T13 基线、Entry 撤销和 API/OpenAPI 契约已收口，核心流程 MVP 联合验收后再决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
 
 协作者第一次查看仓库时，建议按这个顺序阅读：
 
@@ -43,7 +43,7 @@ T11–T13 已完成通用 `PendingAction`、后台队列/SSE/取消、只读模�
 - **自动归档**：安全地追加到已有 Bucket 或创建新 Bucket，并保留 Entry 原文和结构化 memory。
 - **确认式归档**：不确定时返回推荐 Bucket、备选 Bucket、模型判断理由、创建新 Bucket 和“不保存”选项。
 - **低信息保护**：输入只有模糊指代或状态短句时，即使模型给出高置信度，也优先询问用户。
-- **可纠错**：归档结果提供修改 Bucket 的入口，也支持通过 API 移动 Entry、修改 Bucket 状态。
+- **可纠错**：归档结果提供修改 Bucket 的入口，也支持移动 Entry、撤销有效记忆和通过 API 修改 Bucket 状态。
 - **自然语言记忆查询**：支持 Bucket 名称、Entry 原文、summary、tag、entity、时间范围、状态和结构化字段筛选。
 - **查询聚合**：关键词与结构化条件组合，按结果质量重排，去重 evidence，并可合并多个 Bucket 的结果。
 
@@ -104,6 +104,8 @@ npm run check
 不要把 API Key、本地数据库、日志或 `node_modules/` 提交到 Git。
 
 ## HTTP API
+
+完整合同见 [API_CONTRACT.md](docs/API_CONTRACT.md) 和自动生成的 [OpenAPI 3.1](docs/openapi.json)。`npm run openapi:generate` 更新规范与浏览器规则；`npm run check` 检查生成漂移。
 
 除 SSE 事件订阅外，成功响应均为 JSON，请求中的文本字段不能为空。浏览器聊天已使用 T12 后台任务；原有同步 API 保留。详见 [任务队列与取消说明](docs/TASK_QUEUE.md)。
 

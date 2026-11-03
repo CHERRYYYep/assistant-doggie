@@ -36,6 +36,14 @@ import {
   type MoveEntryRequest,
 } from "./contracts.ts";
 import {
+  operationFor,
+  confirmedAppendRequestSchema,
+  confirmedCreateRequestSchema,
+  agentRejectionRequestSchema,
+  emptyRequestSchema,
+} from "./operations.ts";
+import { errorResponseSchema } from "./response-schemas.ts";
+import {
   assertSecureRequest,
   AuthorityPolicy,
   setSecurityResponseHeaders,
@@ -87,34 +95,6 @@ export type DoggieHttpApi = {
   ) => unknown | Promise<unknown>;
 };
 
-const confirmedAppendRequestSchema = z
-  .object({
-    text: z.string().trim().min(1),
-    focus_bucket_id: z.string().trim().min(1).optional(),
-    bucket_id: z.string().trim().min(1),
-    confirmation_granted: z.literal(true),
-  })
-  .strict();
-
-const confirmedCreateRequestSchema = z
-  .object({
-    text: z.string().trim().min(1),
-    focus_bucket_id: z.string().trim().min(1).optional(),
-    title: z.string().trim().min(1),
-    bucket_type: z.enum([
-      "idea",
-      "task",
-      "incident",
-      "experiment",
-      "decision",
-      "meeting",
-      "knowledge",
-      "draft",
-    ]),
-    confirmation_granted: z.literal(true),
-  })
-  .strict();
-
 export type StaticAsset = {
   readonly path: string;
   readonly contentType: string;
@@ -128,6 +108,16 @@ const FRONTEND_FILES = [
   ["/assets/styles.css", "assets/styles.css", "text/css; charset=utf-8"],
   ["/assets/app.ts", "assets/app.ts", "text/javascript; charset=utf-8"],
   ["/assets/api.ts", "assets/api.ts", "text/javascript; charset=utf-8"],
+  [
+    "/assets/response-contracts.ts",
+    "assets/response-contracts.ts",
+    "text/javascript; charset=utf-8",
+  ],
+  [
+    "/assets/validate-response.ts",
+    "assets/validate-response.ts",
+    "text/javascript; charset=utf-8",
+  ],
   ["/assets/state.ts", "assets/state.ts", "text/javascript; charset=utf-8"],
   ["/assets/dom.ts", "assets/dom.ts", "text/javascript; charset=utf-8"],
   ["/assets/views.ts", "assets/views.ts", "text/javascript; charset=utf-8"],
@@ -187,7 +177,65 @@ export function createDoggieApp(
   app.use("*", async (context, next) => {
     try {
       assertSecureRequest(context.req.raw, authorityPolicy);
+      const operation = operationFor(
+        context.req.method,
+        new URL(context.req.url).pathname,
+      );
+      const enabled =
+        operation !== undefined &&
+        (operation.feature !== "tasks" || tasks !== undefined) &&
+        (operation.feature !== "agents" || agents !== undefined);
+      if (enabled) {
+        const query: Record<string, string> = {};
+        for (const [key, value] of new URL(context.req.url).searchParams) {
+          if (Object.hasOwn(query, key))
+            throw new HttpBoundaryError(400, "duplicate query parameter");
+          Object.defineProperty(query, key, { value, enumerable: true });
+        }
+        (operation.querySchema ?? emptyRequestSchema).parse(query);
+        if (operation.paramsSchema !== undefined) {
+          const actual = new URL(context.req.url).pathname.split("/");
+          const params: Record<string, string> = {};
+          operation.path.split("/").forEach((part, index) => {
+            if (part.startsWith(":")) {
+              try {
+                params[part.slice(1)] = decodeURIComponent(actual[index] ?? "");
+              } catch {
+                throw new HttpBoundaryError(400, "invalid path encoding");
+              }
+            }
+          });
+          operation.paramsSchema.parse(params);
+        }
+        if (operation.method === "delete" && context.req.raw.body !== null) {
+          throw new HttpBoundaryError(400, "delete does not accept a body");
+        }
+      }
       await next();
+      if (
+        enabled &&
+        !(operation.stream === true && context.res.status === 200)
+      ) {
+        let output: unknown;
+        try {
+          output = await context.res.clone().json();
+        } catch {
+          throw new HttpBoundaryError(
+            500,
+            "internal response contract violation",
+          );
+        }
+        const valid =
+          context.res.status >= 400
+            ? errorResponseSchema.safeParse(output).success
+            : context.res.status === operation.successStatus &&
+              operation.responseSchema.safeParse(output).success;
+        if (!valid)
+          throw new HttpBoundaryError(
+            500,
+            "internal response contract violation",
+          );
+      }
     } catch (error) {
       const failure = stableError(error);
       context.res = context.json(failure.body, httpStatus(failure.status));
@@ -339,7 +387,7 @@ export function createDoggieApp(
       }),
     );
     app.post("/api/tasks/:taskId/cancel", async (context) => {
-      await parseBody(context, z.object({}).strict());
+      await parseBody(context, emptyRequestSchema);
       return context.json({
         ok: true,
         task: await tasks.cancel(
@@ -413,10 +461,7 @@ export function createDoggieApp(
       );
     });
     app.post("/api/agent/tasks/:id/reject", async (context) => {
-      const request = await parseBody(
-        context,
-        z.object({ instruction: z.string().min(1).max(12_000) }).strict(),
-      );
+      const request = await parseBody(context, agentRejectionRequestSchema);
       return context.json({
         ok: true,
         task: agents.reject(
@@ -426,7 +471,7 @@ export function createDoggieApp(
       });
     });
     app.post("/api/agent/tasks/:id/cancel", async (context) => {
-      await parseBody(context, z.object({}).strict());
+      await parseBody(context, emptyRequestSchema);
       return context.json({
         ok: true,
         task: await agents.cancel(agentId(context.req.param("id"))),
@@ -458,9 +503,18 @@ function requiredQuery(value: string | undefined, name: string): string {
 }
 
 async function parseBody<T>(
-  context: { req: { json: () => Promise<unknown> } },
+  context: {
+    req: { json: () => Promise<unknown>; method: string; url: string };
+  },
   schema: z.ZodType<T>,
 ): Promise<T> {
+  const operation = operationFor(
+    context.req.method,
+    new URL(context.req.url).pathname,
+  );
+  if (operation?.bodySchema !== schema) {
+    throw new HttpBoundaryError(500, "internal request contract violation");
+  }
   let body: unknown;
   try {
     body = await context.req.json();

@@ -173,7 +173,7 @@ function snapshot(overrides: Partial<TaskSnapshot> = {}): TaskSnapshot {
   };
 }
 const json = (value: unknown, status = 200): Response =>
-  new Response(JSON.stringify(value), { status });
+  new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 function openStream(signal: AbortSignal | null | undefined): Response {
   return new Response(
     new ReadableStream<Uint8Array>({
@@ -398,7 +398,26 @@ test("existing synchronous confirmation still uses its original API", async () =
         text: "exact source",
         action: "discard",
       });
-      return json({ ok: true });
+      return json({
+        ok: true,
+        confirmation_action: "discard",
+        archive: {
+          ok: true,
+          attempt_id: "attempt-1",
+          archive_state: "discarded",
+          bucket_id: null,
+          entry_id: null,
+          memory_item_ids: [],
+          source_attempt_id: "attempt-1",
+          result_attempt_id: null,
+        },
+        archive_state: "discarded",
+        source_attempt_id: "attempt-1",
+        result_attempt_id: null,
+        user_message: message("user-confirm"),
+        assistant_message: message("assistant-confirm"),
+        messages: [],
+      });
     }
     return fallback(input, init);
   };
@@ -536,7 +555,14 @@ test("T13 browser proposals require distinct bound approval; model output and in
     if (path.endsWith("/workspaces")) return json({ ok: true, workspaces: [] });
     if (path.endsWith("/approve")) {
       approved = true;
-      return json({ ok: true, task: { ...task, status: "succeeded" } });
+      return json(
+        {
+          ok: true,
+          task: { ...task, status: "succeeded" },
+          queueTask: snapshot({ status: "succeeded", revision: 3 }),
+        },
+        202,
+      );
     }
     if (options?.method === "POST") {
       proposed = true;
