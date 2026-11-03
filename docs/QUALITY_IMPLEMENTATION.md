@@ -1,6 +1,6 @@
 # Q1–Q4 实施与验收记录
 
-日期：2026-11-03。范围来自 [产品决策](PRODUCT_DECISIONS.md)。本次完成当前基线、Entry 撤销、HTTP 契约和个人助手功能链路；远程接入仍仅文档预留，视觉重设计及 T14–T17 不进入本次实现。
+日期：2026-11-03–04（Asia/Shanghai）。范围来自 [产品决策](PRODUCT_DECISIONS.md)。本次完成当前基线、Entry 撤销、HTTP 契约和个人助手功能链路；远程接入仍仅文档预留，视觉重设计及 T14–T17 不进入本次实现。
 
 ## 实施顺序
 
@@ -29,4 +29,6 @@ Q2 已完成：schema v6、撤销事务和有效读取、HTTP/UI、旧模型历�
 
 Q3 已完成：30 个业务 method/path 的 operation 清单、严格响应/错误/SSE schema、派生 DTO、请求/响应边界校验、OpenAPI 3.1 与浏览器验证规则双产物生成及漂移门禁。保留 Hono 与本地 SQLite 的架构决策见 [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)，API 约束见 [API_CONTRACT.md](API_CONTRACT.md)。旧 HTTP/UI 测试替身改为完整合法响应，并补充不合法服务输出、重复 query/path 和浏览器资源预算回归，没有放宽 schema。联合执行 `npm run check` 通过 401 后端（含 Q4 新增两项集成验收）+ 58 前端，0 失败/跳过。
 
-真实付费 CLI/模型尚未验证，不能据 fake 测试宣称其可用。下一阶段为 Q4 真实页面检查和验收记录收口。
+Q4 自动联合验收与有限真实页面 smoke 已完成。新增三项实际 loopback 集成测试，覆盖四种确认、来源证据、移动、撤销、pending/历史/中断重启、MCP 共库、后台 SSE/取消与明确 CLI 批准；其中第三项直接连接真实浏览器 API 模块与运行时。真实页面确认推荐保存、查询、移动、刷新撤销卡片和 390px 窄屏布局；原生确认弹窗工具阻塞、窄屏触控/软键盘与完整人工体验未签收，详见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)。最终 `npm run check` 为 **402 后端 + 58 前端通过**，0 失败/跳过，`git diff --check` 通过。
+
+本轮代码和自动验收已收口；真实付费 CLI/模型、浏览器人工体验仍有独立验证边界。下一步建议先用临时或备份过的数据做短期真实自用验收，再确定视觉改版方向与 T14–T17 的顺序；远程接入仍只留文档。

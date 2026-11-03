@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-03 · 当前分支 `dev_ts` · T13 已完成，TS 重构验收通过，后续 T14–T17 为产品扩展
+> 最后更新：2026-11-04 · 当前分支 `dev_ts` · T13 已完成，TS 重构验收通过，后续 T14–T17 为产品扩展
 
 ---
 
@@ -9,8 +9,8 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TS 测试 | **388 通过**（2026-11-03 Q2 撤销回归；初始 T13 验收为 331） |
-| 前端测试 | **57 通过** |
+| TS 测试 | **402 通过**（2026-11-04 Q1–Q4 自动门禁；初始 T13 验收为 331） |
+| 前端测试 | **58 通过** |
 | 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
 | 已覆盖 | **85 条**（§1–§8 全部，§7 已由 T13 补齐） |
@@ -26,12 +26,12 @@
 
 当前以个人助手为主，保留单入口、多 Bucket；多人协作只记录远期假设。个人多设备指手机安全接入电脑端，现阶段仅预留文档接口，不实现远程服务、配对或认证。完整决定见 [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md)，远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md)。
 
-T13 已完成 Q1 基线审查与阶段收口；实现记录见 [QUALITY_IMPLEMENTATION.md](QUALITY_IMPLEMENTATION.md)。后续按顺序推进：
+Q1–Q4 代码与自动验收已收口，有限真实浏览器 smoke 的范围和待人工事项见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)；完整实施记录见 [QUALITY_IMPLEMENTATION.md](QUALITY_IMPLEMENTATION.md)。阶段结果：
 
 1. **Q1：T13 基线收口（完成）**——已审查现有实现、补修 session 恢复/队列清理边界，完整门禁通过，保留本地数据和用户文件。
 2. **Q2：Entry 撤销（完成）**——逻辑撤销、存储/检索/HTTP/UI、模型历史和 CLI session 失效已实现并回归；[合同与限制](ENTRY_REVOCATION.md)。彻底清除另行设计。
 3. **Q3：API 与架构规范（完成）**——30 个业务 method/path 统一请求/响应/错误/SSE schema、派生 DTO 与浏览器验证，生成 OpenAPI 3.1 并加入漂移门禁；[接口规范](API_CONTRACT.md)、[架构决策](ARCHITECTURE_DECISIONS.md)。保持 Hono 和单机 SQLite。
-4. **Q4：核心流程联合验收**——输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复走通，形成后续视觉改版的功能基线。
+4. **Q4：核心流程联合验收（自动验收完成）**——三项真实 socket/API 模块集成测试与有限浏览器 smoke，输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复通过；原生弹窗、触控/软键盘等人工体验未签收。
 
 Q1–Q4 后再决定视觉改版与 T14–T17 顺序，原 T 编号保留。远程接入不自动进入下一实现阶段。上一轮六项修复与验证见 [REVIEW_FIXES.md](REVIEW_FIXES.md)。
 

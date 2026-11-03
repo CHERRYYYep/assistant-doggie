@@ -161,6 +161,10 @@ Q2 增补（新产品合同，不改写历史 fixture）：普通 Entry 删除�
 | 8.9 | 错误响应是稳定的 JSON 形状 `{ok:false, error}` | `[R]` `read_routes_and_store_failures_have_stable_json_errors` |
 | 8.10 | 分类或聊天模型失败时，**已接收的 user 消息仍要保留** | `[R]` chat failure tests |
 
+Q3 增补（现有协议的质量约束，不改变原 85 条计数）：每个业务 method/path 对应唯一 operationId 与请求/成功响应 schema；未知或重复 query、非法 path 和 DELETE body 在 dispatch 前拒绝，内部非法输出返回脱敏 500。DTO、OpenAPI 3.1 和浏览器验证规则来自同一 schema，生成漂移进入门禁；SSE 保持真实流语义。可执行证据为 `src/http/openapi.test.ts`、`browser-contracts.test.ts`、`app.test.ts` 与 `web/tests/api.test.ts`。
+
+Q4 的真实 socket 与实际浏览器 API 模块联合验证见 `src/runtime/core-flow.test.ts`，人工/真实模型验证边界见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)。
+
 ## 9. 评测能力（T9 已恢复）
 
 **历史缺口**：交叉核对 Python 79 个测试后发现，Rust 重写曾丢失整套评测 harness；T9 已在 TypeScript 中恢复确定性评测和可复现 live 报告。

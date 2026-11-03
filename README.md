@@ -25,7 +25,7 @@
 | 运行与日常测试 | 纯 TypeScript / Node，前端独立于旧源码目录 |
 | TypeScript 重构 | ✅ 验收完成；当前分支已移除 Rust workspace，历史 fixture 保留 |
 
-T13 基线、Entry 撤销和 API/OpenAPI 契约已收口，核心流程 MVP 联合验收后再决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
+T13 基线、Entry 撤销、API/OpenAPI 契约与核心流程 MVP 自动验收已收口；真实浏览器 smoke 的限制见 [联合验收记录](docs/CORE_FLOW_ACCEPTANCE.md)。后续按真实使用结果决定视觉改版与 T14–T17。多人协作仅保留想法；手机控制电脑仅做文档接口预留，当前不提供远程访问。决定与实现状态见 [产品决策](docs/PRODUCT_DECISIONS.md) 和 [远程接入边界](docs/REMOTE_ACCESS.md)。
 
 协作者第一次查看仓库时，建议按这个顺序阅读：
 
