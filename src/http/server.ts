@@ -19,7 +19,11 @@ import {
   type DoggieHttpApi,
   type StaticAsset,
 } from "./app.ts";
-import { SECURITY_RESPONSE_HEADERS } from "./security.ts";
+import { HttpBoundaryError } from "./contracts.ts";
+import {
+  assertJsonBodyContentType,
+  SECURITY_RESPONSE_HEADERS,
+} from "./security.ts";
 
 export const MAX_HTTP_REQUEST_BYTES = 1024 * 1024;
 export const DEFAULT_MAX_HTTP_CONNECTIONS = 32;
@@ -45,7 +49,7 @@ type RequestFailure = {
 };
 
 type ServerFailure = {
-  readonly status: 400 | 500;
+  readonly status: 400 | 415 | 500;
   readonly message: string;
 };
 
@@ -403,6 +407,11 @@ function toFetchRequest(
     if (name !== undefined && value !== undefined) headers.append(name, value);
   }
 
+  // Fetch forbids GET/HEAD bodies, so validate their actual wire body first.
+  if (method === "GET" || method === "HEAD") {
+    assertJsonBodyContentType(headers, body.length > 0);
+  }
+
   return new Request(`http://${authority}${target}`, {
     // Hono discards HEAD bodies before returning them. Dispatch as GET so the
     // adapter can compute the representation length, then suppress wire bytes.
@@ -493,7 +502,7 @@ function setResponseHeaders(
 
 function writeJsonError(
   response: ServerResponse,
-  status: 400 | 500,
+  status: ServerFailure["status"],
   message: string,
   headRequest = false,
 ): void {
@@ -563,6 +572,9 @@ function badRequest(message: string): RequestFailure {
 }
 
 function requestFailure(error: unknown): ServerFailure {
+  if (error instanceof HttpBoundaryError && error.status === 415) {
+    return { status: 415, message: error.message };
+  }
   if (
     typeof error === "object" &&
     error !== null &&

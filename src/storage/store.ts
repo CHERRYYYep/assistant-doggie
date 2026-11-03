@@ -200,6 +200,14 @@ export type DeleteBucketOutcome = {
   readonly correctionId: string;
 };
 
+export type ChatMessageInput = {
+  readonly role: "user" | "assistant" | "tool";
+  readonly content: string;
+  readonly toolName?: string | undefined;
+  readonly toolCallId?: string | undefined;
+  readonly details?: unknown;
+};
+
 export type ChatMessageRow = {
   readonly id: string;
   readonly sequence: number;
@@ -242,12 +250,19 @@ export class Store {
     decision: ArchiveDecision,
     extraction: ExtractionResult | undefined,
     audit: ArchiveAudit,
+    messageForOutcome?: (outcome: ArchiveOutcome) => ChatMessageInput,
   ): ArchiveOutcome {
     const text = requiredField(rawText, "raw_text");
     const promptVersion = requiredField(audit.promptVersion, "prompt_version");
     const modelName = requiredField(audit.modelName, "model_name");
 
     return withTransaction(this.#database, () => {
+      const finish = (outcome: ArchiveOutcome): ArchiveOutcome => {
+        if (messageForOutcome !== undefined) {
+          this.#appendChatMessage(messageForOutcome(outcome));
+        }
+        return outcome;
+      };
       const timestamp = this.#now();
       const attemptId = newId();
       const confirmationAttemptId = audit.confirmationAttemptId;
@@ -270,12 +285,12 @@ export class Store {
           promptVersion,
           modelName,
         });
-        return {
+        return finish({
           attemptId,
-          archiveState: "needs_confirmation" as const,
+          archiveState: "needs_confirmation",
           bucketId: undefined,
           entryId: undefined,
-        };
+        });
       }
 
       if (confirmationAttemptId !== undefined) {
@@ -313,11 +328,7 @@ export class Store {
       const bucketId =
         decision.action === "create_new"
           ? this.#createBucket(decision, timestamp)
-          : this.#requireBucket(
-              decision.bucketId,
-              timestamp,
-              confirmationAttemptId !== undefined,
-            );
+          : this.#requireBucket(decision.bucketId, timestamp);
 
       const entryId = this.#insertEntry(
         bucketId,
@@ -360,12 +371,12 @@ export class Store {
         );
       }
 
-      return {
+      return finish({
         attemptId,
-        archiveState: "archived" as const,
+        archiveState: "archived",
         bucketId,
         entryId,
-      };
+      });
     });
   }
 
@@ -483,11 +494,7 @@ export class Store {
     return bucketId;
   }
 
-  #requireBucket(
-    bucketId: string | undefined,
-    timestamp: string,
-    requireActive = false,
-  ): string {
+  #requireBucket(bucketId: string | undefined, timestamp: string): string {
     if (bucketId === undefined) {
       throw StorageError.invalidWrite("append_existing", "requires bucket_id");
     }
@@ -496,7 +503,7 @@ export class Store {
       .get(bucketId) as { lifecycle: string } | undefined;
     if (bucket === undefined)
       throw StorageError.missingRecord("buckets", bucketId);
-    if (requireActive && bucket.lifecycle !== "active") {
+    if (bucket.lifecycle !== "active") {
       throw StorageError.inactiveBucket(bucketId);
     }
     this.#database
@@ -901,11 +908,14 @@ export class Store {
       if (source === undefined)
         throw StorageError.missingRecord("entries", entryId);
 
-      const targetExists = this.#database
-        .prepare("SELECT 1 FROM buckets WHERE id = ?")
-        .get(targetBucketId);
-      if (targetExists === undefined)
+      const target = this.#database
+        .prepare("SELECT lifecycle FROM buckets WHERE id = ?")
+        .get(targetBucketId) as { lifecycle: string } | undefined;
+      if (target === undefined)
         throw StorageError.missingRecord("buckets", targetBucketId);
+      if (target.lifecycle !== "active") {
+        throw StorageError.inactiveBucket(targetBucketId);
+      }
 
       const sourceBucketId = source.bucket_id;
       if (sourceBucketId === targetBucketId) {
@@ -1140,53 +1150,49 @@ export class Store {
   // ── conversation ─────────────────────────────────────────────────────────
 
   /** Append one chat message. `sequence` is assigned inside the transaction. */
-  appendChatMessage(message: {
-    role: "user" | "assistant" | "tool";
-    content: string;
-    toolName?: string | undefined;
-    toolCallId?: string | undefined;
-    details?: unknown;
-  }): ChatMessageRow {
+  appendChatMessage(message: ChatMessageInput): ChatMessageRow {
+    return withTransaction(this.#database, () =>
+      this.#appendChatMessage(message),
+    );
+  }
+
+  #appendChatMessage(message: ChatMessageInput): ChatMessageRow {
     const content = requiredField(message.content, "content");
-    return withTransaction(this.#database, () => {
-      const row = this.#database
-        .prepare(
-          "SELECT COALESCE(MAX(sequence), 0) AS max FROM conversation_messages",
-        )
-        .get() as { max: number };
-      const id = newId();
-      const createdAt = this.#now();
-      const toolName = optionalField(message.toolName);
-      const toolCallId = optionalField(message.toolCallId);
-      this.#database
-        .prepare(
-          `INSERT INTO conversation_messages
-             (id, sequence, role, content, tool_name, tool_call_id, details_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          row.max + 1,
-          message.role,
-          content,
-          toolName,
-          toolCallId,
-          message.details === undefined
-            ? null
-            : JSON.stringify(message.details),
-          createdAt,
-        );
-      return {
+    const row = this.#database
+      .prepare(
+        "SELECT COALESCE(MAX(sequence), 0) AS max FROM conversation_messages",
+      )
+      .get() as { max: number };
+    const id = newId();
+    const createdAt = this.#now();
+    const toolName = optionalField(message.toolName);
+    const toolCallId = optionalField(message.toolCallId);
+    this.#database
+      .prepare(
+        `INSERT INTO conversation_messages
+           (id, sequence, role, content, tool_name, tool_call_id, details_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
         id,
-        sequence: row.max + 1,
-        role: message.role,
+        row.max + 1,
+        message.role,
         content,
         toolName,
         toolCallId,
-        details: message.details,
+        message.details === undefined ? null : JSON.stringify(message.details),
         createdAt,
-      };
-    });
+      );
+    return {
+      id,
+      sequence: row.max + 1,
+      role: message.role,
+      content,
+      toolName,
+      toolCallId,
+      details: message.details,
+      createdAt,
+    };
   }
 
   /** Most recent `limit` messages, returned oldest-first for rendering. */

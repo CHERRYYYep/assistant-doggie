@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/server";
 
+import { stableError } from "../http/contracts.ts";
 import type { JsonValue, Store } from "../storage/store.ts";
 import {
   boundedToolResult,
@@ -95,10 +96,7 @@ function toolResponse(action: () => JsonValue) {
       ...(isError ? { isError: true } : {}),
     };
   } catch (error: unknown) {
-    const value = {
-      ok: false,
-      error: error instanceof Error ? error.message : "tool execution failed",
-    } as const;
+    const value = stableError(error).body;
     return {
       content: [{ type: "text" as const, text: JSON.stringify(value) }],
       structuredContent: value,

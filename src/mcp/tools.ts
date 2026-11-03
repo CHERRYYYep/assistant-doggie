@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 
-import { ArchiveService } from "../application/archive.ts";
+import { ArchiveService, type ArchiveResult } from "../application/archive.ts";
 import { MemoryQueryService } from "../application/query.ts";
 import { askUser, buildBucketCandidates } from "../domain/classification.ts";
 import { requiredText } from "../domain/errors.ts";
@@ -130,35 +130,19 @@ export class DoggieMcpTools {
         proposedBy: "model",
         modelName: "mcp-client",
       },
+      (result) => ({
+        role: "assistant",
+        content: "MCP 客户端提交了一条待归档记录，请在确认卡片中决定是否保存。",
+        details: {
+          kind: "archive_result",
+          source_text: rawText,
+          archive: projectProposal(result, candidates),
+          pending_confirmation: true,
+          proposed_by: "mcp",
+        },
+      }),
     );
-    const archive = {
-      ...projectArchive(result, { candidates }),
-      available_actions: [
-        "append_recommended",
-        "append_alternative",
-        "create_new",
-        "discard",
-      ],
-      confirmation_options: {
-        recommended: "append_recommended",
-        alternative: "append_alternative",
-        create: "create_new",
-        discard: "discard",
-      },
-      submitted_for_confirmation: true,
-    } as const;
-    this.#store.appendChatMessage({
-      role: "assistant",
-      content: "MCP 客户端提交了一条待归档记录，请在确认卡片中决定是否保存。",
-      details: {
-        kind: "archive_result",
-        source_text: rawText,
-        archive,
-        pending_confirmation: true,
-        proposed_by: "mcp",
-      },
-    });
-    return archive as JsonValue;
+    return projectProposal(result, candidates) as JsonValue;
   }
 
   #candidateBuckets(preferredBucketId?: string): BucketView[] {
@@ -189,6 +173,28 @@ export class DoggieMcpTools {
     ];
     return candidates.slice(0, DEFAULT_MCP_RESULT_LIMIT);
   }
+}
+
+function projectProposal(
+  result: ArchiveResult,
+  candidates: readonly BucketView[],
+) {
+  return {
+    ...projectArchive(result, { candidates }),
+    available_actions: [
+      "append_recommended",
+      "append_alternative",
+      "create_new",
+      "discard",
+    ],
+    confirmation_options: {
+      recommended: "append_recommended",
+      alternative: "append_alternative",
+      create: "create_new",
+      discard: "discard",
+    },
+    submitted_for_confirmation: true,
+  } as const;
 }
 
 export function boundedToolResult(value: JsonValue): JsonValue {

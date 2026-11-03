@@ -181,6 +181,91 @@ test("real socket accepts chunked UTF-8 JSON without an Origin", async () => {
   });
 });
 
+test("real socket requires JSON for GET and HEAD bodies before read dispatch", async () => {
+  let readCalls = 0;
+  const api = {
+    ...fakeApi(),
+    activeBuckets: () => {
+      readCalls += 1;
+      return { ok: true, buckets: [] };
+    },
+  };
+  await withServer(api, async (port, authority) => {
+    for (const method of ["GET", "HEAD"]) {
+      for (const chunked of [false, true]) {
+        for (const contentType of [
+          undefined,
+          "text/plain",
+          "application/json; charset=utf-16",
+          "application/json, text/plain",
+          "application/json",
+          "Application/JSON; Charset=UTF-8",
+        ]) {
+          const accepted =
+            contentType === "application/json" ||
+            contentType === "Application/JSON; Charset=UTF-8";
+          const previousCalls = readCalls;
+          const response = await rawRequest(
+            port,
+            `${method} /api/buckets/active HTTP/1.1\r\nHost: ${authority}\r\n` +
+              (contentType === undefined
+                ? ""
+                : `Content-Type: ${contentType}\r\n`) +
+              (chunked
+                ? "Transfer-Encoding: chunked\r\n"
+                : "Content-Length: 2\r\n") +
+              "Connection: close\r\n\r\n" +
+              (chunked ? "2\r\n{}\r\n0\r\n\r\n" : "{}"),
+          );
+          const context = `${method} chunked=${chunked} ${contentType}`;
+          assert.equal(response.status, accepted ? 200 : 415, context);
+          assert.equal(readCalls, previousCalls + Number(accepted), context);
+          assertSecurityHeaders(response);
+          if (method === "HEAD") {
+            assert.equal(response.body.length, 0, context);
+          } else if (!accepted) {
+            assert.deepEqual(JSON.parse(response.body.toString("utf8")), {
+              ok: false,
+              error: "request body must use Content-Type: application/json",
+            });
+          }
+        }
+      }
+    }
+  });
+});
+
+test("real socket rejects duplicate Content-Type on reads and allows empty framed bodies", async () => {
+  await withServer(fakeApi(), async (port, authority) => {
+    for (const method of ["GET", "HEAD"]) {
+      const duplicate = await rawRequest(
+        port,
+        `${method} /health HTTP/1.1\r\nHost: ${authority}\r\n` +
+          "Content-Type: application/json\r\nContent-Type: text/plain\r\n" +
+          "Content-Length: 2\r\nConnection: close\r\n\r\n{}",
+      );
+      assert.equal(duplicate.status, 400);
+      assertSecurityHeaders(duplicate);
+      if (method === "HEAD") assert.equal(duplicate.body.length, 0);
+
+      for (const chunked of [false, true]) {
+        const empty = await rawRequest(
+          port,
+          `${method} /health HTTP/1.1\r\nHost: ${authority}\r\n` +
+            (chunked
+              ? "Transfer-Encoding: chunked\r\n"
+              : "Content-Length: 0\r\n") +
+            "Connection: close\r\n\r\n" +
+            (chunked ? "0\r\n\r\n" : ""),
+        );
+        assert.equal(empty.status, 200);
+        assertSecurityHeaders(empty);
+        if (method === "HEAD") assert.equal(empty.body.length, 0);
+      }
+    }
+  });
+});
+
 test("real socket rejects conflicting Content-Length framing with a safe response", async () => {
   await withServer(fakeApi(), async (port, authority) => {
     const response = await rawRequest(
