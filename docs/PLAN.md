@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-04 · 当前分支 `dev_ts` · T13 已完成，T14-A 领域语义已完成，后续 T14-B–T17 为产品扩展
+> 最后更新：2026-11-04 · 当前分支 `dev_ts` · T13、T14 已完成，T15–T17 保留后续规划
 
 ---
 
@@ -9,8 +9,8 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TS 测试 | **408 通过**（2026-11-04 Q1–Q4 自动门禁 + T14-A 领域测试；初始 T13 验收为 331） |
-| 前端测试 | **58 通过** |
+| TS 测试 | **414 通过**（2026-11-04 Q1–Q4 自动门禁 + T14-A–D 回归；初始 T13 验收为 331） |
+| 前端测试 | **59 通过** |
 | 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
 | 已覆盖 | **85 条**（§1–§8 全部，§7 已由 T13 补齐） |
@@ -33,7 +33,7 @@ Q1–Q4 代码与自动验收已收口，有限真实浏览器 smoke 的范围�
 3. **Q3：API 与架构规范（完成）**——30 个业务 method/path 统一请求/响应/错误/SSE schema、派生 DTO 与浏览器验证，生成 OpenAPI 3.1 并加入漂移门禁；[接口规范](API_CONTRACT.md)、[架构决策](ARCHITECTURE_DECISIONS.md)。保持 Hono 和单机 SQLite。
 4. **Q4：核心流程联合验收（自动验收完成）**——三项真实 socket/API 模块集成测试与有限浏览器 smoke，输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复通过；原生弹窗、触控/软键盘等人工体验未签收。
 
-Q1–Q4 后再决定视觉改版与 T14–T17 顺序，原 T 编号保留。远程接入不自动进入下一实现阶段。上一轮六项修复与验证见 [REVIEW_FIXES.md](REVIEW_FIXES.md)。
+Q1–Q4 后先完成 T14 的可工作功能链路；视觉改版、真实自用验收和 T15–T17 仍在后续决定。远程接入不自动进入下一实现阶段。上一轮六项修复与验证见 [REVIEW_FIXES.md](REVIEW_FIXES.md)。
 
 ### 分支布局
 
@@ -413,14 +413,14 @@ Bucket ──N:1──► Workspace ──1:N──► AgentSession
 |---|---|---|---|
 | **T14** | TODO 生命周期 + agenda | `SCHEDULED` / `DEADLINE` / repeater | **org-mode / org-agenda** |
 
-T14 的实现规划见 [T14_PLAN.md](T14_PLAN.md)。T14-A 已冻结五状态、显式时间计划和受限重复规则；下一步进入 schema v7 与 Store。
+T14 的实现规划见 [T14_PLAN.md](T14_PLAN.md)。T14-A–B 已冻结并实现五状态、显式时间计划、受限重复规则、schema v7、迁移和 Store；T14-C–D 已实现严格 HTTP/OpenAPI 契约和功能性 Agenda MVP；T14-E 联合验收与阶段提交已完成。
 | **T15** | 调度器 + 系统通知 | 持久化调度、重启补跑策略 | 本地进程直接调 `notify-send` |
 | **T16** | 插件系统 | Doggie 作为 MCP client | 插件 = MCP server，任意语言、进程隔离 |
 | **T17** | **数据导出/导入** | 全量导出、可重新导入 | Q3 明确承诺的未来需求 |
 
 **T17 为什么单列**：Q3 决定不兼容旧库，代价是数据可迁移性要靠导出/导入补回来。这也是信任问题——**数据出不来的"长期记忆"，用户不会持续投入**。T3 的 schema 设计已为此预留。
 
-**T14 当前判断**：现有 `memory_items` 可以继续作为权威对象，但无法表达完整计划语义；T14-B 将通过小型 schema v7 增加 `scheduled_at`、`todo_rule_json` 和原始时间投影字段，旧 `due_at` 保持原义。
+**T14 当前判断**：现有 `memory_items` 继续作为 TODO 权威对象；schema v7 已增加 `scheduled_at`、`todo_rule_json`、`todo_raw_time_json` 和 `todo_occurrence`，旧 `due_at` 保持原义。Agenda、状态/计划变更、重复推进、重新打开和 Entry 撤销后的有效性均通过 Store 与 HTTP 契约暴露。
 
 **为什么抄 org-mode**：`SCHEDULED`（什么时候开始想它）和 `DEADLINE`（什么时候必须做完）是两件事。Todoist 只有一个 due date，这正是它长期被诟病的点。
 

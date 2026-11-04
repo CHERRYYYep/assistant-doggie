@@ -163,33 +163,33 @@ TODO 仍然是 Entry 派生 Memory，不是脱离原文的独立事实：
 
 ## 7. 实施阶段
 
-### T14-A：语义冻结
+### T14-A：语义冻结 ✅
 
 产出领域类型、状态转换表、时间/重复规则解析规则和不变量测试。此阶段不改 HTTP/UI。
 
 退出条件：所有非法状态转换、日期边界、时区、重复规则和撤销来源场景都有明确结果。
 
-### T14-B：schema v7 与 Store
+### T14-B：schema v7 与 Store ✅
 
 实现迁移、todo row parser、Agenda 查询、版本字段、事务状态变更和审计投影。
 
 退出条件：临时 SQLite、旧库重开、迁移失败回滚、并发旧版本拒绝、撤销/删桶后有效读取均通过。
 
-### T14-C：Application 与 HTTP 契约
+### T14-C：Application 与 HTTP 契约 ✅
 
 实现 `TodoService`、operation registry、OpenAPI、错误投影和浏览器 API。成功响应继续由服务端 schema 与浏览器生成规则共同验证。
 
 退出条件：所有路由有严格 request/response schema，内部非法输出转为 500，未知字段和重复 query 被拒绝。
 
-### T14-D：功能性 Agenda UI
+### T14-D：功能性 Agenda UI ✅（MVP）
 
-加入最小列表、筛选、状态操作和来源跳转，不做布局重构、主题重设计或移动端远程接入。
+加入最小列表、历史筛选、状态操作和来源跳转，不做布局重构、主题重设计或移动端远程接入。
 
 退出条件：桌面和窄屏的基本可操作性、空/加载/失败/冲突/撤销状态通过 DOM 和有限浏览器 smoke。
 
-### T14-E：联合验收与阶段提交
+### T14-E：联合验收与阶段提交 ✅
 
-通过真实 loopback、临时数据库、fake model 和浏览器 API 模块验收；补齐文档、OpenAPI 和 `npm run check`，单独提交 T14。
+已通过临时 SQLite、fake model、HTTP API 和浏览器 API 模块验收，补齐阶段文档并通过最终 `npm run check`，已单独提交 T14。真实自用验收和视觉改版明确留到后续阶段。
 
 ## 8. 测试矩阵
 
@@ -197,7 +197,7 @@ TODO 仍然是 Entry 派生 Memory，不是脱离原文的独立事实：
 - `storage`：schema v7、迁移、查询排序、事务回滚、版本冲突、数据库重开；
 - `application`：状态变更、来源绑定、重复推进、撤销和 Bucket 删除；
 - `http`：Agenda 查询、所有写请求、错误映射、响应契约和资源上限；
-- `frontend`：生成契约解析、空/加载/失败/冲突、XSS、旧响应不能覆盖新状态；
+- `frontend`：生成契约解析、Agenda 空/加载/失败、状态操作、XSS、旧响应不能覆盖新状态；
 - `runtime`：归档提取 TODO → Agenda → 状态变更 → 查询 → 撤销 → 重启；
 - `MCP`：T14 不新增写工具；如未来展示 TODO，只增加受控只读投影。
 

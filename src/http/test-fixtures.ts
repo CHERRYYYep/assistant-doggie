@@ -108,6 +108,24 @@ export function httpApiFixture(calls: string[] = []): DoggieHttpApi {
       evidence: [],
       answer: "",
     });
+  const todo = {
+    id: "todo-1",
+    bucket_id: "b1",
+    entry_id: "e1",
+    kind: "todo" as const,
+    text: "fixture TODO",
+    status: "open" as const,
+    scheduled_at: null,
+    due_at: null,
+    todo_rule: null,
+    todo_raw_time: null,
+    todo_occurrence: 1,
+    occurred_at: null,
+    source: null,
+    reason: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
   return {
     activeBuckets: (limit) =>
       called("active", limit, { ok: true, buckets: [] }),
@@ -203,5 +221,49 @@ export function httpApiFixture(calls: string[] = []): DoggieHttpApi {
         bucket_id: request.bucket_id,
         status: request.status,
       }),
+    agenda: (request) =>
+      called("agenda", request, { ok: true, now: timestamp, todos: [todo] }),
+    getTodo: (todoId) =>
+      called("getTodo", todoId, { ok: true, todo: { ...todo, id: todoId } }),
+    transitionTodo: (todoId, request) =>
+      called(
+        "transitionTodo",
+        { todoId, request },
+        {
+          ok: true,
+          todo: { ...todo, id: todoId, status: request.status },
+          correction_id: "c1",
+        },
+      ),
+    updateTodoPlan: (todoId, request) =>
+      called(
+        "updateTodoPlan",
+        { todoId, request },
+        {
+          ok: true,
+          todo: { ...todo, id: todoId },
+          correction_id: "c1",
+        },
+      ),
+    advanceTodo: (todoId, request) =>
+      called(
+        "advanceTodo",
+        { todoId, request },
+        {
+          ok: true,
+          todo: { ...todo, id: todoId },
+          correction_id: "c1",
+        },
+      ),
+    reopenTodo: (todoId, request) =>
+      called(
+        "reopenTodo",
+        { todoId, request },
+        {
+          ok: true,
+          todo: { ...todo, id: todoId, status: "open" },
+          correction_id: "c1",
+        },
+      ),
   };
 }

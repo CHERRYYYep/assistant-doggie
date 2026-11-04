@@ -38,6 +38,8 @@ export const memoryQueryButton = requireElement("#memory-query-button", isHtmlBu
 export const memoryQueryResult = requireElement("#memory-query-result", isHtmlElement);
 export const newChatButton = requireElement("#new-chat", isHtmlButtonElement);
 export const refreshBucketsButton = requireElement("#refresh-buckets", isHtmlButtonElement);
+export const agenda = requireElement("#agenda", isHtmlElement);
+export const refreshAgendaButton = requireElement("#refresh-agenda", isHtmlButtonElement);
 
 /** Text shown under the composer. `kind` is "" or "warning". */
 export function setStatus(text: unknown, kind: "" | "warning" = ""): void {

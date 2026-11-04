@@ -20,6 +20,7 @@ import {
 } from "../application/memory-query.ts";
 import { MemoryQueryService } from "../application/query.ts";
 import { BucketStatusService } from "../application/status.ts";
+import { TodoService } from "../application/todo.ts";
 import type { JsonValue } from "../storage/store.ts";
 import { BucketStatus } from "../domain/types.ts";
 import { StorageError } from "../storage/database.ts";
@@ -35,12 +36,18 @@ import {
   projectChatMessage,
   projectEntry,
   projectMemoryQuery,
+  projectTodo,
   type ArchiveRequest,
   type BucketStatusRequest,
   type ChatConfirmationRequest,
   type ChatRequest,
   type MemoryQueryRequest,
   type MoveEntryRequest,
+  type TodoAgendaQuery,
+  type TodoAdvanceRequest,
+  type TodoPlanRequest,
+  type TodoReopenRequest,
+  type TodoTransitionRequest,
 } from "./contracts.ts";
 import type {
   ActiveBucketsResponse,
@@ -56,6 +63,9 @@ import type {
   EntryRevocationResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
+  AgendaResponse,
+  TodoMutationResponse,
+  TodoResponse,
 } from "./dto.ts";
 
 export const CHAT_HISTORY_LIMIT = 40;
@@ -92,6 +102,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
   readonly #query: MemoryQueryService;
   readonly #correction: CorrectionService;
   readonly #status: BucketStatusService;
+  readonly #todo: TodoService;
   readonly #clock: () => Date;
   readonly #chatResponder: ChatResponder | undefined;
 
@@ -106,6 +117,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     this.#query = new MemoryQueryService(store, this.#clock);
     this.#correction = new CorrectionService(store);
     this.#status = new BucketStatusService(store);
+    this.#todo = new TodoService(store, this.#clock);
     this.#chatResponder = options.chatResponder;
   }
 
@@ -448,6 +460,105 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
       ok: true,
       bucket_id: bucket.id,
       status: bucket.lifecycle,
+    } as const;
+  }
+
+  agenda(request: TodoAgendaQuery): AgendaResponse {
+    const result = this.#todo.listAgenda({
+      from: request.from,
+      to: request.to,
+      bucketId: request.bucket_id,
+      includeHistory: request.include_history === "true",
+    });
+    return {
+      ok: true,
+      now: result.now,
+      todos: result.todos.map(projectTodo),
+    } as const;
+  }
+
+  getTodo(todoId: string): TodoResponse {
+    return { ok: true, todo: projectTodo(this.#todo.getTodo(todoId)) } as const;
+  }
+
+  transitionTodo(
+    todoId: string,
+    request: TodoTransitionRequest,
+  ): TodoMutationResponse {
+    const result = this.#todo.transitionTodo(
+      todoId,
+      request.status,
+      request.command_text,
+      request.expected_updated_at,
+    );
+    return this.#projectTodoMutation(result);
+  }
+
+  updateTodoPlan(
+    todoId: string,
+    request: TodoPlanRequest,
+  ): TodoMutationResponse {
+    const result = this.#todo.updateTodoPlan(
+      todoId,
+      {
+        scheduledAt: request.scheduled_at,
+        dueAt: request.due_at,
+        repeatRule:
+          request.repeat_rule === null
+            ? null
+            : {
+                frequency: request.repeat_rule.frequency,
+                interval: request.repeat_rule.interval,
+                weekdays: request.repeat_rule.weekdays,
+                until: request.repeat_rule.until,
+                count: request.repeat_rule.count,
+              },
+        rawTime:
+          request.raw_time === null
+            ? null
+            : {
+                scheduledText: request.raw_time.scheduled_text,
+                dueText: request.raw_time.due_text,
+                timeZone: request.raw_time.time_zone,
+              },
+      },
+      request.command_text,
+      request.expected_updated_at,
+    );
+    return this.#projectTodoMutation(result);
+  }
+
+  advanceTodo(
+    todoId: string,
+    request: TodoAdvanceRequest,
+  ): TodoMutationResponse {
+    return this.#projectTodoMutation(
+      this.#todo.advanceRepeatingTodo(
+        todoId,
+        request.command_text,
+        request.expected_updated_at,
+      ),
+    );
+  }
+
+  reopenTodo(todoId: string, request: TodoReopenRequest): TodoMutationResponse {
+    return this.#projectTodoMutation(
+      this.#todo.reopenTodo(
+        todoId,
+        request.command_text,
+        request.expected_updated_at,
+      ),
+    );
+  }
+
+  #projectTodoMutation(result: {
+    readonly todo: import("../storage/store.ts").TodoRow;
+    readonly correctionId: string;
+  }): TodoMutationResponse {
+    return {
+      ok: true,
+      todo: projectTodo(result.todo),
+      correction_id: result.correctionId,
     } as const;
   }
 

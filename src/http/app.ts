@@ -27,6 +27,11 @@ import {
   memoryQueryRequestSchema,
   moveEntryRequestSchema,
   queryLimitSchema,
+  todoAdvanceRequestSchema,
+  todoAgendaQuerySchema,
+  todoPlanRequestSchema,
+  todoReopenRequestSchema,
+  todoTransitionRequestSchema,
   stableError,
   type ArchiveRequest,
   type BucketStatusRequest,
@@ -92,6 +97,26 @@ export type DoggieHttpApi = {
   readonly moveEntry: (request: MoveEntryRequest) => unknown | Promise<unknown>;
   readonly setBucketStatus: (
     request: BucketStatusRequest,
+  ) => unknown | Promise<unknown>;
+  readonly agenda: (
+    request: import("./contracts.ts").TodoAgendaQuery,
+  ) => unknown | Promise<unknown>;
+  readonly getTodo: (todoId: string) => unknown | Promise<unknown>;
+  readonly transitionTodo: (
+    todoId: string,
+    request: import("./contracts.ts").TodoTransitionRequest,
+  ) => unknown | Promise<unknown>;
+  readonly updateTodoPlan: (
+    todoId: string,
+    request: import("./contracts.ts").TodoPlanRequest,
+  ) => unknown | Promise<unknown>;
+  readonly advanceTodo: (
+    todoId: string,
+    request: import("./contracts.ts").TodoAdvanceRequest,
+  ) => unknown | Promise<unknown>;
+  readonly reopenTodo: (
+    todoId: string,
+    request: import("./contracts.ts").TodoReopenRequest,
   ) => unknown | Promise<unknown>;
 };
 
@@ -367,6 +392,58 @@ export function createDoggieApp(
       context,
       await api.setBucketStatus(
         await parseBody(context, bucketStatusRequestSchema),
+      ),
+    ),
+  );
+  app.get("/api/agenda", async (context) =>
+    json(
+      context,
+      await api.agenda(
+        todoAgendaQuerySchema.parse({
+          from: context.req.query("from"),
+          to: context.req.query("to"),
+          bucket_id: context.req.query("bucket_id"),
+          include_history: context.req.query("include_history") ?? "false",
+        }),
+      ),
+    ),
+  );
+  app.get("/api/todos/:todoId", async (context) =>
+    json(context, await api.getTodo(context.req.param("todoId"))),
+  );
+  app.post("/api/todos/:todoId/transition", async (context) =>
+    json(
+      context,
+      await api.transitionTodo(
+        context.req.param("todoId"),
+        await parseBody(context, todoTransitionRequestSchema),
+      ),
+    ),
+  );
+  app.post("/api/todos/:todoId/plan", async (context) =>
+    json(
+      context,
+      await api.updateTodoPlan(
+        context.req.param("todoId"),
+        await parseBody(context, todoPlanRequestSchema),
+      ),
+    ),
+  );
+  app.post("/api/todos/:todoId/advance", async (context) =>
+    json(
+      context,
+      await api.advanceTodo(
+        context.req.param("todoId"),
+        await parseBody(context, todoAdvanceRequestSchema),
+      ),
+    ),
+  );
+  app.post("/api/todos/:todoId/reopen", async (context) =>
+    json(
+      context,
+      await api.reopenTodo(
+        context.req.param("todoId"),
+        await parseBody(context, todoReopenRequestSchema),
       ),
     ),
   );

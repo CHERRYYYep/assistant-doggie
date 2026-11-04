@@ -6,6 +6,10 @@ import type {
   ChatConfirmationRequest,
   ChatRequest,
   MoveEntryRequest,
+  TodoAdvanceRequest,
+  TodoPlanRequest,
+  TodoReopenRequest,
+  TodoTransitionRequest,
 } from "../../src/http/contracts.ts";
 import type {
   ActiveBucketsResponse,
@@ -17,6 +21,8 @@ import type {
   EntryRevocationResponse,
   MemoryQueryResponse,
   MoveEntryResponse,
+  AgendaResponse,
+  TodoMutationResponse,
 } from "../../src/http/dto.ts";
 
 export const ROUTES = {
@@ -29,6 +35,8 @@ export const ROUTES = {
   entry: "/api/entries/",
   memoryQuery: "/api/memory/query",
   correctionMove: "/api/corrections/move",
+  agenda: "/api/agenda",
+  todo: "/api/todos/",
 } as const;
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
@@ -137,6 +145,42 @@ export function deleteBucketRequest(bucketId: string): Promise<DeleteBucketRespo
 
 export function revokeEntryRequest(entryId: string): Promise<EntryRevocationResponse> {
   return jsonRequest(ROUTES.entry + encodeURIComponent(entryId), { method: "DELETE" });
+}
+
+export function fetchAgenda(includeHistory = false): Promise<AgendaResponse> {
+  return jsonRequest(`${ROUTES.agenda}?include_history=${includeHistory ? "true" : "false"}`);
+}
+
+function todoUrl(todoId: string, action = ""): string {
+  return `${ROUTES.todo}${encodeURIComponent(todoId)}${action}`;
+}
+
+export function postTodoTransition(
+  todoId: string,
+  request: TodoTransitionRequest,
+): Promise<TodoMutationResponse> {
+  return postJson(todoUrl(todoId, "/transition"), request);
+}
+
+export function postTodoPlan(
+  todoId: string,
+  request: TodoPlanRequest,
+): Promise<TodoMutationResponse> {
+  return postJson(todoUrl(todoId, "/plan"), request);
+}
+
+export function postTodoAdvance(
+  todoId: string,
+  request: TodoAdvanceRequest,
+): Promise<TodoMutationResponse> {
+  return postJson(todoUrl(todoId, "/advance"), request);
+}
+
+export function postTodoReopen(
+  todoId: string,
+  request: TodoReopenRequest,
+): Promise<TodoMutationResponse> {
+  return postJson(todoUrl(todoId, "/reopen"), request);
 }
 
 /** Background tasks deliberately have no result payload: history is authoritative. */

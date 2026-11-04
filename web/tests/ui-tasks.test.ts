@@ -20,6 +20,7 @@ afterEach(async () => {
   state.cancellingTasks.clear();
   state.history = [];
   state.activeBuckets = [];
+  state.agenda = [];
   state.selectedBucketId = null;
   state.revokingEntries.clear();
   renderTranscript([]);
@@ -217,6 +218,53 @@ function mockServer(tasks: readonly TaskSnapshot[] = []): string[] {
   };
   return calls;
 }
+
+test("Agenda renders escaped TODO text and refreshes after a status mutation", async () => {
+  const todo = {
+    id: "todo-1",
+    bucket_id: "bucket-1",
+    entry_id: "entry-1",
+    kind: "todo",
+    text: "<script>alert(1)</script>",
+    status: "open",
+    scheduled_at: null,
+    due_at: null,
+    todo_rule: null,
+    todo_raw_time: null,
+    todo_occurrence: 1,
+    occurred_at: null,
+    source: null,
+    reason: null,
+    created_at: "2026-11-03T00:00:00Z",
+    updated_at: "2026-11-03T00:00:00Z",
+  };
+  let completed = false;
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (url.startsWith("/api/agenda")) {
+      return json({ ok: true, now: "2026-11-03T00:00:00Z", todos: completed ? [] : [todo] });
+    }
+    if (url === "/api/todos/todo-1/transition") {
+      completed = true;
+      return json({
+        ok: true,
+        todo: { ...todo, status: "done", updated_at: "2026-11-03T00:00:01Z" },
+        correction_id: "c1",
+      });
+    }
+    throw new Error(`Unexpected request ${init?.method ?? "GET"} ${url}`);
+  };
+  await views.refreshAgenda();
+  assert.match(element("agenda").innerHTML, /&lt;script&gt;/);
+  assert.doesNotMatch(element("agenda").innerHTML, /<script>alert/);
+  assert.match(element("agenda").innerHTML, /data-action="show-todo-source"/);
+  const button = new StubElement();
+  button.dataset["todoId"] = "todo-1";
+  button.dataset["status"] = "done";
+  button.dataset["expectedUpdatedAt"] = "2026-11-03T00:00:00Z";
+  await views.transitionAgendaTodo(button as unknown as HTMLButtonElement);
+  assert.equal(element("agenda").innerHTML, '<span class="muted">暂无待处理 TODO</span>');
+});
 
 test("sending submits once, displays queued status, then explicit cancel refreshes authoritative history and buckets", async () => {
   const calls = mockServer();

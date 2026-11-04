@@ -20,6 +20,7 @@ import {
   BUCKET_TYPES,
   type BucketView,
 } from "../domain/types.ts";
+import { TODO_STATUSES } from "../domain/todo.ts";
 import { LlmError } from "../llm/structured-output.ts";
 import { StorageError } from "../storage/database.ts";
 import type {
@@ -29,6 +30,7 @@ import type {
   EntryRow,
   JsonValue,
   MemoryRow,
+  TodoRow,
 } from "../storage/store.ts";
 
 export const DEFAULT_LIST_LIMIT = 20;
@@ -103,6 +105,53 @@ export const bucketStatusRequestSchema = z
   })
   .strict();
 
+const todoCommandBase = {
+  command_text: requiredTrimmedString,
+  expected_updated_at: z.string().datetime(),
+} as const;
+const repeatRuleInputSchema = z
+  .strictObject({
+    frequency: z.enum(["daily", "weekly", "monthly"]),
+    interval: z.number().int().min(1).max(31),
+    weekdays: z.array(z.number().int().min(1).max(7)).optional(),
+    until: z.string().datetime({ offset: true }).optional(),
+    count: z.number().int().min(1).max(366).optional(),
+  })
+  .refine((rule) => !(rule.until !== undefined && rule.count !== undefined), {
+    message: "until and count cannot both be set",
+  });
+const todoRawTimeInputSchema = z.strictObject({
+  scheduled_text: z.string().trim().min(1).nullable(),
+  due_text: z.string().trim().min(1).nullable(),
+  time_zone: z.string().trim().min(1),
+});
+export const todoAgendaQuerySchema = z
+  .strictObject({
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    bucket_id: optionalTrimmedString,
+    include_history: z.enum(["true", "false"]).default("false"),
+  })
+  .refine((query) => query.from === undefined || query.to !== undefined, {
+    message: "from and to must be provided together",
+  })
+  .refine((query) => query.to === undefined || query.from !== undefined, {
+    message: "from and to must be provided together",
+  });
+export const todoTransitionRequestSchema = z.strictObject({
+  ...todoCommandBase,
+  status: z.enum(TODO_STATUSES),
+});
+export const todoPlanRequestSchema = z.strictObject({
+  ...todoCommandBase,
+  scheduled_at: z.string().datetime({ offset: true }).nullable(),
+  due_at: z.string().datetime({ offset: true }).nullable(),
+  repeat_rule: repeatRuleInputSchema.nullable(),
+  raw_time: todoRawTimeInputSchema.nullable(),
+});
+export const todoAdvanceRequestSchema = z.strictObject(todoCommandBase);
+export const todoReopenRequestSchema = z.strictObject(todoCommandBase);
+
 export const memoryQueryRequestSchema = z
   .object({
     query: requiredTrimmedString,
@@ -133,6 +182,11 @@ export type ChatConfirmationRequest = z.infer<
 export type MoveEntryRequest = z.infer<typeof moveEntryRequestSchema>;
 export type BucketStatusRequest = z.infer<typeof bucketStatusRequestSchema>;
 export type MemoryQueryRequest = z.infer<typeof memoryQueryRequestSchema>;
+export type TodoAgendaQuery = z.infer<typeof todoAgendaQuerySchema>;
+export type TodoTransitionRequest = z.infer<typeof todoTransitionRequestSchema>;
+export type TodoPlanRequest = z.infer<typeof todoPlanRequestSchema>;
+export type TodoAdvanceRequest = z.infer<typeof todoAdvanceRequestSchema>;
+export type TodoReopenRequest = z.infer<typeof todoReopenRequestSchema>;
 
 export class HttpBoundaryError extends Error {
   readonly status: number;
@@ -280,6 +334,43 @@ export function projectMemory(memory: MemoryRow) {
     created_at: memory.createdAt,
     updated_at: memory.updatedAt,
     metadata: memory.metadata,
+  } as const;
+}
+
+export function projectTodo(todo: TodoRow) {
+  return {
+    id: todo.id,
+    bucket_id: todo.bucketId,
+    entry_id: todo.entryId,
+    kind: "todo" as const,
+    text: todo.text,
+    status: todo.status,
+    scheduled_at: todo.scheduledAt,
+    due_at: todo.dueAt,
+    todo_rule:
+      todo.todoRule === null
+        ? null
+        : {
+            frequency: todo.todoRule.frequency,
+            interval: todo.todoRule.interval,
+            weekdays: todo.todoRule.weekdays ?? null,
+            until: todo.todoRule.until ?? null,
+            count: todo.todoRule.count ?? null,
+          },
+    todo_raw_time:
+      todo.todoRawTime === null
+        ? null
+        : {
+            scheduled_text: todo.todoRawTime.scheduledText,
+            due_text: todo.todoRawTime.dueText,
+            time_zone: todo.todoRawTime.timeZone,
+          },
+    todo_occurrence: todo.todoOccurrence,
+    occurred_at: todo.occurredAt,
+    source: todo.source,
+    reason: todo.reason,
+    created_at: todo.createdAt,
+    updated_at: todo.updatedAt,
   } as const;
 }
 

@@ -16,6 +16,11 @@ import {
   memoryQueryRequestSchema,
   moveEntryRequestSchema,
   queryLimitSchema,
+  todoAdvanceRequestSchema,
+  todoAgendaQuerySchema,
+  todoPlanRequestSchema,
+  todoReopenRequestSchema,
+  todoTransitionRequestSchema,
 } from "./contracts.ts";
 import * as response from "./response-schemas.ts";
 
@@ -44,6 +49,7 @@ export const searchQuerySchema = z.strictObject({
 });
 export const bucketPathSchema = z.strictObject({ bucketId: trimmed });
 export const entryPathSchema = z.strictObject({ entryId: trimmed });
+export const todoPathSchema = z.strictObject({ todoId: trimmed });
 export const taskPathSchema = z.strictObject({ taskId: z.string().uuid() });
 export const agentTaskPathSchema = z.strictObject({ id: z.string().uuid() });
 
@@ -191,6 +197,58 @@ export const HTTP_OPERATIONS = [
     successStatus: 200,
     bodySchema: bucketStatusRequestSchema,
     responseSchema: response.bucketStatusResponseSchema,
+  },
+  {
+    operationId: "agenda",
+    method: "get",
+    path: "/api/agenda",
+    querySchema: todoAgendaQuerySchema,
+    successStatus: 200,
+    responseSchema: response.agendaResponseSchema,
+  },
+  {
+    operationId: "getTodo",
+    method: "get",
+    path: "/api/todos/:todoId",
+    paramsSchema: todoPathSchema,
+    successStatus: 200,
+    responseSchema: response.todoResponseSchema,
+  },
+  {
+    operationId: "transitionTodo",
+    method: "post",
+    path: "/api/todos/:todoId/transition",
+    paramsSchema: todoPathSchema,
+    bodySchema: todoTransitionRequestSchema,
+    successStatus: 200,
+    responseSchema: response.todoMutationResponseSchema,
+  },
+  {
+    operationId: "updateTodoPlan",
+    method: "post",
+    path: "/api/todos/:todoId/plan",
+    paramsSchema: todoPathSchema,
+    bodySchema: todoPlanRequestSchema,
+    successStatus: 200,
+    responseSchema: response.todoMutationResponseSchema,
+  },
+  {
+    operationId: "advanceTodo",
+    method: "post",
+    path: "/api/todos/:todoId/advance",
+    paramsSchema: todoPathSchema,
+    bodySchema: todoAdvanceRequestSchema,
+    successStatus: 200,
+    responseSchema: response.todoMutationResponseSchema,
+  },
+  {
+    operationId: "reopenTodo",
+    method: "post",
+    path: "/api/todos/:todoId/reopen",
+    paramsSchema: todoPathSchema,
+    bodySchema: todoReopenRequestSchema,
+    successStatus: 200,
+    responseSchema: response.todoMutationResponseSchema,
   },
   {
     operationId: "submitTask",

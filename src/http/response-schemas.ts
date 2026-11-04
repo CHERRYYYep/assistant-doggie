@@ -8,6 +8,7 @@ import {
   BUCKET_TYPES,
   CLASSIFICATION_ACTIONS,
 } from "../domain/types.ts";
+import { TODO_STATUSES } from "../domain/todo.ts";
 
 const text = z.string();
 const id = z.string().min(1);
@@ -18,6 +19,19 @@ const confidence = z.number().min(0).max(1);
 const ids = z.array(id);
 const strings = z.array(text);
 const count = z.number().int().nonnegative();
+const todoStatus = z.enum(TODO_STATUSES);
+const repeatRuleResponseSchema = z.strictObject({
+  frequency: z.enum(["daily", "weekly", "monthly"]),
+  interval: z.number().int().min(1).max(31),
+  weekdays: z.array(z.number().int().min(1).max(7)).nullable(),
+  until: z.string().datetime().nullable(),
+  count: z.number().int().min(1).max(366).nullable(),
+});
+const todoRawTimeResponseSchema = z.strictObject({
+  scheduled_text: text.nullable(),
+  due_text: text.nullable(),
+  time_zone: text,
+});
 
 export const bucketResponseSchema = z.strictObject({
   id,
@@ -293,6 +307,38 @@ export const bucketStatusResponseSchema = z.strictObject({
   ok: z.literal(true),
   bucket_id: id,
   status: z.enum(BUCKET_STATUSES),
+});
+export const todoSchema = z.strictObject({
+  id,
+  bucket_id: id,
+  entry_id: nullableText,
+  kind: z.literal("todo"),
+  text,
+  status: todoStatus,
+  scheduled_at: nullableTimestamp,
+  due_at: nullableTimestamp,
+  todo_rule: repeatRuleResponseSchema.nullable(),
+  todo_raw_time: todoRawTimeResponseSchema.nullable(),
+  todo_occurrence: z.number().int().min(1).nullable(),
+  occurred_at: nullableText,
+  source: nullableText,
+  reason: nullableText,
+  created_at: timestamp,
+  updated_at: timestamp,
+});
+export const agendaResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  now: timestamp,
+  todos: z.array(todoSchema),
+});
+export const todoResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  todo: todoSchema,
+});
+export const todoMutationResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  todo: todoSchema,
+  correction_id: id,
 });
 export const errorResponseSchema = z.strictObject({
   ok: z.literal(false),

@@ -7,6 +7,7 @@
 
 import {
   buckets,
+  agenda,
   chatInput,
   chatMessages,
   chatSend,
@@ -14,6 +15,7 @@ import {
   memoryQueryButton,
   memoryQueryInput,
   newChatButton,
+  refreshAgendaButton,
   refreshBucketsButton,
   setStatus,
   taskList,
@@ -28,6 +30,9 @@ import {
   moveEntry,
   revokeEntry,
   refreshBuckets,
+  refreshAgenda,
+  reopenAgendaTodo,
+  transitionAgendaTodo,
   runMemoryQuery,
   sendMessage,
   showBucket,
@@ -67,6 +72,23 @@ buckets.addEventListener("click", (event: MouseEvent) => {
   }
 });
 
+agenda.addEventListener("click", (event: MouseEvent) => {
+  const button = closestActionButton(event);
+  if (!button) return;
+  const action = button.dataset["action"];
+  const run =
+    action === "todo-transition"
+      ? transitionAgendaTodo(button)
+      : action === "todo-reopen"
+        ? reopenAgendaTodo(button)
+        : action === "show-todo-source"
+          ? showBucket(button.dataset["bucketId"])
+          : undefined;
+  if (run !== undefined) {
+    void run.catch((error: unknown) => setStatus(errorMessage(error), "warning"));
+  }
+});
+
 detail.addEventListener("click", async (event: MouseEvent) => {
   const button = closestActionButton(event);
   if (!button) return;
@@ -96,6 +118,7 @@ newChatButton.addEventListener("click", () => {
   setStatus("");
 });
 refreshBucketsButton.addEventListener("click", () => void refreshBuckets());
+refreshAgendaButton.addEventListener("click", () => void refreshAgenda(true));
 memoryQueryButton.addEventListener("click", () => void runMemoryQuery());
 memoryQueryInput.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.key === "Enter") {
@@ -112,7 +135,7 @@ taskList.addEventListener("click", (event: MouseEvent) => {
   }
 });
 taskRefresh.addEventListener("click", () => void resumeTasks());
-void Promise.all([refreshBuckets(), loadHistory(), resumeTasks()]);
+void Promise.all([refreshBuckets(), refreshAgenda(), loadHistory(), resumeTasks()]);
 
 import { agentList, agentPropose, agentRegister, agentRefresh } from "./dom.ts";
 import { refreshAgents, registerWorkspace, proposeAgent, actOnAgent } from "./agents.ts";

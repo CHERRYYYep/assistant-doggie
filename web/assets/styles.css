@@ -250,6 +250,39 @@ button:disabled {
   overflow: hidden;
 }
 
+.agenda-list {
+  max-height: 34vh;
+  overflow: auto;
+}
+.agenda-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 0.55rem;
+  margin: 0.35rem 0;
+}
+.agenda-item-main {
+  display: grid;
+  gap: 0.12rem;
+}
+.todo-status {
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+.agenda-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+.agenda-actions button {
+  padding: 0.25rem 0.45rem;
+  font-size: 0.76rem;
+}
+.agenda-blocked {
+  border-color: var(--warn-line);
+}
+
 .detail-panel {
   background: var(--panel);
   border: 1px solid var(--line);

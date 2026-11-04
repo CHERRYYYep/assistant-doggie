@@ -15,6 +15,7 @@ import {
   fetchBucketDetail,
   fetchChatHistory,
   fetchMemoryQuery,
+  fetchAgenda,
   postChatConfirmation,
   postTask,
   postTaskCancel,
@@ -23,9 +24,12 @@ import {
   watchTask,
   postEntryMove,
   revokeEntryRequest,
+  postTodoTransition,
+  postTodoReopen,
 } from "./api.ts";
 import {
   buckets,
+  agenda,
   chatInput,
   chatMessages,
   chatSend,
@@ -91,6 +95,81 @@ export async function refreshBuckets(): Promise<void> {
   } catch (error) {
     if (revision !== state.bucketsRequestRevision) return;
     buckets.innerHTML = `<span class="warning">${escapeHtml(errorMessage(error))}</span>`;
+  }
+}
+
+const TODO_STATUS_LABELS = {
+  open: "待处理",
+  in_progress: "进行中",
+  blocked: "阻塞",
+  done: "已完成",
+  cancelled: "已取消",
+} as const;
+
+function todoTime(value: string | null): string {
+  if (value === null) return "无日期";
+  return new Date(value).toLocaleString();
+}
+
+export function renderAgenda(): void {
+  agenda.innerHTML =
+    state.agenda
+      .map((todo) => {
+        const historical = todo.status === "done" || todo.status === "cancelled";
+        const actions = historical
+          ? `<button data-action="todo-reopen" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">重新打开</button>`
+          : `<button data-action="todo-transition" data-status="done" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">完成</button><button data-action="todo-transition" data-status="blocked" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">阻塞</button><button data-action="todo-transition" data-status="cancelled" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">取消</button>`;
+        return `<article class="agenda-item agenda-${todo.status}"><div class="agenda-item-main"><strong>${escapeHtml(todo.text)}</strong><span class="todo-status">${TODO_STATUS_LABELS[todo.status]}</span><span class="muted">${escapeHtml(todoTime(todo.scheduled_at ?? todo.due_at))} · Bucket ${escapeHtml(todo.bucket_id)}</span></div><div class="agenda-actions">${actions}<button data-action="show-todo-source" data-bucket-id="${escapeHtml(todo.bucket_id)}">查看来源</button></div></article>`;
+      })
+      .join("") || '<span class="muted">暂无待处理 TODO</span>';
+}
+
+export async function refreshAgenda(includeHistory = false): Promise<void> {
+  const revision = ++state.agendaRequestRevision;
+  agenda.textContent = "加载中…";
+  try {
+    const data = await fetchAgenda(includeHistory);
+    if (revision !== state.agendaRequestRevision) return;
+    state.agenda = [...data.todos];
+    renderAgenda();
+  } catch (error) {
+    if (revision !== state.agendaRequestRevision) return;
+    agenda.innerHTML = `<span class="warning">${escapeHtml(errorMessage(error))}</span>`;
+  }
+}
+
+export async function transitionAgendaTodo(button: HTMLButtonElement): Promise<void> {
+  const todoId = requireDataset(button, "todoId");
+  const status = button.dataset["status"];
+  const expected = requireDataset(button, "expectedUpdatedAt");
+  if (status !== "done" && status !== "blocked" && status !== "cancelled") {
+    throw new Error("TODO 状态操作无效");
+  }
+  button.disabled = true;
+  try {
+    await postTodoTransition(todoId, {
+      status,
+      command_text: `用户将 TODO 标记为${TODO_STATUS_LABELS[status]}。`,
+      expected_updated_at: expected,
+    });
+    await refreshAgenda();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+export async function reopenAgendaTodo(button: HTMLButtonElement): Promise<void> {
+  const todoId = requireDataset(button, "todoId");
+  const expected = requireDataset(button, "expectedUpdatedAt");
+  button.disabled = true;
+  try {
+    await postTodoReopen(todoId, {
+      command_text: "用户重新打开 TODO。",
+      expected_updated_at: expected,
+    });
+    await refreshAgenda(true);
+  } finally {
+    button.disabled = false;
   }
 }
 

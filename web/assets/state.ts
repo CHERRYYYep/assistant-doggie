@@ -6,11 +6,12 @@
  */
 
 import type { TaskSnapshot } from "../../src/domain/task.ts";
-import type { BucketDto, UiChatMessageDto } from "../../src/http/dto.ts";
+import type { BucketDto, TodoDto, UiChatMessageDto } from "../../src/http/dto.ts";
 
 export type FrontendState = {
   /** Active buckets as last returned by the server. */
   activeBuckets: readonly BucketDto[];
+  agenda: readonly TodoDto[];
   /** Bucket whose detail panel is open, or null. */
   selectedBucketId: string | null;
   /** Chat messages currently rendered, oldest first. */
@@ -22,6 +23,7 @@ export type FrontendState = {
   resumingTasks: boolean;
   historyRequestRevision: number;
   bucketsRequestRevision: number;
+  agendaRequestRevision: number;
   detailRequestRevision: number;
   queryRequestRevision: number;
   revokingEntries: Set<string>;
@@ -29,6 +31,7 @@ export type FrontendState = {
 
 export const state: FrontendState = {
   activeBuckets: [],
+  agenda: [],
   selectedBucketId: null,
   history: [],
   tasks: new Map(),
@@ -38,6 +41,7 @@ export const state: FrontendState = {
   resumingTasks: false,
   historyRequestRevision: 0,
   bucketsRequestRevision: 0,
+  agendaRequestRevision: 0,
   detailRequestRevision: 0,
   queryRequestRevision: 0,
   revokingEntries: new Set(),

@@ -68,6 +68,12 @@ export type EntryRevocationResponse = ResponseDto<
 export type BucketStatusResponse = ResponseDto<
   typeof schema.bucketStatusResponseSchema
 >;
+export type TodoDto = ResponseDto<typeof schema.todoSchema>;
+export type AgendaResponse = ResponseDto<typeof schema.agendaResponseSchema>;
+export type TodoResponse = ResponseDto<typeof schema.todoResponseSchema>;
+export type TodoMutationResponse = ResponseDto<
+  typeof schema.todoMutationResponseSchema
+>;
 
 export type ArchiveActionDto = NonNullable<
   ArchiveProjectionDto["available_actions"]
