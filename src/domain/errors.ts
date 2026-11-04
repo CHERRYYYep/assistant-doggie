@@ -13,7 +13,13 @@ export type DomainErrorKind =
   | "confidence_out_of_range"
   | "invalid_confidence_thresholds"
   | "inconsistent_classification"
-  | "candidate_limit_too_small";
+  | "candidate_limit_too_small"
+  | "invalid_todo_status"
+  | "invalid_todo_transition"
+  | "invalid_todo_time"
+  | "invalid_todo_plan"
+  | "invalid_repeat_rule"
+  | "unsupported_repeat_rule";
 
 export class DomainError extends Error {
   readonly kind: DomainErrorKind;
@@ -55,6 +61,39 @@ export class DomainError extends Error {
       "candidate_limit_too_small",
       "candidate limit must be at least 1",
     );
+  }
+
+  static invalidTodoStatus(status: unknown): DomainError {
+    return new DomainError(
+      "invalid_todo_status",
+      `invalid TODO status: ${String(status)}`,
+    );
+  }
+
+  static invalidTodoTransition(from: string, to: string): DomainError {
+    return new DomainError(
+      "invalid_todo_transition",
+      `TODO cannot transition from ${from} to ${to}`,
+    );
+  }
+
+  static invalidTodoTime(field: string, value: unknown): DomainError {
+    return new DomainError(
+      "invalid_todo_time",
+      `${field} must be an ISO 8601 timestamp with an explicit timezone: ${String(value)}`,
+    );
+  }
+
+  static invalidTodoPlan(detail: string): DomainError {
+    return new DomainError("invalid_todo_plan", detail);
+  }
+
+  static invalidRepeatRule(detail: string): DomainError {
+    return new DomainError("invalid_repeat_rule", detail);
+  }
+
+  static unsupportedRepeatRule(detail: string): DomainError {
+    return new DomainError("unsupported_repeat_rule", detail);
   }
 }
 
