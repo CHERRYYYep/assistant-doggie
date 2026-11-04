@@ -412,6 +412,8 @@ Bucket ──N:1──► Workspace ──1:N──► AgentSession
 | # | 阶段 | 交付 | 参考实现 |
 |---|---|---|---|
 | **T14** | TODO 生命周期 + agenda | `SCHEDULED` / `DEADLINE` / repeater | **org-mode / org-agenda** |
+
+T14 的实现规划见 [T14_PLAN.md](T14_PLAN.md)。实现前先冻结状态、时间、重复和 schema 取舍。
 | **T15** | 调度器 + 系统通知 | 持久化调度、重启补跑策略 | 本地进程直接调 `notify-send` |
 | **T16** | 插件系统 | Doggie 作为 MCP client | 插件 = MCP server，任意语言、进程隔离 |
 | **T17** | **数据导出/导入** | 全量导出、可重新导入 | Q3 明确承诺的未来需求 |
