@@ -215,15 +215,18 @@ T14 只有同时满足以下条件才标记完成：
 - 功能性 UI 可完成状态操作并正确处理失败；
 - `npm run check`、T14 定向集成测试和文档检查全部通过。
 
-## 10. 需要在实现前确认的产品决定
+## 10. 产品决定与实现默认值
 
-以下决定会改变领域和数据库合同，建议在 T14-A 开始前确定：
+以下三项已经确认：
 
-1. 五状态是否采用 `open / in_progress / blocked / done / cancelled`，还是缩减为四状态并去掉 `blocked`；
-2. 默认时区取系统时区，还是增加用户配置；
-3. 重复 TODO 是“完成后推进下一项”，还是按日历自动生成 occurrence；
-4. 是否接受 schema v7 的三个显式字段，还是坚持把计划字段全部放入 metadata；
-5. Agenda 是否默认隐藏 done/cancelled，还是提供可切换历史窗口；
-6. T14 是否先交付非重复 TODO，再把 repeater 作为同一阶段的后半段。
+1. TODO 使用五状态：`open / in_progress / blocked / done / cancelled`；
+2. 重复 TODO 在用户完成当前发生项后计算并推进下一次，不由后台自动生成多个 occurrence；
+3. 采用 schema v7 的显式字段，不把核心计划语义隐藏在 `metadata_json` 中。
 
-在这些问题确定前，不进入 T14-B 的数据库实现。
+以下是进入 T14-A 时采用的实现默认值，若真实需求出现再单独调整：
+
+- 默认时区取运行时配置的 IANA 系统时区，同时在 TODO 计划中保存解析时区；
+- Agenda 默认显示 open、in_progress、blocked、逾期和近期项目，done/cancelled 通过历史筛选查看；
+- 先完成非重复 TODO 的完整生命周期，再在同一 T14 阶段接入受限 repeater；重复规则不能阻塞普通 TODO 的交付。
+
+因此可以进入 T14-A（领域语义与不变量）；完成 T14-A 的测试后再进入 schema v7 和 Store 实现。
