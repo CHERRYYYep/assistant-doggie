@@ -16,6 +16,19 @@ import type {
   ClassificationAction,
 } from "../domain/types.ts";
 import {
+  calculateNextTodoOccurrence,
+  createRepeatRule,
+  createTodoPlan,
+  createTodoRawTime,
+  isTodoStatus,
+  normalizeTodoTime,
+  transitionTodoStatus,
+  type RepeatRule,
+  type TodoPlan,
+  type TodoRawTime,
+  type TodoStatus,
+} from "../domain/todo.ts";
+import {
   extractionToMemoryRows,
   type ExtractionResult,
 } from "../domain/memory.ts";
@@ -97,12 +110,35 @@ export type MemoryRow = {
   readonly text: string;
   readonly status: string | null;
   readonly dueAt: string | null;
+  readonly scheduledAt: string | null;
+  readonly todoRule: RepeatRule | null;
+  readonly todoRawTime: TodoRawTime | null;
+  readonly todoOccurrence: number | null;
   readonly occurredAt: string | null;
   readonly source: string | null;
   readonly reason: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly metadata: JsonValue;
+};
+
+export type TodoRow = MemoryRow & {
+  readonly kind: "todo";
+  readonly status: TodoStatus;
+};
+
+export type TodoAgendaInput = {
+  readonly now?: unknown;
+  readonly from?: unknown;
+  readonly to?: unknown;
+  readonly bucketId?: string | undefined;
+  readonly statuses?: readonly unknown[] | undefined;
+  readonly includeHistory?: boolean | undefined;
+};
+
+export type TodoMutationOutcome = {
+  readonly todo: TodoRow;
+  readonly correctionId: string;
 };
 
 export type QueryEntryCandidate = {
@@ -568,29 +604,57 @@ export class Store {
     const seen = dedupeExisting
       ? this.#existingMemoryKeys(entryId)
       : new Set<string>();
+    const hasTodoPlanColumns =
+      this.#database
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('memory_items') WHERE name = 'scheduled_at'",
+        )
+        .get() !== undefined;
     const insert = this.#database.prepare(
-      `INSERT INTO memory_items
-         (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      hasTodoPlanColumns
+        ? `INSERT INTO memory_items
+             (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
+              scheduled_at, todo_rule_json, todo_raw_time_json, todo_occurrence,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`
+        : `INSERT INTO memory_items
+             (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     const insertedIds: string[] = [];
     for (const row of extractionToMemoryRows(extraction)) {
       const key = this.#memoryKey(row);
       if (seen.has(key)) continue;
       const id = newId();
-      insert.run(
-        id,
-        bucketId,
-        entryId,
-        row.kind,
-        row.text,
-        row.status,
-        row.occurredAt,
-        row.source,
-        timestamp,
-        timestamp,
-      );
+      if (hasTodoPlanColumns) {
+        insert.run(
+          id,
+          bucketId,
+          entryId,
+          row.kind,
+          row.text,
+          row.status,
+          row.occurredAt,
+          row.source,
+          row.kind === "todo" ? 1 : null,
+          timestamp,
+          timestamp,
+        );
+      } else {
+        insert.run(
+          id,
+          bucketId,
+          entryId,
+          row.kind,
+          row.text,
+          row.status,
+          row.occurredAt,
+          row.source,
+          timestamp,
+          timestamp,
+        );
+      }
       insertedIds.push(id);
       seen.add(key);
     }
@@ -1643,7 +1707,8 @@ export class Store {
 
     const memories = this.#database
       .prepare(
-        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, occurred_at,
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, scheduled_at,
+                todo_rule_json, todo_raw_time_json, todo_occurrence, occurred_at,
                 source, reason, created_at, updated_at, metadata_json
          FROM memory_items WHERE bucket_id = ?
            AND (entry_id IS NULL OR EXISTS (
@@ -1663,6 +1728,10 @@ export class Store {
         text: row.text,
         status: row.status,
         dueAt: row.due_at,
+        scheduledAt: row.scheduled_at,
+        todoRule: parseTodoRule(row.todo_rule_json),
+        todoRawTime: parseTodoRawTime(row.todo_raw_time_json),
+        todoOccurrence: row.todo_occurrence,
         occurredAt: row.occurred_at,
         source: row.source,
         reason: row.reason,
@@ -1671,6 +1740,342 @@ export class Store {
         metadata: parseMetadata(row.metadata_json),
       })),
     };
+  }
+
+  /** Return one effective TODO, excluding a revoked source Entry. */
+  getTodo(todoId: string): TodoRow | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, scheduled_at,
+                todo_rule_json, todo_raw_time_json, todo_occurrence, occurred_at,
+                source, reason, created_at, updated_at, metadata_json
+         FROM memory_items
+         WHERE id = ? AND kind = 'todo'
+           AND (entry_id IS NULL OR EXISTS (
+             SELECT 1 FROM entries source
+             WHERE source.id = memory_items.entry_id AND source.revoked_at IS NULL
+           ))`,
+      )
+      .get(todoId) as MemoryColumns | undefined;
+    return row === undefined ? undefined : toTodoRow(row);
+  }
+
+  /** Stable Agenda projection with explicit history and time-window controls. */
+  listAgenda(input: TodoAgendaInput = {}): TodoRow[] {
+    const now =
+      input.now === undefined
+        ? this.#now()
+        : normalizeTodoTime(input.now, "agenda now");
+    const from =
+      input.from === undefined || input.from === null
+        ? undefined
+        : normalizeTodoTime(input.from, "agenda from");
+    const to =
+      input.to === undefined || input.to === null
+        ? undefined
+        : normalizeTodoTime(input.to, "agenda to");
+    if (from !== undefined && to !== undefined && from > to) {
+      throw StorageError.invalidWrite(
+        "agenda",
+        "from must not be later than to",
+      );
+    }
+
+    const statuses = input.statuses?.map((status) => {
+      if (!isTodoStatus(status)) {
+        throw StorageError.invalidWrite("agenda status", "is invalid");
+      }
+      return status;
+    });
+    const where = [
+      "m.kind = 'todo'",
+      `(m.entry_id IS NULL OR EXISTS (
+        SELECT 1 FROM entries source
+        WHERE source.id = m.entry_id AND source.revoked_at IS NULL
+      ))`,
+    ];
+    const parameters: (string | number)[] = [];
+    if (input.bucketId !== undefined) {
+      where.push("m.bucket_id = ?");
+      parameters.push(requiredField(input.bucketId, "bucket_id"));
+    }
+    if (statuses !== undefined && statuses.length > 0) {
+      where.push(`m.status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    } else if (input.includeHistory !== true) {
+      where.push("m.status IN ('open', 'in_progress', 'blocked')");
+    }
+    if (from !== undefined || to !== undefined) {
+      const window: string[] = [];
+      if (from !== undefined) {
+        window.push("(m.due_at IS NULL OR m.due_at >= ?)");
+        parameters.push(from);
+      }
+      if (to !== undefined) {
+        window.push("(m.scheduled_at IS NULL OR m.scheduled_at <= ?)");
+        parameters.push(to);
+      }
+      where.push(
+        `(m.scheduled_at IS NULL AND m.due_at IS NULL OR ${window.join(" AND ")})`,
+      );
+    }
+    const rows = this.#database
+      .prepare(
+        `SELECT m.id, m.bucket_id, m.entry_id, m.kind, m.text, m.status,
+                m.due_at, m.scheduled_at, m.todo_rule_json, m.todo_raw_time_json,
+                m.todo_occurrence, m.occurred_at, m.source, m.reason,
+                m.created_at, m.updated_at, m.metadata_json
+         FROM memory_items m
+         WHERE ${where.join(" AND ")}
+         ORDER BY
+           CASE WHEN m.status IN ('open', 'in_progress', 'blocked')
+                     AND m.due_at IS NOT NULL AND m.due_at < ? THEN 0 ELSE 1 END,
+           CASE m.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1
+                         WHEN 'blocked' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,
+           COALESCE(m.due_at, m.scheduled_at, '9999-12-31T23:59:59.999Z'),
+           m.updated_at DESC, m.id ASC`,
+      )
+      .all(...parameters, now) as MemoryColumns[];
+    return rows.map(toTodoRow);
+  }
+
+  transitionTodo(
+    todoId: string,
+    nextStatus: unknown,
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      const status = transitionTodoStatus(current.status, nextStatus);
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      this.#database
+        .prepare(
+          "UPDATE memory_items SET status = ?, updated_at = ? WHERE id = ? AND updated_at = ?",
+        )
+        .run(status, timestamp, todoId, expected);
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        { ...current, status, updatedAt: timestamp },
+        timestamp,
+        "todo_transition",
+      );
+      const todo = this.#requireTodoForMutation(todoId);
+      return { todo, correctionId };
+    });
+  }
+
+  updateTodoPlan(
+    todoId: string,
+    planInput: Parameters<typeof createTodoPlan>[0],
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    const plan = createTodoPlan(planInput);
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      const occurrence =
+        plan.repeatRule === null
+          ? null
+          : current.todoRule === null ||
+              JSON.stringify(current.todoRule) !==
+                JSON.stringify(plan.repeatRule)
+            ? 1
+            : (current.todoOccurrence ?? 1);
+      this.#database
+        .prepare(
+          `UPDATE memory_items
+           SET scheduled_at = ?, due_at = ?, todo_rule_json = ?,
+               todo_raw_time_json = ?, todo_occurrence = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ?`,
+        )
+        .run(
+          plan.scheduledAt,
+          plan.dueAt,
+          plan.repeatRule === null ? null : JSON.stringify(plan.repeatRule),
+          plan.rawTime === null ? null : JSON.stringify(plan.rawTime),
+          occurrence,
+          timestamp,
+          todoId,
+          expected,
+        );
+      const updated = {
+        ...current,
+        scheduledAt: plan.scheduledAt,
+        dueAt: plan.dueAt,
+        todoRule: plan.repeatRule,
+        todoRawTime: plan.rawTime,
+        todoOccurrence: occurrence,
+        updatedAt: timestamp,
+      };
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        updated,
+        timestamp,
+        "todo_plan",
+      );
+      return { todo: this.#requireTodoForMutation(todoId), correctionId };
+    });
+  }
+
+  advanceRepeatingTodo(
+    todoId: string,
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      if (current.todoRule === null || current.scheduledAt === null) {
+        throw StorageError.invalidWrite(
+          "todo",
+          "cannot advance without a repeat rule and scheduled_at",
+        );
+      }
+      if (current.status !== "open" && current.status !== "in_progress") {
+        throw StorageError.invalidWrite(
+          "todo",
+          "only open or in_progress TODOs can be advanced",
+        );
+      }
+      const next = calculateNextTodoOccurrence(
+        current.scheduledAt,
+        current.todoRule,
+        current.todoOccurrence ?? 1,
+      );
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      let status: TodoStatus = "done";
+      let scheduledAt = current.scheduledAt;
+      let dueAt = current.dueAt;
+      let occurrence = current.todoOccurrence ?? 1;
+      if (next !== null) {
+        status = "open";
+        scheduledAt = next;
+        occurrence += 1;
+        if (current.dueAt !== null) {
+          const offset =
+            Date.parse(current.dueAt) - Date.parse(current.scheduledAt);
+          dueAt = new Date(Date.parse(next) + offset).toISOString();
+        }
+      }
+      this.#database
+        .prepare(
+          `UPDATE memory_items
+           SET status = ?, scheduled_at = ?, due_at = ?, todo_occurrence = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ?`,
+        )
+        .run(
+          status,
+          scheduledAt,
+          dueAt,
+          occurrence,
+          timestamp,
+          todoId,
+          expected,
+        );
+      const updated = {
+        ...current,
+        status,
+        scheduledAt,
+        dueAt,
+        todoOccurrence: occurrence,
+        updatedAt: timestamp,
+      };
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        updated,
+        timestamp,
+        "todo_advance",
+      );
+      return { todo: this.#requireTodoForMutation(todoId), correctionId };
+    });
+  }
+
+  #requireTodoForMutation(todoId: string): TodoRow {
+    const raw = this.#database
+      .prepare(
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, scheduled_at,
+                todo_rule_json, todo_raw_time_json, todo_occurrence, occurred_at,
+                source, reason, created_at, updated_at, metadata_json
+         FROM memory_items WHERE id = ?`,
+      )
+      .get(todoId) as MemoryColumns | undefined;
+    if (raw === undefined)
+      throw StorageError.missingRecord("memory_items", todoId);
+    if (raw.kind !== "todo") {
+      throw StorageError.invalidWrite(
+        "todo_id",
+        "must reference a TODO memory",
+      );
+    }
+    if (raw.entry_id !== null) {
+      const source = this.#database
+        .prepare("SELECT revoked_at FROM entries WHERE id = ?")
+        .get(raw.entry_id) as { revoked_at: string | null } | undefined;
+      if (source?.revoked_at !== null) {
+        throw StorageError.invalidWrite("todo", "source Entry is revoked");
+      }
+    }
+    return toTodoRow(raw);
+  }
+
+  #assertTodoVersion(todo: TodoRow, expected: string): void {
+    if (todo.updatedAt !== expected) {
+      throw StorageError.staleWrite("todo", todo.id);
+    }
+  }
+
+  #nextTodoTimestamp(previous: string): string {
+    const candidate = this.#now();
+    const previousMs = Date.parse(previous);
+    if (!Number.isFinite(previousMs)) {
+      throw StorageError.invalidWrite("todo.updated_at", "is invalid");
+    }
+    return candidate > previous
+      ? candidate
+      : new Date(previousMs + 1).toISOString();
+  }
+
+  #insertTodoCorrection(
+    command: string,
+    todoId: string,
+    before: TodoRow,
+    after: TodoRow,
+    timestamp: string,
+    action: string,
+  ): string {
+    const correctionId = newId();
+    this.#database
+      .prepare(
+        `INSERT INTO corrections
+           (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+         VALUES (?, ?, ?, 'memory', ?, ?, ?, ?)`,
+      )
+      .run(
+        correctionId,
+        command,
+        action,
+        todoId,
+        JSON.stringify(todoAuditSnapshot(before)),
+        JSON.stringify(todoAuditSnapshot(after)),
+        timestamp,
+      );
+    return correctionId;
   }
 
   #toBucketRow(row: BucketColumns): BucketRow {
@@ -1728,6 +2133,10 @@ type MemoryColumns = {
   text: string;
   status: string | null;
   due_at: string | null;
+  scheduled_at: string | null;
+  todo_rule_json: string | null;
+  todo_raw_time_json: string | null;
+  todo_occurrence: number | null;
   occurred_at: string | null;
   source: string | null;
   reason: string | null;
@@ -1745,6 +2154,87 @@ function escapeLikeLiteral(value: string): string {
 
 function parseMetadata(value: string): JsonValue {
   return JSON.parse(value) as JsonValue;
+}
+
+function parseTodoRule(value: string | null): RepeatRule | null {
+  if (value === null) return null;
+  try {
+    return createRepeatRule(JSON.parse(value) as unknown);
+  } catch {
+    throw StorageError.invalidWrite(
+      "todo_rule_json",
+      "contains invalid stored data",
+    );
+  }
+}
+
+function parseTodoRawTime(value: string | null): TodoRawTime | null {
+  if (value === null) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed !== "object" || parsed === null) throw new Error();
+    const candidate = parsed as {
+      readonly scheduledText?: unknown;
+      readonly dueText?: unknown;
+      readonly timeZone?: unknown;
+    };
+    return createTodoRawTime({
+      scheduledText: candidate.scheduledText,
+      dueText: candidate.dueText,
+      timeZone: candidate.timeZone,
+    });
+  } catch {
+    throw StorageError.invalidWrite(
+      "todo_raw_time_json",
+      "contains invalid stored data",
+    );
+  }
+}
+
+function toTodoRow(row: MemoryColumns): TodoRow {
+  if (row.kind !== "todo" || !isTodoStatus(row.status)) {
+    throw StorageError.invalidWrite("todo", "contains invalid stored status");
+  }
+  if (
+    row.todo_occurrence !== null &&
+    (!Number.isSafeInteger(row.todo_occurrence) || row.todo_occurrence < 1)
+  ) {
+    throw StorageError.invalidWrite(
+      "todo_occurrence",
+      "contains invalid stored data",
+    );
+  }
+  return {
+    id: row.id,
+    bucketId: row.bucket_id,
+    entryId: row.entry_id,
+    kind: "todo",
+    text: row.text,
+    status: row.status,
+    dueAt: row.due_at,
+    scheduledAt: row.scheduled_at,
+    todoRule: parseTodoRule(row.todo_rule_json),
+    todoRawTime: parseTodoRawTime(row.todo_raw_time_json),
+    todoOccurrence: row.todo_occurrence,
+    occurredAt: row.occurred_at,
+    source: row.source,
+    reason: row.reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    metadata: parseMetadata(row.metadata_json),
+  };
+}
+
+function todoAuditSnapshot(todo: TodoRow): Record<string, unknown> {
+  return {
+    status: todo.status,
+    scheduled_at: todo.scheduledAt,
+    due_at: todo.dueAt,
+    todo_rule: todo.todoRule,
+    todo_raw_time: todo.todoRawTime,
+    todo_occurrence: todo.todoOccurrence,
+    updated_at: todo.updatedAt,
+  };
 }
 
 function toEntryRow(row: EntryColumns): EntryRow {

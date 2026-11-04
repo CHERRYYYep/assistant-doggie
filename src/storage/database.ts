@@ -26,6 +26,7 @@ export type StorageErrorKind =
   | "archive_attempt_not_found"
   | "archive_attempt_text_mismatch"
   | "archive_attempt_not_pending"
+  | "stale_write"
   | "pragma_not_applied";
 
 export class StorageError extends Error {
@@ -70,6 +71,13 @@ export class StorageError extends Error {
     return new StorageError(
       "archive_attempt_not_pending",
       `archive attempt ${id} is not pending`,
+    );
+  }
+
+  static staleWrite(table: string, id: string): StorageError {
+    return new StorageError(
+      "stale_write",
+      `${table} ${id} was changed after the client read it`,
     );
   }
 }
@@ -312,6 +320,15 @@ function assertSchemaShape(database: DatabaseSync): void {
     ["buckets", ["workspace_id"]],
     ["entries", ["revoked_at"]],
     ["agent_sessions", ["memory_revision"]],
+    [
+      "memory_items",
+      [
+        "scheduled_at",
+        "todo_rule_json",
+        "todo_raw_time_json",
+        "todo_occurrence",
+      ],
+    ],
   ] as const) {
     const columns = new Set(
       database

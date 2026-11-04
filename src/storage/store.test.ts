@@ -794,7 +794,7 @@ test("the schema records its version", () => {
   const meta = store.database
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     .get() as { value: string };
-  assert.equal(meta.value, "6");
+  assert.equal(meta.value, "7");
 
   const migrations = store.database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -806,6 +806,7 @@ test("the schema records its version", () => {
     { version: 4, name: "add_background_tasks_v4" },
     { version: 5, name: "add_agent_control_v5" },
     { version: 6, name: "add_entry_revocation_v6" },
+    { version: 7, name: "add_todo_plan_v7" },
   ]);
 });
 

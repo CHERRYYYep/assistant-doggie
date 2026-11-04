@@ -112,6 +112,7 @@ TODO 仍然是 Entry 派生 Memory，不是脱离原文的独立事实：
 - 保留已有 `due_at TEXT NULL`；
 - `todo_rule_json TEXT NULL`，保存经过 Zod 校验的 `RepeatRule`；
 - `todo_raw_time_json TEXT NULL`，保存必要的原始时间表达和解析时区；
+- `todo_occurrence INTEGER NULL`，保存当前重复发生项序号，避免用 `metadata_json` 猜测 `count` 进度；
 - 继续使用 `status` 保存当前生命周期状态；
 - 使用 `updated_at` 与 correction audit 作为并发版本和变更依据。
 

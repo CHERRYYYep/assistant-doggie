@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -269,6 +269,22 @@ BEFORE UPDATE OF id,workspace_id,backend,created_at,memory_revision ON agent_ses
 BEGIN SELECT RAISE(ABORT, 'session binding is immutable'); END;
 `;
 
+const ADD_TODO_PLAN_V7 = `
+ALTER TABLE memory_items ADD COLUMN scheduled_at TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_rule_json TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_raw_time_json TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_occurrence INTEGER;
+
+-- Existing extracted TODOs are the first occurrence and remain open. Other
+-- memory kinds deliberately keep the new TODO columns NULL.
+UPDATE memory_items SET status = 'open' WHERE kind = 'todo' AND status IS NULL;
+UPDATE memory_items SET todo_occurrence = 1 WHERE kind = 'todo';
+
+CREATE INDEX ix_memory_items_todo_agenda
+    ON memory_items(kind, status, due_at, scheduled_at, updated_at, id)
+    WHERE kind = 'todo';
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -280,6 +296,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 4, name: "add_background_tasks_v4", sql: ADD_BACKGROUND_TASKS_V4 },
   { version: 5, name: "add_agent_control_v5", sql: ADD_AGENT_CONTROL_V5 },
   { version: 6, name: "add_entry_revocation_v6", sql: ADD_ENTRY_REVOCATION_V6 },
+  { version: 7, name: "add_todo_plan_v7", sql: ADD_TODO_PLAN_V7 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */

@@ -214,6 +214,7 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
       case "archive_attempt_not_found":
       case "archive_attempt_text_mismatch":
       case "archive_attempt_not_pending":
+      case "stale_write":
         return new HttpBoundaryError(409, error.message);
       case "invalid_write":
         return new HttpBoundaryError(400, error.message);

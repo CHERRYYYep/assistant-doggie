@@ -421,7 +421,7 @@ test("v5 migration and database reopen preserve records and legacy orphans with 
       database
         .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
         .get()?.["value"],
-      "6",
+      "7",
     );
     const revocation = store.deleteEntry(
       record.entryId,
