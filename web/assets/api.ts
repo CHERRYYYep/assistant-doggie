@@ -41,6 +41,20 @@ export const ROUTES = {
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 
+export class ApiRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
+export function isConflictError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError && error.status === 409;
+}
+
 /** Fetch JSON and turn every non-2xx response into a stable browser Error. */
 export async function jsonRequest<TResponse>(
   url: string,
@@ -60,7 +74,7 @@ export async function jsonRequest<TResponse>(
   const pathname = new URL(url, "http://localhost").pathname;
   validateResponse(data, options.method ?? "GET", pathname, response.ok);
   if (!response.ok) {
-    throw new Error(errorMessage(data) ?? `HTTP ${response.status}`);
+    throw new ApiRequestError(response.status, errorMessage(data) ?? `HTTP ${response.status}`);
   }
   return data as TResponse;
 }

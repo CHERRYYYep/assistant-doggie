@@ -16,6 +16,7 @@ import {
   fetchChatHistory,
   fetchMemoryQuery,
   fetchAgenda,
+  isConflictError,
   postChatConfirmation,
   postTask,
   postTaskCancel,
@@ -25,6 +26,8 @@ import {
   postEntryMove,
   revokeEntryRequest,
   postTodoTransition,
+  postTodoPlan,
+  postTodoAdvance,
   postTodoReopen,
 } from "./api.ts";
 import {
@@ -111,15 +114,53 @@ function todoTime(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
+function localDateTimeValue(value: string | null): string {
+  if (value === null) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+  const pad = (part: number): string => String(part).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function isoDateTimeValue(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  const date = new Date(trimmed);
+  if (!Number.isFinite(date.getTime())) throw new Error("TODO 时间格式无效");
+  return date.toISOString();
+}
+
+function isRepeatFrequency(value: string): value is "daily" | "weekly" | "monthly" {
+  return value === "daily" || value === "weekly" || value === "monthly";
+}
+
+function todoPlanEditor(todo: (typeof state.agenda)[number]): string {
+  const rule = todo.todo_rule;
+  const frequency = rule?.frequency ?? "none";
+  const interval = rule?.interval ?? 1;
+  return `<details class="todo-plan-editor"><summary>编辑计划</summary><div class="todo-plan-fields"><label>计划时间<input data-role="todo-scheduled" type="datetime-local" value="${escapeHtml(localDateTimeValue(todo.scheduled_at))}" /></label><label>截止时间<input data-role="todo-due" type="datetime-local" value="${escapeHtml(localDateTimeValue(todo.due_at))}" /></label><label>重复<select data-role="todo-frequency"><option value="none"${frequency === "none" ? " selected" : ""}>不重复</option><option value="daily"${frequency === "daily" ? " selected" : ""}>每天</option><option value="weekly"${frequency === "weekly" ? " selected" : ""}>每周</option><option value="monthly"${frequency === "monthly" ? " selected" : ""}>每月</option></select></label><label>间隔<input data-role="todo-interval" type="number" min="1" max="31" value="${interval}" /></label><button data-action="todo-save-plan" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">保存计划</button></div></details>`;
+}
+
 export function renderAgenda(): void {
   agenda.innerHTML =
     state.agenda
       .map((todo) => {
         const historical = todo.status === "done" || todo.status === "cancelled";
+        const repeating = todo.todo_rule !== null;
+        const startAction =
+          todo.status === "open" || todo.status === "blocked"
+            ? `<button data-action="todo-transition" data-status="in_progress" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">${todo.status === "blocked" ? "继续处理" : "开始处理"}</button>`
+            : "";
+        const completeAction =
+          todo.status === "in_progress" || todo.status === "open"
+            ? repeating
+              ? `<button data-action="todo-advance" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">完成并推进</button>`
+              : `<button data-action="todo-transition" data-status="done" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">完成</button>`
+            : "";
         const actions = historical
           ? `<button data-action="todo-reopen" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">重新打开</button>`
-          : `<button data-action="todo-transition" data-status="done" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">完成</button><button data-action="todo-transition" data-status="blocked" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">阻塞</button><button data-action="todo-transition" data-status="cancelled" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">取消</button>`;
-        return `<article class="agenda-item agenda-${todo.status}"><div class="agenda-item-main"><strong>${escapeHtml(todo.text)}</strong><span class="todo-status">${TODO_STATUS_LABELS[todo.status]}</span><span class="muted">${escapeHtml(todoTime(todo.scheduled_at ?? todo.due_at))} · Bucket ${escapeHtml(todo.bucket_id)}</span></div><div class="agenda-actions">${actions}<button data-action="show-todo-source" data-bucket-id="${escapeHtml(todo.bucket_id)}">查看来源</button></div></article>`;
+          : `${startAction}${completeAction}<button data-action="todo-transition" data-status="blocked" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">阻塞</button><button data-action="todo-transition" data-status="cancelled" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">取消</button>`;
+        return `<article class="agenda-item agenda-${todo.status}"><div class="agenda-item-main"><strong>${escapeHtml(todo.text)}</strong><span class="todo-status">${TODO_STATUS_LABELS[todo.status]}</span><span class="muted">${escapeHtml(todoTime(todo.scheduled_at ?? todo.due_at))} · Bucket ${escapeHtml(todo.bucket_id)}</span></div><div class="agenda-actions">${actions}<button data-action="show-todo-source" data-bucket-id="${escapeHtml(todo.bucket_id)}">查看来源</button></div>${todoPlanEditor(todo)}</article>`;
       })
       .join("") || '<span class="muted">暂无待处理 TODO</span>';
 }
@@ -142,7 +183,13 @@ export async function transitionAgendaTodo(button: HTMLButtonElement): Promise<v
   const todoId = requireDataset(button, "todoId");
   const status = button.dataset["status"];
   const expected = requireDataset(button, "expectedUpdatedAt");
-  if (status !== "done" && status !== "blocked" && status !== "cancelled") {
+  if (
+    status !== "open" &&
+    status !== "in_progress" &&
+    status !== "done" &&
+    status !== "blocked" &&
+    status !== "cancelled"
+  ) {
     throw new Error("TODO 状态操作无效");
   }
   button.disabled = true;
@@ -153,6 +200,81 @@ export async function transitionAgendaTodo(button: HTMLButtonElement): Promise<v
       expected_updated_at: expected,
     });
     await refreshAgenda();
+  } catch (error) {
+    if (isConflictError(error)) await refreshAgenda(true);
+    throw error;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+export async function advanceAgendaTodo(button: HTMLButtonElement): Promise<void> {
+  const todoId = requireDataset(button, "todoId");
+  const expected = requireDataset(button, "expectedUpdatedAt");
+  button.disabled = true;
+  try {
+    await postTodoAdvance(todoId, {
+      command_text: "用户完成当前重复 TODO 并推进下一次。",
+      expected_updated_at: expected,
+    });
+    await refreshAgenda();
+  } catch (error) {
+    if (isConflictError(error)) await refreshAgenda(true);
+    throw error;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+export async function saveAgendaTodoPlan(button: HTMLButtonElement): Promise<void> {
+  const todoId = requireDataset(button, "todoId");
+  const expected = requireDataset(button, "expectedUpdatedAt");
+  const editor = button.closest<HTMLElement>(".todo-plan-editor");
+  if (!editor) throw new Error("TODO 计划编辑器不存在");
+  const scheduled = editor.querySelector<HTMLInputElement>('[data-role="todo-scheduled"]');
+  const due = editor.querySelector<HTMLInputElement>('[data-role="todo-due"]');
+  const frequency = editor.querySelector<HTMLSelectElement>('[data-role="todo-frequency"]');
+  const interval = editor.querySelector<HTMLInputElement>('[data-role="todo-interval"]');
+  if (!scheduled || !due || !frequency || !interval) throw new Error("TODO 计划字段不完整");
+  const current = state.agenda.find((todo) => todo.id === todoId);
+  if (frequency.value !== "none" && !isRepeatFrequency(frequency.value)) {
+    throw new Error("TODO 重复频率无效");
+  }
+  const selectedFrequency = frequency.value;
+  const parsedInterval = Number(interval.value);
+  if (!Number.isSafeInteger(parsedInterval) || parsedInterval < 1 || parsedInterval > 31) {
+    throw new Error("TODO 重复间隔必须是 1 到 31 的整数");
+  }
+  if (selectedFrequency !== "none" && scheduled.value.trim() === "") {
+    throw new Error("重复 TODO 必须设置计划时间");
+  }
+  const repeatRule =
+    selectedFrequency === "none"
+      ? null
+      : {
+          frequency: selectedFrequency,
+          interval: parsedInterval,
+          weekdays:
+            current?.todo_rule?.weekdays === null || current?.todo_rule?.weekdays === undefined
+              ? undefined
+              : [...current.todo_rule.weekdays],
+          until: current?.todo_rule?.until ?? undefined,
+          count: current?.todo_rule?.count ?? undefined,
+        };
+  button.disabled = true;
+  try {
+    await postTodoPlan(todoId, {
+      scheduled_at: isoDateTimeValue(scheduled.value),
+      due_at: isoDateTimeValue(due.value),
+      repeat_rule: repeatRule,
+      raw_time: null,
+      command_text: "用户修改 TODO 计划。",
+      expected_updated_at: expected,
+    });
+    await refreshAgenda(true);
+  } catch (error) {
+    if (isConflictError(error)) await refreshAgenda(true);
+    throw error;
   } finally {
     button.disabled = false;
   }
@@ -168,6 +290,9 @@ export async function reopenAgendaTodo(button: HTMLButtonElement): Promise<void>
       expected_updated_at: expected,
     });
     await refreshAgenda(true);
+  } catch (error) {
+    if (isConflictError(error)) await refreshAgenda(true);
+    throw error;
   } finally {
     button.disabled = false;
   }

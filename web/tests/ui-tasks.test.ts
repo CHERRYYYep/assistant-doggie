@@ -266,6 +266,101 @@ test("Agenda renders escaped TODO text and refreshes after a status mutation", a
   assert.equal(element("agenda").innerHTML, '<span class="muted">暂无待处理 TODO</span>');
 });
 
+test("Agenda exposes in-progress, repeating advance, plan editing, and conflict refresh", async () => {
+  const todo = {
+    id: "todo-repeat",
+    bucket_id: "bucket-1",
+    entry_id: "entry-1",
+    kind: "todo",
+    text: "每周回顾",
+    status: "open",
+    scheduled_at: "2026-11-05T09:00:00.000Z",
+    due_at: "2026-11-05T10:00:00.000Z",
+    todo_rule: {
+      frequency: "weekly",
+      interval: 1,
+      weekdays: null,
+      until: null,
+      count: null,
+    },
+    todo_raw_time: null,
+    todo_occurrence: 1,
+    occurred_at: null,
+    source: null,
+    reason: null,
+    created_at: "2026-11-04T00:00:00.000Z",
+    updated_at: "2026-11-05T00:00:00.000Z",
+  };
+  let agendaReads = 0;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push(`${method} ${url}`);
+    if (url.startsWith("/api/agenda")) {
+      agendaReads++;
+      return json({
+        ok: true,
+        now: "2026-11-05T00:00:00.000Z",
+        todos: agendaReads === 1 ? [todo] : [{ ...todo, text: "服务器上的最新 TODO" }],
+      });
+    }
+    if (url === "/api/todos/todo-repeat/advance") {
+      return json({ ok: false, error: "stale write" }, 409);
+    }
+    if (url === "/api/todos/todo-repeat/plan") {
+      return json({
+        ok: true,
+        todo: {
+          ...todo,
+          scheduled_at: "2026-11-06T09:00:00.000Z",
+          updated_at: "2026-11-05T00:00:01.000Z",
+        },
+        correction_id: "correction-1",
+      });
+    }
+    throw new Error(`Unexpected request ${method} ${url}`);
+  };
+
+  await views.refreshAgenda();
+  assert.match(element("agenda").innerHTML, /开始处理/);
+  assert.match(element("agenda").innerHTML, /完成并推进/);
+  assert.match(element("agenda").innerHTML, /编辑计划/);
+
+  const advance = new StubElement();
+  advance.dataset["todoId"] = "todo-repeat";
+  advance.dataset["expectedUpdatedAt"] = todo.updated_at;
+  await assert.rejects(
+    views.advanceAgendaTodo(advance as unknown as HTMLButtonElement),
+    /stale write/,
+  );
+  assert.match(element("agenda").innerHTML, /服务器上的最新 TODO/);
+  assert.ok(calls.includes("POST /api/todos/todo-repeat/advance"));
+  assert.ok(agendaReads >= 2);
+
+  const editor = new StubElement();
+  const scheduled = new StubElement();
+  scheduled.value = "2026-11-06T09:00";
+  const due = new StubElement();
+  due.value = "2026-11-06T10:00";
+  const frequency = new StubElement();
+  frequency.value = "daily";
+  const interval = new StubElement();
+  interval.value = "2";
+  editor.controls.set('[data-role="todo-scheduled"]', scheduled);
+  editor.controls.set('[data-role="todo-due"]', due);
+  editor.controls.set('[data-role="todo-frequency"]', frequency);
+  editor.controls.set('[data-role="todo-interval"]', interval);
+  const save = new StubElement();
+  save.dataset["todoId"] = "todo-repeat";
+  save.dataset["expectedUpdatedAt"] = todo.updated_at;
+  save.closest = () => editor;
+  await views.saveAgendaTodoPlan(save as unknown as HTMLButtonElement);
+  assert.ok(calls.includes("POST /api/todos/todo-repeat/plan"));
+  const planCall = calls.at(-2) ?? "";
+  assert.match(planCall, /POST \/api\/todos\/todo-repeat\/plan/);
+});
+
 test("sending submits once, displays queued status, then explicit cancel refreshes authoritative history and buckets", async () => {
   const calls = mockServer();
   element("chat-input").value = "一条具体事实";

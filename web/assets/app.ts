@@ -31,7 +31,9 @@ import {
   revokeEntry,
   refreshBuckets,
   refreshAgenda,
+  advanceAgendaTodo,
   reopenAgendaTodo,
+  saveAgendaTodoPlan,
   transitionAgendaTodo,
   runMemoryQuery,
   sendMessage,
@@ -79,11 +81,15 @@ agenda.addEventListener("click", (event: MouseEvent) => {
   const run =
     action === "todo-transition"
       ? transitionAgendaTodo(button)
-      : action === "todo-reopen"
-        ? reopenAgendaTodo(button)
-        : action === "show-todo-source"
-          ? showBucket(button.dataset["bucketId"])
-          : undefined;
+      : action === "todo-advance"
+        ? advanceAgendaTodo(button)
+        : action === "todo-reopen"
+          ? reopenAgendaTodo(button)
+          : action === "todo-save-plan"
+            ? saveAgendaTodoPlan(button)
+            : action === "show-todo-source"
+              ? showBucket(button.dataset["bucketId"])
+              : undefined;
   if (run !== undefined) {
     void run.catch((error: unknown) => setStatus(errorMessage(error), "warning"));
   }

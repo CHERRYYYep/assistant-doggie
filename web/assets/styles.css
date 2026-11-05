@@ -279,6 +279,41 @@ button:disabled {
   padding: 0.25rem 0.45rem;
   font-size: 0.76rem;
 }
+.todo-plan-editor {
+  margin-top: 0.55rem;
+  border-top: 1px solid var(--line);
+  padding-top: 0.45rem;
+  font-size: 0.78rem;
+}
+.todo-plan-editor summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+.todo-plan-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+}
+.todo-plan-fields label {
+  display: grid;
+  gap: 0.18rem;
+  color: var(--text-2);
+}
+.todo-plan-fields input,
+.todo-plan-fields select {
+  min-width: 0;
+  padding: 0.28rem 0.35rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+.todo-plan-fields button {
+  align-self: end;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.76rem;
+}
 .agenda-blocked {
   border-color: var(--warn-line);
 }
@@ -736,6 +771,9 @@ button:disabled {
   }
   .chat-header {
     padding: 0 1rem;
+  }
+  .todo-plan-fields {
+    grid-template-columns: 1fr;
   }
 }
 
