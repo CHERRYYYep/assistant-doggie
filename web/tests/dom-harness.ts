@@ -7,6 +7,14 @@ export class StubElement {
   readonly listeners = new Map<string, unknown>();
   readonly controls = new Map<string, StubElement>();
   parent: StubElement | null = null;
+  hidden = false;
+  readonly attributes = new Map<string, string>();
+  setAttribute(name: string, value: string): void {
+    this.attributes.set(name, value);
+  }
+  removeAttribute(name: string): void {
+    this.attributes.delete(name);
+  }
   value = "";
   disabled = false;
   textContent: string | null = "";
@@ -74,6 +82,12 @@ export function installDom(): {
 } {
   const elements = new Map<string, StubElement>();
   for (const id of [
+    "view-chat",
+    "view-memory",
+    "view-agenda",
+    "view-search",
+    "view-tools",
+    "workspace-title",
     "chat-messages",
     "chat-status",
     "buckets",
@@ -88,6 +102,11 @@ export function installDom(): {
     elements.set(id, new StubElement());
   }
   for (const id of [
+    "nav-chat",
+    "nav-memory",
+    "nav-agenda",
+    "nav-search",
+    "nav-tools",
     "chat-send",
     "memory-query-button",
     "new-chat",

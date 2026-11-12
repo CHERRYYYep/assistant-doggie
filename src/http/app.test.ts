@@ -52,7 +52,8 @@ test("frontend TypeScript assets are stripped into browser JavaScript", () => {
     path.endsWith(".ts"),
   );
 
-  assert.equal(scripts.length, 13);
+  assert.equal(scripts.length, 14);
+  assert.ok(scripts.some((script) => script.path === "/assets/workspace.ts"));
   assert.ok(scripts.some((script) => script.path === "/assets/agents.ts"));
   for (const script of scripts) {
     assert.equal(script.contentType, "text/javascript; charset=utf-8");

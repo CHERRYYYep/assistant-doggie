@@ -1,6 +1,6 @@
 # 当前功能接口与前端接入说明
 
-日期：2026-11-05。本文描述当前 `dev_ts` 分支实际存在的 TypeScript/HTTP/浏览器接口，方便前端改版时区分“已有能力”和“尚未接入页面的能力”。运行行为以 `src/http/operations.ts`、请求/响应 schema 和自动化测试为准。
+日期：2026-11-12。本文描述当前 `dev_ts` 分支实际存在的 TypeScript/HTTP/浏览器接口，方便前端改版时区分“已有能力”和“尚未接入页面的能力”。运行行为以 `src/http/operations.ts`、请求/响应 schema 和自动化测试为准。
 
 ## 当前验证结果
 
@@ -20,7 +20,7 @@ web/assets/app.ts
   -> api.postTask()
   -> POST /api/tasks
   -> SSE /api/tasks/:taskId/events 或 GET /api/tasks/:taskId
-  -> 刷新聊天历史和 Bucket
+  -> 刷新聊天历史、Bucket 和 Agenda
 ```
 
 `POST /api/chat` 和 `POST /api/archive` 仍然存在，是同步/直接归档接口；当前主页面不把它们作为普通聊天发送入口。
@@ -84,9 +84,9 @@ TODO 响应的核心字段是：
 |---|---|---|---|
 | GET | `/api/agenda` | 读取 Agenda；支持 `from`、`to`、`bucket_id`、`include_history` | 已接入，当前只使用 `include_history` |
 | GET | `/api/todos/:todoId` | 读取单个 TODO | 暂无页面调用 |
-| POST | `/api/todos/:todoId/transition` | 修改状态 | 已接入完成、阻塞、取消 |
-| POST | `/api/todos/:todoId/plan` | 修改计划时间、截止时间、重复规则和原始时间 | API 已有，页面未接入 |
-| POST | `/api/todos/:todoId/advance` | 完成当前重复 occurrence 并推进下一次 | API 已有，页面未接入 |
+| POST | `/api/todos/:todoId/transition` | 修改状态 | 已接入开始/继续处理、完成、阻塞、取消 |
+| POST | `/api/todos/:todoId/plan` | 修改计划时间、截止时间、重复规则和原始时间 | 已接入 Agenda 计划编辑器 |
+| POST | `/api/todos/:todoId/advance` | 完成当前重复 occurrence 并推进下一次 | 已接入“完成并推进” |
 | POST | `/api/todos/:todoId/reopen` | 将 `done/cancelled` 重新打开为 `open` | 已接入 |
 
 所有 TODO 写请求都需要：
@@ -126,6 +126,7 @@ Agent 提案创建不会直接执行 CLI；批准、工作区绑定和只读边�
 |---|---|
 | `web/index.html` | 页面结构和控件占位 |
 | `web/assets/app.ts` | 事件绑定和启动加载 |
+| `web/assets/workspace.ts` | 工作区切换、当前页标记和焦点管理 |
 | `web/assets/api.ts` | 所有浏览器网络请求、响应校验和路径编码 |
 | `web/assets/state.ts` | 单一前端可变状态、请求版本号和任务观察器 |
 | `web/assets/views.ts` | 请求控制器、状态变更和 HTML 片段渲染 |
@@ -151,8 +152,12 @@ Agent 提案创建不会直接执行 CLI；批准、工作区绑定和只读边�
 3. `/api/todos/:todoId` 只返回 TODO 的 `bucket_id/entry_id`，没有直接返回来源 Bucket 和 Entry 详情；当前“查看来源”只能跳到 Bucket。
 4. 普通 `Memory` 投影没有带出 TODO 专用计划字段；TODO 详情应优先使用 `/api/todos/:todoId` 或 `/api/agenda`。
 
-## 建议的前端改版顺序
+## 前端初版改版（2026-11-12）
 
-1. 先用真实页面检查本轮 Agenda 交互，重点观察窄屏、键盘输入、长文本和冲突提示。
-2. 再做视觉层：布局、层级、色彩、间距、动效和移动端排版。
+页面已按长期对话、记忆空间、待办计划、查询记忆和折叠工具分区；导航保留草稿和表单，来源操作打开记忆详情，后台详情刷新不强制跳页。计划/截止时间分别显示，归档及纠错后刷新 Agenda。设计、预览方式与验收限制见 [FRONTEND_DESIGN.md](FRONTEND_DESIGN.md)。
+
+## 后续前端改进顺序
+
+1. 在初版上做真实自用验收，重点观察实体手机触控/软键盘、长文本和冲突提示。
+2. 按自用反馈细化视觉层和剩余筛选功能。
 3. 改版期间保持上述 HTTP 字段和错误语义不变；如果需要改接口，先同步 operation registry、响应 schema、OpenAPI、浏览器 contract 和测试。

@@ -60,3 +60,20 @@ export const agentRegister = requireElement("#agent-register", isHtmlButtonEleme
 export const agentRefresh = requireElement("#agent-refresh", isHtmlButtonElement);
 export const agentList = requireElement("#agent-list", isHtmlElement);
 export const agentStatus = requireElement("#agent-status", isHtmlElement);
+
+/** Stable view nodes remain mounted while moving between workspaces. */
+export const workspacePanels = {
+  chat: requireElement("#view-chat", isHtmlElement),
+  memory: requireElement("#view-memory", isHtmlElement),
+  agenda: requireElement("#view-agenda", isHtmlElement),
+  search: requireElement("#view-search", isHtmlElement),
+  tools: requireElement("#view-tools", isHtmlElement),
+} as const;
+export const workspaceButtons = {
+  chat: requireElement("#nav-chat", isHtmlButtonElement),
+  memory: requireElement("#nav-memory", isHtmlButtonElement),
+  agenda: requireElement("#nav-agenda", isHtmlButtonElement),
+  search: requireElement("#nav-search", isHtmlButtonElement),
+  tools: requireElement("#nav-tools", isHtmlButtonElement),
+} as const;
+export const workspaceTitle = requireElement("#workspace-title", isHtmlElement);

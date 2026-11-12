@@ -56,7 +56,7 @@ test("T10b real Web process serves frontend, archives through HTTP and recovers 
     try {
       const index = await fetch(first.url);
       assert.equal(index.status, 200);
-      assert.match(await index.text(), /Doggie 工作记忆/u);
+      assert.match(await index.text(), /Doggie · 个人工作记忆/u);
 
       const health = await fetch(new URL("health", first.url));
       assert.deepEqual(await json(health), {

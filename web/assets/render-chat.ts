@@ -6,8 +6,7 @@ import { chatMessages } from "./dom.ts";
 import { renderArchiveCard } from "./render-archive.ts";
 
 export function renderEmpty(): void {
-  chatMessages.innerHTML =
-    '<div class="empty-chat"><h3>从一条工作事实开始</h3><p>例如：接口 A 最近两周的压测结果有明显回归。</p><p>我会自动归档；如果目标不明确，会展示推荐、备选、创建和不保存选项。</p></div>';
+  chatMessages.innerHTML = `<div class="empty-chat"><div class="welcome-symbol" aria-hidden="true">✳</div><span class="eyebrow">A PLACE FOR YOUR THOUGHTS</span><h3>从这里，接着想。</h3><p>记录今天的进展，留住刚刚的灵感。<br />Doggie 帮你整理，等你需要时再找回来。</p><div class="welcome-examples"><div><span>01 / 记录进展</span><p>例如：接口 A 的延迟已降到 80ms。</p></div><div><span>02 / 留下下一步</span><p>例如：明天下午复核这次压测结果。</p></div></div><small>发送后会尝试归档；目标不明确时，由你选择保存到哪里。</small></div>`;
 }
 
 export function renderMessage(message: UiChatMessageDto): string {

@@ -418,6 +418,7 @@ test("SSE success/failed terminal refreshes history and buckets without reading 
     assert.equal(state.tasks.get("00000000-0000-4000-8000-000000000001")?.status, status);
     assert.ok(calls.some((call) => call.includes("/api/chat/history")));
     assert.ok(calls.some((call) => call.includes("/api/buckets/active")));
+    assert.ok(calls.some((call) => call.includes("/api/agenda")));
     assert.equal(state.history[0]?.id, "server-message");
   }
 });
@@ -587,6 +588,32 @@ test("real entry point binds task controls and bootstraps recovery", async () =>
   element("task-refresh").trigger("click", {});
   await setImmediate();
   assert.equal(calls.filter((call) => call === "GET /api/tasks").length, 2);
+  element("chat-input").value = "尚未发送的草稿";
+  element("memory-query").value = "已填写的查询";
+  element("memory-query-result").innerHTML = "已加载的查询结果";
+  element("nav-search").trigger("click", {});
+  assert.equal(element("view-search").hidden, false);
+  assert.equal(element("view-chat").hidden, true);
+  assert.equal(element("nav-search").attributes.get("aria-current"), "page");
+  assert.equal(element("nav-chat").attributes.has("aria-current"), false);
+  assert.equal(element("workspace-title").textContent, "查询记忆");
+  element("nav-chat").trigger("click", {});
+  assert.equal(element("view-chat").hidden, false);
+  assert.equal(element("chat-input").value, "尚未发送的草稿");
+  assert.equal(element("memory-query").value, "已填写的查询");
+  assert.equal(element("memory-query-result").innerHTML, "已加载的查询结果");
+  element("nav-agenda").trigger("click", {});
+  await views.showBucket("bucket-1");
+  assert.equal(element("view-memory").hidden, false);
+  assert.equal(element("view-agenda").hidden, true);
+  assert.equal(element("nav-memory").attributes.get("aria-current"), "page");
+  element("nav-chat").trigger("click", {});
+  await views.showBucket("bucket-1", false);
+  assert.equal(element("view-chat").hidden, false);
+  element("new-chat").trigger("click", {});
+  assert.equal(element("chat-input").value, "");
+  assert.equal(element("chat-input").focused, true);
+  assert.equal(element("view-chat").hidden, false);
 });
 
 test("recovery failure has no automatic retry; explicit refresh resumes observation without resubmitting", async () => {

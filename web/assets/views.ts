@@ -50,6 +50,8 @@ import { renderTranscript } from "./render-chat.ts";
 import { renderMemoryQuery } from "./render-query.ts";
 import { bucketById, state } from "./state.ts";
 
+import { activateWorkspace } from "./workspace.ts";
+
 const BUCKET_TYPES = [
   "idea",
   "task",
@@ -85,7 +87,7 @@ export async function refreshBuckets(): Promise<void> {
     state.activeBuckets = [...data.buckets];
     if (state.selectedBucketId && !bucketById(state.selectedBucketId)) {
       state.selectedBucketId = null;
-      detail.innerHTML = '<span class="muted">选择左侧 Bucket 查看详情。</span>';
+      detail.innerHTML = '<span class="muted">选择一个 Bucket 查看详情。</span>';
     }
     selectedBucketLabel.textContent = "自动关联最近和热门 Bucket";
     buckets.innerHTML =
@@ -160,7 +162,7 @@ export function renderAgenda(): void {
         const actions = historical
           ? `<button data-action="todo-reopen" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">重新打开</button>`
           : `${startAction}${completeAction}<button data-action="todo-transition" data-status="blocked" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">阻塞</button><button data-action="todo-transition" data-status="cancelled" data-todo-id="${escapeHtml(todo.id)}" data-expected-updated-at="${escapeHtml(todo.updated_at)}">取消</button>`;
-        return `<article class="agenda-item agenda-${todo.status}"><div class="agenda-item-main"><strong>${escapeHtml(todo.text)}</strong><span class="todo-status">${TODO_STATUS_LABELS[todo.status]}</span><span class="muted">${escapeHtml(todoTime(todo.scheduled_at ?? todo.due_at))} · Bucket ${escapeHtml(todo.bucket_id)}</span></div><div class="agenda-actions">${actions}<button data-action="show-todo-source" data-bucket-id="${escapeHtml(todo.bucket_id)}">查看来源</button></div>${todoPlanEditor(todo)}</article>`;
+        return `<article class="agenda-item agenda-${todo.status}"><div class="agenda-item-main"><strong>${escapeHtml(todo.text)}</strong><span class="todo-status">${TODO_STATUS_LABELS[todo.status]}</span><span class="muted">计划：${escapeHtml(todoTime(todo.scheduled_at))}</span><span class="muted">截止：${escapeHtml(todoTime(todo.due_at))}</span><span class="muted todo-source">来源：${escapeHtml(bucketById(todo.bucket_id)?.title ?? todo.bucket_id)}</span></div><div class="agenda-actions">${actions}<button data-action="show-todo-source" data-bucket-id="${escapeHtml(todo.bucket_id)}">查看来源</button></div>${todoPlanEditor(todo)}</article>`;
       })
       .join("") || '<span class="muted">暂无待处理 TODO</span>';
 }
@@ -298,8 +300,9 @@ export async function reopenAgendaTodo(button: HTMLButtonElement): Promise<void>
   }
 }
 
-export async function showBucket(bucketId: string | undefined): Promise<void> {
+export async function showBucket(bucketId: string | undefined, reveal = true): Promise<void> {
   if (!bucketId) throw new Error("Bucket ID 不能为空");
+  if (reveal) activateWorkspace("memory", true);
   const revision = ++state.detailRequestRevision;
   state.selectedBucketId = bucketId;
   detail.textContent = "正在加载记录…";
@@ -439,7 +442,7 @@ export async function confirmArchive(button: HTMLButtonElement): Promise<void> {
   setStatus("正在处理归档选择…");
   try {
     await postChatConfirmation(payload);
-    await Promise.all([loadHistory(), refreshBuckets()]);
+    await Promise.all([loadHistory(), refreshBuckets(), refreshAgenda()]);
     setStatus("已更新归档。");
   } finally {
     button.disabled = false;
@@ -463,8 +466,8 @@ export async function moveEntry(button: HTMLButtonElement): Promise<void> {
     if (status) {
       status.innerHTML = `<span class="success">已移动到${bucketLabel(bucketById(targetBucketId) || { id: targetBucketId })}。</span>`;
     }
-    await Promise.all([refreshBuckets(), loadHistory()]);
-    if (state.selectedBucketId) await showBucket(state.selectedBucketId);
+    await Promise.all([refreshBuckets(), loadHistory(), refreshAgenda()]);
+    if (state.selectedBucketId) await showBucket(state.selectedBucketId, false);
   } finally {
     button.disabled = false;
   }
@@ -483,8 +486,8 @@ export async function revokeEntry(button: HTMLButtonElement): Promise<void> {
     ++state.detailRequestRevision;
     ++state.queryRequestRevision;
     memoryQueryResult.textContent = "记忆已更新，请重新查询。";
-    await Promise.all([refreshBuckets(), loadHistory()]);
-    if (state.selectedBucketId) await showBucket(state.selectedBucketId);
+    await Promise.all([refreshBuckets(), loadHistory(), refreshAgenda()]);
+    if (state.selectedBucketId) await showBucket(state.selectedBucketId, false);
     setStatus("记录已撤销。为避免引用旧事实，后续回答从新的聊天上下文继续。");
   } finally {
     state.revokingEntries.delete(entryId);
@@ -509,9 +512,9 @@ export async function deleteBucket(bucketId: string | undefined): Promise<void> 
   memoryQueryResult.textContent = "记忆已更新，请重新查询。";
   if (state.selectedBucketId === bucketId) {
     state.selectedBucketId = null;
-    detail.innerHTML = '<span class="muted">选择左侧 Bucket 查看详情。</span>';
+    detail.innerHTML = '<span class="muted">选择一个 Bucket 查看详情。</span>';
   }
-  await Promise.all([refreshBuckets(), loadHistory()]);
+  await Promise.all([refreshBuckets(), loadHistory(), refreshAgenda()]);
   setStatus("已删除 Bucket。");
 }
 
@@ -545,7 +548,7 @@ function applyTask(task: TaskSnapshot, refreshTerminal = true): void {
     state.taskObservers.get(task.id)?.abort();
     state.pausedTasks.delete(task.id);
     if (refreshTerminal) {
-      void Promise.all([loadHistory(), refreshBuckets()]);
+      void Promise.all([loadHistory(), refreshBuckets(), refreshAgenda()]);
     }
   }
   // Keep a bounded recent view without dropping an active task's cancel control.
@@ -593,7 +596,7 @@ export async function resumeTasks(): Promise<void> {
       observeTask(state.tasks.get(task.id) ?? task);
     }
     renderTasks();
-    if (terminalChanged) await Promise.all([loadHistory(), refreshBuckets()]);
+    if (terminalChanged) await Promise.all([loadHistory(), refreshBuckets(), refreshAgenda()]);
   } catch (error) {
     setStatus(
       `无法恢复任务：${errorMessage(error)}。请稍后刷新任务状态，不要重复发送。`,

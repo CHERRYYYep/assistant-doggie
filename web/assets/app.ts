@@ -40,6 +40,10 @@ import {
   showBucket,
 } from "./views.ts";
 
+import { activateWorkspace, bindWorkspaceNavigation } from "./workspace.ts";
+
+bindWorkspaceNavigation();
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -119,7 +123,9 @@ chatInput.addEventListener("input", () => {
   chatInput.style.height = `${Math.min(chatInput.scrollHeight, 180)}px`;
 });
 newChatButton.addEventListener("click", () => {
+  activateWorkspace("chat");
   chatInput.value = "";
+  chatInput.style.height = "auto";
   chatInput.focus();
   setStatus("");
 });
