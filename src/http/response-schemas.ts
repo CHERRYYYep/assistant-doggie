@@ -1,3 +1,4 @@
+import { workItemSchema, workItemSourceSchema } from "../domain/work-item.ts";
 /** Runtime JSON contracts. These schemas are also the OpenAPI source of truth. */
 import { z } from "zod";
 
@@ -383,3 +384,26 @@ export const agentApprovalResponseSchema = z.strictObject({
 
 /** SSE data has the exact same shape as GET task.task; the event ID is revision. */
 export const taskEventDataSchema = taskSnapshotSchema;
+
+export const workItemResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  workItem: workItemSchema,
+});
+export const workItemsResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  workItems: z.array(workItemSchema).max(100),
+});
+export const workItemDetailResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  workItem: workItemSchema,
+  sources: z.array(workItemSourceSchema).max(200),
+  attempts: z.array(agentTaskSchema).max(20),
+});
+export const workItemResolutionResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  kind: z.enum(["resolved", "clarify", "unassigned"]),
+  workItemId: z.string().uuid().nullable(),
+  candidates: z
+    .array(z.strictObject({ id: z.string().uuid(), title: z.string() }))
+    .max(100),
+});

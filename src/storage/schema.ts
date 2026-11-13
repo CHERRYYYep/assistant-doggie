@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -285,6 +285,43 @@ CREATE INDEX ix_memory_items_todo_agenda
     WHERE kind = 'todo';
 `;
 
+const ADD_WORK_ITEMS_V8 = `
+CREATE TABLE work_items (
+ id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, acceptance TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('open','in_progress','blocked','done','cancelled')),
+ revision INTEGER NOT NULL CHECK(revision>0), scope_revision INTEGER NOT NULL CHECK(scope_revision>0),
+ cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+ last_attempt_id TEXT REFERENCES agent_tasks(id), last_attempt_status TEXT,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE work_item_sources (
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), kind TEXT NOT NULL CHECK(kind IN ('entry','bucket','message')),
+ source_id TEXT NOT NULL, PRIMARY KEY(work_item_id,kind,source_id)
+);
+CREATE TABLE work_item_sessions (
+ session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id),
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), scope_revision INTEGER NOT NULL
+);
+CREATE TABLE work_item_attempts (
+ agent_task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), scope_revision INTEGER NOT NULL,
+ sequence INTEGER NOT NULL UNIQUE
+);
+CREATE INDEX ix_work_item_attempts ON work_item_attempts(work_item_id,sequence DESC);
+CREATE TABLE work_item_requests (
+ request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, result_id TEXT NOT NULL
+);
+CREATE TABLE work_item_events (
+ id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL REFERENCES work_items(id),
+ revision INTEGER NOT NULL, kind TEXT NOT NULL, details_json TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(work_item_id,revision)
+);
+CREATE TRIGGER work_item_session_immutable BEFORE UPDATE ON work_item_sessions
+BEGIN SELECT RAISE(ABORT,'work item session binding is immutable'); END;
+CREATE TRIGGER work_item_attempt_immutable BEFORE UPDATE ON work_item_attempts
+BEGIN SELECT RAISE(ABORT,'work item attempt binding is immutable'); END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -297,6 +334,7 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 5, name: "add_agent_control_v5", sql: ADD_AGENT_CONTROL_V5 },
   { version: 6, name: "add_entry_revocation_v6", sql: ADD_ENTRY_REVOCATION_V6 },
   { version: 7, name: "add_todo_plan_v7", sql: ADD_TODO_PLAN_V7 },
+  { version: 8, name: "add_work_items_v8", sql: ADD_WORK_ITEMS_V8 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */
@@ -314,6 +352,12 @@ export const OWNED_TABLES: readonly string[] = [
   "agent_workspaces",
   "agent_sessions",
   "agent_tasks",
+  "work_items",
+  "work_item_sources",
+  "work_item_sessions",
+  "work_item_attempts",
+  "work_item_requests",
+  "work_item_events",
   "corrections",
   "conversation_messages",
 ];

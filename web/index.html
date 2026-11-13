@@ -92,6 +92,38 @@
             aria-label="对话记录"
             aria-live="polite"
           ></section>
+          <section id="work-item-panel" class="surface work-item-panel" aria-label="工作目标">
+            <div class="section-heading">
+              <h3>当前工作目标</h3>
+              <span class="muted">先选择目标，再分发给 Agent</span>
+            </div>
+            <form id="work-item-form" class="work-item-form">
+              <label
+                >目标名称<input
+                  data-role="work-title"
+                  maxlength="120"
+                  placeholder="例如：审查后端撤销机制"
+              /></label>
+              <label
+                >要完成什么<textarea
+                  data-role="work-goal"
+                  rows="2"
+                  maxlength="4000"
+                  placeholder="描述需要完成的工作"
+                ></textarea>
+              </label>
+              <label
+                >验收要求<input
+                  data-role="work-acceptance"
+                  maxlength="2000"
+                  placeholder="例如：给出有来源的问题清单"
+              /></label>
+              <button type="button" data-action="create-work-item" class="primary">
+                建立工作目标
+              </button>
+            </form>
+            <div id="work-items" aria-live="polite"><p class="muted">加载中…</p></div>
+          </section>
           <div class="composer-wrap">
             <div class="composer">
               <label class="sr-only" for="chat-input">输入工作事实或消息</label

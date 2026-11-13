@@ -1,3 +1,5 @@
+import { WorkItemService } from "../application/work-items.ts";
+import { WorkItemStore } from "../storage/work-items.ts";
 import {
   AgentHarness,
   createMemoryHarnessTools,
@@ -150,6 +152,7 @@ export async function startDoggieLocalWeb(
     server = createDoggieNodeServer(api, {
       tasks,
       agents,
+      workItems: new WorkItemService(new WorkItemStore(database), agents),
       signal: shutdownController.signal,
       ...(dependencies.assets === undefined
         ? {}

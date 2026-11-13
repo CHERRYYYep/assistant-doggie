@@ -88,3 +88,16 @@ export type PendingChatMessageDto = {
   readonly pending: true;
 };
 export type UiChatMessageDto = ChatMessageDto | PendingChatMessageDto;
+
+export type WorkItemResponse = ResponseDto<
+  typeof schema.workItemResponseSchema
+>;
+export type WorkItemsResponse = ResponseDto<
+  typeof schema.workItemsResponseSchema
+>;
+export type WorkItemDetailResponse = ResponseDto<
+  typeof schema.workItemDetailResponseSchema
+>;
+export type WorkItemResolutionResponse = ResponseDto<
+  typeof schema.workItemResolutionResponseSchema
+>;

@@ -1,3 +1,11 @@
+import type { WorkItemService } from "../application/work-items.ts";
+import {
+  createWorkItemSchema,
+  updateWorkItemSchema,
+  workItemActionSchema,
+  workItemAttemptSchema,
+  resolveWorkItemSchema,
+} from "../domain/work-item.ts";
 import type { AgentService } from "../agent/service.ts";
 import {
   agentProposalSchema,
@@ -127,6 +135,11 @@ export type StaticAsset = {
 };
 
 const FRONTEND_FILES = [
+  [
+    "/assets/work-items.ts",
+    "assets/work-items.ts",
+    "text/javascript; charset=utf-8",
+  ],
   ["/assets/agents.ts", "assets/agents.ts", "text/javascript; charset=utf-8"],
   ["/", "index.html", "text/html; charset=utf-8"],
   ["/index.html", "index.html", "text/html; charset=utf-8"],
@@ -200,6 +213,7 @@ export function createDoggieApp(
   additionalAllowedAuthorities: readonly string[] = [],
   tasks?: TaskQueue,
   agents?: AgentService,
+  workItems?: WorkItemService,
 ): Hono {
   const app = new Hono();
   const authorityPolicy = new AuthorityPolicy(additionalAllowedAuthorities);
@@ -214,7 +228,8 @@ export function createDoggieApp(
       const enabled =
         operation !== undefined &&
         (operation.feature !== "tasks" || tasks !== undefined) &&
-        (operation.feature !== "agents" || agents !== undefined);
+        (operation.feature !== "agents" || agents !== undefined) &&
+        (operation.feature !== "workItems" || workItems !== undefined);
       if (enabled) {
         const query: Record<string, string> = {};
         for (const [key, value] of new URL(context.req.url).searchParams) {
@@ -559,6 +574,62 @@ export function createDoggieApp(
         task: await agents.cancel(agentId(context.req.param("id"))),
       });
     });
+  }
+
+  if (workItems !== undefined) {
+    app.get("/api/work-items", (context) =>
+      context.json({ ok: true, workItems: workItems.list() }),
+    );
+    app.post("/api/work-items", async (context) =>
+      context.json(
+        {
+          ok: true,
+          workItem: workItems.create(
+            await parseBody(context, createWorkItemSchema),
+          ),
+        },
+        201,
+      ),
+    );
+    app.post("/api/work-items/resolve", async (context) =>
+      context.json({
+        ok: true,
+        ...workItems.resolve(await parseBody(context, resolveWorkItemSchema)),
+      }),
+    );
+    app.get("/api/work-items/:id", (context) =>
+      context.json({ ok: true, ...workItems.detail(context.req.param("id")) }),
+    );
+    app.post("/api/work-items/:id/update", async (context) =>
+      context.json({
+        ok: true,
+        workItem: workItems.update(
+          context.req.param("id"),
+          await parseBody(context, updateWorkItemSchema),
+        ),
+      }),
+    );
+    app.post("/api/work-items/:id/transition", async (context) =>
+      context.json({
+        ok: true,
+        workItem: await workItems.transition(
+          context.req.param("id"),
+          await parseBody(context, workItemActionSchema),
+        ),
+      }),
+    );
+    app.post("/api/work-items/:id/attempts", async (context) =>
+      context.json(
+        {
+          ok: true,
+          task: await workItems.propose(
+            context.req.param("id"),
+            await parseBody(context, workItemAttemptSchema),
+          ),
+        },
+        201,
+      ),
+    );
   }
 
   app.notFound((context) =>

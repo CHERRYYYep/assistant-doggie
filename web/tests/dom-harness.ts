@@ -98,6 +98,8 @@ export function installDom(): {
     "task-list",
     "agent-list",
     "agent-status",
+    "work-items",
+    "work-item-form",
   ]) {
     elements.set(id, new StubElement());
   }

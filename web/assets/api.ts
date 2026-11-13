@@ -2,6 +2,7 @@
 import { MAX_RESPONSE_BYTES, validateResponse } from "./validate-response.ts";
 
 import type { TaskSnapshot } from "../../src/domain/task.ts";
+import type { WorkItem, WorkItemAttempt } from "../../src/domain/work-item.ts";
 import type {
   ChatConfirmationRequest,
   ChatRequest,
@@ -37,7 +38,41 @@ export const ROUTES = {
   correctionMove: "/api/corrections/move",
   agenda: "/api/agenda",
   todo: "/api/todos/",
+  workItems: "/api/work-items",
 } as const;
+
+type WorkItemsResponse = { readonly ok: true; readonly workItems: readonly WorkItem[] };
+type WorkItemResponse = { readonly ok: true; readonly workItem: WorkItem };
+export function fetchWorkItems(): Promise<WorkItemsResponse> {
+  return jsonRequest(ROUTES.workItems);
+}
+export function createWorkItem(input: unknown): Promise<WorkItemResponse> {
+  return jsonRequest(ROUTES.workItems, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  });
+}
+export function postWorkItemAttempt(
+  id: string,
+  input: WorkItemAttempt,
+): Promise<{ readonly ok: true; readonly task: import("../../src/domain/agent.ts").AgentTask }> {
+  return jsonRequest(`${ROUTES.workItems}/${encodeURIComponent(id)}/attempts`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  });
+}
+export function transitionWorkItem(
+  id: string,
+  input: { readonly expectedRevision: number; readonly action: "complete" | "reopen" | "cancel" },
+): Promise<WorkItemResponse> {
+  return jsonRequest(`${ROUTES.workItems}/${encodeURIComponent(id)}/transition`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify(input),
+  });
+}
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 

@@ -9,6 +9,7 @@ import {
   sessionSchema,
   workspaceSchema,
   type AgentTask,
+  type AgentProposal,
   type AgentSession,
   type AgentWorkspace,
 } from "../domain/agent.ts";
@@ -24,6 +25,11 @@ import {
 } from "./pending-actions.ts";
 import { TaskStore } from "./tasks.ts";
 import { Store } from "./store.ts";
+import { WorkItemStore, type WorkItemBinding } from "./work-items.ts";
+import {
+  workItemAttemptSchema,
+  workItemInstruction,
+} from "../domain/work-item.ts";
 
 const taskSelect = `SELECT id, session_id AS sessionId, workspace_id AS workspaceId, backend, instruction, pending_action_id AS pendingActionId, queue_id AS queueId, status, output, failure_code AS failureCode, created_at AS createdAt, updated_at AS updatedAt FROM agent_tasks`;
 const sessionSelect = `SELECT id, workspace_id AS workspaceId, backend, remote_id AS remoteId, memory_revision AS memoryRevision, created_at AS createdAt FROM agent_sessions`;
@@ -106,84 +112,125 @@ export class AgentStore {
       .all()
       .map((row) => agentTaskSchema.parse(row));
   }
+  proposeForWorkItem(id: string, input: unknown): AgentTask {
+    const request = workItemAttemptSchema.parse(input);
+    return withTransaction(this.#db, () => {
+      const goals = new WorkItemStore(this.#db);
+      const payload = JSON.stringify({ workItemId: id, ...request });
+      const replay = goals.replay(request.requestId, "attempt", payload);
+      if (replay !== undefined) return this.task(replay);
+      const item = goals.expectedForProposal(id, request.expectedRevision);
+      const task = this.#proposeWithinTransaction(
+        agentProposalSchema.parse({
+          backend: request.backend,
+          workspaceId: request.workspaceId,
+          instruction: workItemInstruction(item, request.instruction),
+          ...(request.sessionId === undefined
+            ? {}
+            : { sessionId: request.sessionId }),
+        }),
+        { workItemId: id, scopeRevision: item.scopeRevision },
+      );
+      goals.bindAttempt(item, task);
+      goals.remember(request.requestId, "attempt", payload, task.id);
+      return task;
+    });
+  }
   propose(input: unknown): AgentTask {
     const proposal = agentProposalSchema.parse(input);
-    return withTransaction(this.#db, () => {
-      const count = z
-        .object({ n: z.number() })
-        .parse(
-          this.#db
-            .prepare(
-              "SELECT COUNT(*) AS n FROM agent_tasks WHERE status IN ('pending','queued','running')",
-            )
-            .get(),
-        ).n;
-      if (count >= 32) throw new AgentError("conflict");
-      if (proposal.workspaceId !== null) this.workspace(proposal.workspaceId);
-      let session: AgentSession;
-      if (proposal.sessionId !== undefined) {
-        session = this.session(proposal.sessionId);
-        if (
-          session.backend !== proposal.backend ||
-          session.workspaceId !== proposal.workspaceId
-        )
-          throw new AgentError("binding_mismatch");
-        this.#assertSessionReusable(session.id);
-      } else {
-        const sid = randomUUID();
+    return withTransaction(this.#db, () =>
+      this.#proposeWithinTransaction(proposal),
+    );
+  }
+  #proposeWithinTransaction(
+    proposal: AgentProposal,
+    binding?: WorkItemBinding,
+  ): AgentTask {
+    if (!this.#db.isTransaction) throw new AgentError("conflict");
+
+    const count = z
+      .object({ n: z.number() })
+      .parse(
         this.#db
           .prepare(
-            "INSERT INTO agent_sessions (id,workspace_id,backend,remote_id,created_at,memory_revision) VALUES (?,?,?,?,?,?)",
+            "SELECT COUNT(*) AS n FROM agent_tasks WHERE status IN ('pending','queued','running')",
           )
-          .run(
-            sid,
-            proposal.workspaceId,
-            proposal.backend,
-            null,
-            new Date().toISOString(),
-            new Store(this.#db).getMemoryContextRevision(),
-          );
-        session = this.session(sid);
-      }
-      const id = randomUUID();
-      const actionId = randomUUID();
-      const now = new Date().toISOString();
-      insertPendingAction(
-        this.#db,
-        actionId,
-        {
-          kind: "agent_task",
-          payload: {
-            instruction: proposal.instruction,
-            workspaceId: proposal.workspaceId,
-          },
-        },
-        "user",
-        proposal.instruction,
-        now,
-      );
+          .get(),
+      ).n;
+    if (count >= 32) throw new AgentError("conflict");
+    if (proposal.workspaceId !== null) this.workspace(proposal.workspaceId);
+    let session: AgentSession;
+    if (proposal.sessionId !== undefined) {
+      session = this.session(proposal.sessionId);
+      const owner = new WorkItemStore(this.#db).sessionBinding(session.id);
+      if (
+        (binding === undefined) !== (owner === undefined) ||
+        (binding !== undefined &&
+          (owner?.workItemId !== binding.workItemId ||
+            owner.scopeRevision !== binding.scopeRevision))
+      )
+        throw new AgentError("binding_mismatch");
+      if (
+        session.backend !== proposal.backend ||
+        session.workspaceId !== proposal.workspaceId
+      )
+        throw new AgentError("binding_mismatch");
+      this.#assertSessionReusable(session.id);
+    } else {
+      const sid = randomUUID();
       this.#db
         .prepare(
-          "INSERT INTO agent_tasks (id,session_id,workspace_id,backend,instruction,pending_action_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'pending',?,?)",
+          "INSERT INTO agent_sessions (id,workspace_id,backend,remote_id,created_at,memory_revision) VALUES (?,?,?,?,?,?)",
         )
         .run(
-          id,
-          session.id,
+          sid,
           proposal.workspaceId,
           proposal.backend,
-          proposal.instruction,
-          actionId,
-          now,
-          now,
+          null,
+          new Date().toISOString(),
+          new Store(this.#db).getMemoryContextRevision(),
         );
-      return this.task(id);
-    });
+      session = this.session(sid);
+    }
+    const id = randomUUID();
+    const actionId = randomUUID();
+    const now = new Date().toISOString();
+    insertPendingAction(
+      this.#db,
+      actionId,
+      {
+        kind: "agent_task",
+        payload: {
+          instruction: proposal.instruction,
+          workspaceId: proposal.workspaceId,
+        },
+      },
+      "user",
+      proposal.instruction,
+      now,
+    );
+    this.#db
+      .prepare(
+        "INSERT INTO agent_tasks (id,session_id,workspace_id,backend,instruction,pending_action_id,status,created_at,updated_at) VALUES (?,?,?,?,?,?,'pending',?,?)",
+      )
+      .run(
+        id,
+        session.id,
+        proposal.workspaceId,
+        proposal.backend,
+        proposal.instruction,
+        actionId,
+        now,
+        now,
+      );
+    return this.task(id);
   }
   approve(id: string, instruction: string): TaskSnapshot {
     return withTransaction(this.#db, () => {
       const task = this.task(id);
       this.#bound(task, instruction, "pending");
       if (task.status !== "pending") throw new AgentError("conflict");
+      new WorkItemStore(this.#db).assertExecutable(id);
       // A proposal can predate another task's failure. Recheck at admission,
       // inside the same transaction that records approval and queues the work.
       this.#assertSessionReusable(task.sessionId);
@@ -210,6 +257,7 @@ export class AgentStore {
           "UPDATE agent_tasks SET status='queued',queue_id=?,updated_at=? WHERE id=? AND status='pending'",
         )
         .run(queued.id, new Date().toISOString(), id);
+      new WorkItemStore(this.#db).projectAttempt(id);
       return queued;
     });
   }
@@ -229,6 +277,7 @@ export class AgentStore {
           "UPDATE agent_tasks SET status='rejected',updated_at=? WHERE id=?",
         )
         .run(new Date().toISOString(), id);
+      new WorkItemStore(this.#db).projectAttempt(id);
       return this.task(id);
     });
   }
@@ -239,6 +288,7 @@ export class AgentStore {
       if (task.status !== "queued" || task.queueId === null)
         throw new AgentError("conflict");
       this.#assertSessionReusable(task.sessionId);
+      new WorkItemStore(this.#db).assertExecutable(id);
       const queue = new TaskStore(this.#db).get(task.queueId);
       if (queue.status !== "running") throw new AgentError("conflict");
       this.#db
@@ -246,6 +296,7 @@ export class AgentStore {
           "UPDATE agent_tasks SET status='running',updated_at=? WHERE id=?",
         )
         .run(new Date().toISOString(), id);
+      new WorkItemStore(this.#db).projectAttempt(id);
       return this.task(id);
     });
   }
@@ -263,8 +314,10 @@ export class AgentStore {
       this.#bound(task, task.instruction, "approved");
       if (task.status !== "running" && task.status !== "queued")
         throw new AgentError("conflict");
-      if (outcome.status === "succeeded")
+      if (outcome.status === "succeeded") {
         this.assertMemoryContextCurrent(task.sessionId);
+        new WorkItemStore(this.#db).assertExecutable(id);
+      }
       if (Buffer.byteLength(outcome.output) > 64 * 1024)
         throw new AgentError("output_limit");
       if (outcome.remoteId !== undefined) {
@@ -299,6 +352,7 @@ export class AgentStore {
           new Date().toISOString(),
           id,
         );
+      new WorkItemStore(this.#db).projectAttempt(id);
       return this.task(id);
     });
   }
@@ -306,6 +360,7 @@ export class AgentStore {
     // Run only after the T12 owner has been acquired. Interrupted CLI work is
     // never resumed automatically; no process is started during recovery.
     new TaskStore(this.#db).reconcileAgentTasks();
+    new WorkItemStore(this.#db).reconcile();
   }
   #assertSessionReusable(sessionId: string): void {
     this.assertMemoryContextCurrent(sessionId);

@@ -1,3 +1,10 @@
+import {
+  createWorkItemSchema,
+  updateWorkItemSchema,
+  workItemActionSchema,
+  workItemAttemptSchema,
+  resolveWorkItemSchema,
+} from "../domain/work-item.ts";
 /** One inventory for local routes, runtime validation and generated OpenAPI. */
 import { z } from "zod";
 
@@ -63,7 +70,7 @@ export type HttpOperation = {
   readonly bodySchema?: z.ZodType;
   readonly querySchema?: z.ZodObject;
   readonly paramsSchema?: z.ZodObject;
-  readonly feature?: "tasks" | "agents";
+  readonly feature?: "tasks" | "agents" | "workItems";
   readonly stream?: true;
   readonly description?: string;
 };
@@ -382,6 +389,71 @@ export const HTTP_OPERATIONS = [
     paramsSchema: agentTaskPathSchema,
     bodySchema: emptyRequestSchema,
     responseSchema: response.agentTaskResponseSchema,
+  },
+  {
+    operationId: "listWorkItems",
+    method: "get",
+    path: "/api/work-items",
+    successStatus: 200,
+    feature: "workItems",
+    responseSchema: response.workItemsResponseSchema,
+  },
+  {
+    operationId: "createWorkItem",
+    method: "post",
+    path: "/api/work-items",
+    successStatus: 201,
+    feature: "workItems",
+    responseSchema: response.workItemResponseSchema,
+    bodySchema: createWorkItemSchema,
+  },
+  {
+    operationId: "resolveWorkItem",
+    method: "post",
+    path: "/api/work-items/resolve",
+    successStatus: 200,
+    feature: "workItems",
+    responseSchema: response.workItemResolutionResponseSchema,
+    bodySchema: resolveWorkItemSchema,
+  },
+  {
+    operationId: "getWorkItem",
+    method: "get",
+    path: "/api/work-items/:id",
+    successStatus: 200,
+    feature: "workItems",
+    responseSchema: response.workItemDetailResponseSchema,
+    paramsSchema: agentTaskPathSchema,
+  },
+  {
+    operationId: "updateWorkItem",
+    method: "post",
+    path: "/api/work-items/:id/update",
+    successStatus: 200,
+    feature: "workItems",
+    responseSchema: response.workItemResponseSchema,
+    bodySchema: updateWorkItemSchema,
+    paramsSchema: agentTaskPathSchema,
+  },
+  {
+    operationId: "transitionWorkItem",
+    method: "post",
+    path: "/api/work-items/:id/transition",
+    successStatus: 200,
+    feature: "workItems",
+    responseSchema: response.workItemResponseSchema,
+    bodySchema: workItemActionSchema,
+    paramsSchema: agentTaskPathSchema,
+  },
+  {
+    operationId: "proposeWorkItemAttempt",
+    method: "post",
+    path: "/api/work-items/:id/attempts",
+    successStatus: 201,
+    feature: "workItems",
+    responseSchema: response.agentTaskResponseSchema,
+    bodySchema: workItemAttemptSchema,
+    paramsSchema: agentTaskPathSchema,
   },
 ] as const satisfies readonly HttpOperation[];
 

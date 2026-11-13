@@ -60,6 +60,8 @@ export const agentRegister = requireElement("#agent-register", isHtmlButtonEleme
 export const agentRefresh = requireElement("#agent-refresh", isHtmlButtonElement);
 export const agentList = requireElement("#agent-list", isHtmlElement);
 export const agentStatus = requireElement("#agent-status", isHtmlElement);
+export const domWorkItems = requireElement("#work-items", isHtmlElement);
+export const domWorkItemForm = requireElement("#work-item-form", isHtmlElement);
 
 /** Stable view nodes remain mounted while moving between workspaces. */
 export const workspacePanels = {

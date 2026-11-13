@@ -1,3 +1,4 @@
+import { WorkItemError } from "../domain/work-item.ts";
 import { AgentError, HarnessError } from "../domain/agent.ts";
 import { TaskError } from "../domain/task.ts";
 /** Stable JSON contracts at the local HTTP boundary. */
@@ -227,6 +228,15 @@ export function stableError(error: unknown): {
 
 export function normalizeHttpError(error: unknown): HttpBoundaryError {
   if (error instanceof HttpBoundaryError) return error;
+  if (error instanceof WorkItemError)
+    return new HttpBoundaryError(
+      error.code === "missing"
+        ? 404
+        : error.code === "invalid_reference"
+          ? 400
+          : 409,
+      error.message,
+    );
   if (error instanceof AgentError)
     return new HttpBoundaryError(
       error.code === "missing"

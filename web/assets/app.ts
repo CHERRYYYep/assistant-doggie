@@ -41,8 +41,10 @@ import {
 } from "./views.ts";
 
 import { activateWorkspace, bindWorkspaceNavigation } from "./workspace.ts";
+import { bindWorkItemForm, refreshWorkItems } from "./work-items.ts";
 
 bindWorkspaceNavigation();
+bindWorkItemForm();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -147,7 +149,13 @@ taskList.addEventListener("click", (event: MouseEvent) => {
   }
 });
 taskRefresh.addEventListener("click", () => void resumeTasks());
-void Promise.all([refreshBuckets(), refreshAgenda(), loadHistory(), resumeTasks()]);
+void Promise.all([
+  refreshBuckets(),
+  refreshAgenda(),
+  loadHistory(),
+  resumeTasks(),
+  refreshWorkItems(),
+]);
 
 import { agentList, agentPropose, agentRegister, agentRefresh } from "./dom.ts";
 import { refreshAgents, registerWorkspace, proposeAgent, actOnAgent } from "./agents.ts";

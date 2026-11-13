@@ -1401,6 +1401,15 @@ export class Store {
     );
   }
 
+  /** Caller owns the transaction that also persists its goal/approval links. */
+  appendChatMessageWithinTransaction(
+    message: ChatMessageInput,
+  ): ChatMessageRow {
+    if (!this.#database.isTransaction)
+      throw StorageError.invalidWrite("chat message", "requires a transaction");
+    return this.#appendChatMessage(message);
+  }
+
   #appendChatMessage(message: ChatMessageInput): ChatMessageRow {
     const content = requiredField(message.content, "content");
     const row = this.#database
@@ -1446,6 +1455,14 @@ export class Store {
     return (
       this.listChatMessages(limit)
         .filter((message) => message.sequence > fence)
+        .filter(
+          (message) =>
+            !(
+              message.details !== null &&
+              typeof message.details === "object" &&
+              "work_item_id" in message.details
+            ),
+        )
         // Audit details can include old source text even when reply content has
         // already been replaced after concurrent revocation. They are UI data.
         .map((message) => ({ ...message, details: undefined }))

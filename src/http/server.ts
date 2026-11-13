@@ -1,3 +1,4 @@
+import type { WorkItemService } from "../application/work-items.ts";
 import type { AgentService } from "../agent/service.ts";
 /** Node HTTP adapter for the local Doggie Hono application. */
 
@@ -42,6 +43,7 @@ export type DoggieNodeServerOptions = {
   readonly signal?: AbortSignal;
   readonly tasks?: TaskQueue;
   readonly agents?: AgentService;
+  readonly workItems?: WorkItemService;
 };
 
 type RequestFailure = {
@@ -161,6 +163,7 @@ export function createDoggieNodeServer(
           [authority],
           options.tasks,
           options.agents,
+          options.workItems,
         );
         appAuthority = authority;
       }

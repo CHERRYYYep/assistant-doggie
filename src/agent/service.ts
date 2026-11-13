@@ -5,6 +5,7 @@ import {
   type AgentBackend,
   type AgentTask,
 } from "../domain/agent.ts";
+import { WorkItemError, workItemAttemptSchema } from "../domain/work-item.ts";
 import { TaskError } from "../domain/task.ts";
 import type { TaskQueue } from "../application/task-queue.ts";
 import { throwIfAborted } from "../llm/cancellation.ts";
@@ -67,6 +68,19 @@ export class AgentService {
       );
     }
     return this.#store.propose(proposal);
+  }
+  async proposeForWorkItem(id: string, input: unknown): Promise<AgentTask> {
+    const request = workItemAttemptSchema.parse(input);
+    this.#requireBackend(request.backend);
+    if (request.workspaceId !== null) {
+      const workspace = this.#store.workspace(request.workspaceId);
+      assertWorkspaceUnchanged(
+        workspace,
+        await this.#policy.inspect(workspace.path),
+      );
+    }
+    this.#store.reconcile();
+    return this.#store.proposeForWorkItem(id, request);
   }
   async approve(id: string, instruction: string, signal?: AbortSignal) {
     const task = this.#store.task(id);
@@ -150,9 +164,11 @@ export class AgentService {
       if (error instanceof TaskError && error.kind === "faulted") throw error;
       const code = signal.aborted
         ? "cancelled"
-        : error instanceof AgentError
-          ? error.code
-          : "process_failed";
+        : error instanceof WorkItemError
+          ? "conflict"
+          : error instanceof AgentError
+            ? error.code
+            : "process_failed";
       // Persist an execution failure once. If persistence fails, fault the
       // worker rather than retrying or misreporting the task.
       this.#complete(id, {
@@ -170,7 +186,10 @@ export class AgentService {
     try {
       this.#store.complete(id, outcome);
     } catch (error) {
-      if (error instanceof AgentError && error.code === "memory_changed")
+      if (
+        error instanceof WorkItemError ||
+        (error instanceof AgentError && error.code === "memory_changed")
+      )
         throw error;
       throw new TaskError("faulted");
     }
