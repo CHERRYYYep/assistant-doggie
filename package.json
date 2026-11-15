@@ -9,8 +9,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'tests/**/*.test.ts' 'src/**/*.test.ts'",
+    "test": "node --test 'tests/**/*.test.ts' 'src/**/*.test.ts' 'scripts/**/*.test.ts'",
     "test:web": "node --test --test-isolation=none 'web/tests/**/*.test.ts'",
+    "d3:l0": "node scripts/d3/run.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm run openapi:check && npm test && npm run test:web",
