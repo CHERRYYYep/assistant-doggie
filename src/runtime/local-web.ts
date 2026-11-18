@@ -9,7 +9,8 @@ import { AgentService } from "../agent/service.ts";
 import { WorkspacePolicy } from "../agent/workspace.ts";
 import { CliAgentRunner, type AgentProcessRunner } from "../agent/process.ts";
 import { AgentStore } from "../storage/agents.ts";
-import type { ChatResponder } from "../http/api.ts";
+import type { ChatResponder } from "../application/chat-types.ts";
+import { ChatService } from "../application/chat.ts";
 /** Composition root for the local TypeScript Web application. */
 
 import { once } from "node:events";
@@ -145,7 +146,8 @@ export async function startDoggieLocalWeb(
             ),
           )
         : undefined);
-    const api = new ConcreteDoggieHttpApi(store, runtime, { chatResponder });
+    const chatService = new ChatService(store, runtime, chatResponder);
+    const api = new ConcreteDoggieHttpApi(store, runtime, { chatService });
     const agents = new AgentService({
       store: new AgentStore(database),
       policy: new WorkspacePolicy(config.agent.workspaceRoots),
@@ -159,7 +161,10 @@ export async function startDoggieLocalWeb(
     tasks = new TaskQueue(new TaskStore(database), async (payload, signal) =>
       "agent_task_id" in payload
         ? agents.execute(payload.agent_task_id, signal)
-        : api.chat(payload, signal),
+        : chatService.chat(
+            { text: payload.message, focusBucketId: payload.focus_bucket_id },
+            signal,
+          ),
     );
     agents.attachQueue(tasks);
     server = createDoggieNodeServer(api, {

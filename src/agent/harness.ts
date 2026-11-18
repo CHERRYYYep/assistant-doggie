@@ -10,7 +10,10 @@ import { parseWireResponse, type WireToolCall } from "../llm/wire-response.ts";
 import { withCancellation, throwIfAborted } from "../llm/cancellation.ts";
 import type { StructuredOutputTransport } from "../llm/transport.ts";
 import type { JsonValue, Store } from "../storage/store.ts";
-import type { ChatResponder, ChatToolMessage } from "../http/api.ts";
+import type {
+  ChatResponder,
+  ChatToolMessage,
+} from "../application/chat-types.ts";
 import {
   DoggieMcpTools,
   listActiveBucketsInputSchema,
