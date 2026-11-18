@@ -3,7 +3,17 @@
 import { z } from "zod";
 
 import { ArchiveService, type ArchiveResult } from "../application/archive.ts";
-import { MemoryQueryService } from "../application/query.ts";
+import {
+  MemoryTools,
+  DEFAULT_MEMORY_RESULT_LIMIT,
+  MAX_MEMORY_QUERY_CHARS,
+  MAX_BUCKET_REFERENCE_CHARS,
+} from "../application/memory-tools.ts";
+export {
+  listActiveBucketsInputSchema,
+  searchMemoryInputSchema,
+  getBucketDetailInputSchema,
+} from "../application/memory-tools.ts";
 import { askUser, buildBucketCandidates } from "../domain/classification.ts";
 import { requiredText } from "../domain/errors.ts";
 import { BucketStatus, type BucketView } from "../domain/types.ts";
@@ -11,34 +21,22 @@ import { toBucketView } from "../application/archive-runtime.ts";
 import { StorageError } from "../storage/database.ts";
 import type { JsonValue, Store } from "../storage/store.ts";
 import {
-  projectArchive,
-  projectBucket,
   projectBucketDetail,
   projectMemoryQuery,
-} from "../http/contracts.ts";
+} from "../application/memory-view.ts";
+import { projectArchive, projectBucket } from "../application/archive-view.ts";
 
 export const LIST_ACTIVE_BUCKETS_TOOL = "list_active_buckets";
 export const SEARCH_MEMORY_TOOL = "search_memory";
 export const GET_BUCKET_DETAIL_TOOL = "get_bucket_detail";
 export const PROPOSE_ENTRY_TOOL = "propose_entry";
 
-export const MAX_MCP_QUERY_CHARS = 500;
-export const MAX_MCP_BUCKET_ID_CHARS = 200;
+export const MAX_MCP_QUERY_CHARS = MAX_MEMORY_QUERY_CHARS;
+export const MAX_MCP_BUCKET_ID_CHARS = MAX_BUCKET_REFERENCE_CHARS;
 export const MAX_MCP_ENTRY_TEXT_CHARS = 16_000;
 export const MAX_MCP_TOOL_OUTPUT_BYTES = 64 * 1024;
-export const DEFAULT_MCP_RESULT_LIMIT = 20;
+export const DEFAULT_MCP_RESULT_LIMIT = DEFAULT_MEMORY_RESULT_LIMIT;
 
-export const listActiveBucketsInputSchema = z.object({}).strict();
-export const searchMemoryInputSchema = z
-  .object({
-    query: z.string().trim().min(1).max(MAX_MCP_QUERY_CHARS),
-  })
-  .strict();
-export const getBucketDetailInputSchema = z
-  .object({
-    bucket_id: z.string().trim().min(1).max(MAX_MCP_BUCKET_ID_CHARS),
-  })
-  .strict();
 export const proposeEntryInputSchema = z
   .object({
     text: z.string().trim().min(1).max(MAX_MCP_ENTRY_TEXT_CHARS),
@@ -68,38 +66,31 @@ export type DoggieToolResult = {
  */
 export class DoggieMcpTools {
   readonly #store: Store;
-  readonly #query: MemoryQueryService;
+  readonly #memory: MemoryTools;
   readonly #archive: ArchiveService;
 
   constructor(store: Store, clock: () => Date = () => new Date()) {
     this.#store = store;
-    this.#query = new MemoryQueryService(store, clock);
+    this.#memory = new MemoryTools(store.memory, clock);
     this.#archive = new ArchiveService(store);
   }
 
   listActiveBuckets(): JsonValue {
     return {
       ok: true,
-      buckets: this.#store
-        .listActiveBuckets(DEFAULT_MCP_RESULT_LIMIT)
-        .map(projectBucket),
+      buckets: this.#memory.listActiveBuckets().map(projectBucket),
     };
   }
 
   searchMemory(query: string): JsonValue {
-    return projectMemoryQuery(
-      this.#query.search(
-        requiredText(query, "query"),
-        DEFAULT_MCP_RESULT_LIMIT,
-      ),
-    ) as JsonValue;
+    return projectMemoryQuery(this.#memory.searchMemory(query));
   }
 
   getBucketDetail(bucketId: string): JsonValue {
-    const id = requiredText(bucketId, "bucket_id");
-    const detail = this.#store.getBucketDetail(id);
-    if (detail === undefined) throw StorageError.missingRecord("buckets", id);
-    return { ok: true, ...projectBucketDetail(detail) } as JsonValue;
+    return {
+      ok: true,
+      ...projectBucketDetail(this.#memory.getBucketDetail(bucketId)),
+    };
   }
 
   proposeEntry(text: string, preferredBucketId?: string): JsonValue {

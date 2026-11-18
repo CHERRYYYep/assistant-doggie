@@ -12,7 +12,8 @@ import {
   MAX_RETAINED_TASKS,
 } from "../storage/tasks.ts";
 import { TaskError, MAX_TASK_PAYLOAD_BYTES } from "../domain/task.ts";
-import { TaskQueue, taskEventStream } from "./task-queue.ts";
+import { TaskQueue } from "./task-queue.ts";
+import { taskEventStream } from "../http/task-events.ts";
 
 function deferred() {
   let resolve = () => {};

@@ -1,3 +1,4 @@
+import { MemoryTools } from "../application/memory-tools.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
@@ -295,7 +296,7 @@ test("§7 actual memory tool registry is exactly read-only and produces evidence
   const db = openDatabase(":memory:");
   try {
     const store = new Store(db);
-    const tools = createMemoryHarnessTools(store);
+    const tools = createMemoryHarnessTools(new MemoryTools(store.memory));
     assert.deepEqual(
       tools.map((t) => t.name),
       READ_ONLY_TOOL_NAMES,

@@ -41,10 +41,13 @@ export type MemorySearchResponse = {
 };
 
 export class MemoryQueryService {
-  readonly #store: Store;
+  readonly #store: Pick<Store, "searchEntryCandidates">;
   readonly #clock: () => Date;
 
-  constructor(store: Store, clock: () => Date = () => new Date()) {
+  constructor(
+    store: Pick<Store, "searchEntryCandidates">,
+    clock: () => Date = () => new Date(),
+  ) {
     this.#store = store;
     this.#clock = clock;
   }

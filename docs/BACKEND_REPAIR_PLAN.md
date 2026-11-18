@@ -1,6 +1,6 @@
 # 主对话实施前的后端修缮设计
 
-2026-11-18 · 基线 `dev_ts@720453f` · **R1、R2 已实施；R0 的 F1–F4 回归已固定。**
+2026-11-18 · 基线 `dev_ts@720453f` · **R1–R3 已实施；R0 的 F1–F4 回归已固定。**
 
 先完成本文修缮与验收，再进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
 
@@ -123,6 +123,8 @@ R2 实施记录：4689219 完成用例抽取，HTTP 和生产聊天 worker 注�
 - `taskEventStream` 的 SSE 编码归 HTTP 适配；队列只发布内部快照。保留订阅上限、背压、断线取消订阅和 shutdown 行为。
 
 验收用无 Hono/MCP 的 application 测试构建聊天；运行原 HTTP/MCP/前端合同验证 wire 格式不漂移。为受改模块建立依赖检查（包括 type import）：聊天应用模块不得依赖 HTTP/MCP，Harness 不依赖 HTTP/MCP adapter；既有剩余越界列清单，不承诺本轮全库重构。完成标准是移除错误依赖和重复职责，不是文件行数变短。
+
+R3 实施记录：新增 ConversationStore、MemoryReadStore 和中立 MemoryTools，旧 Store 的读接口委派给新模块。HTTP 负责 SSE 编码，WorkItem 文案由应用层提供，仍在一次事务内保存。传递依赖测试覆盖聊天应用和 Harness；原 HTTP、MCP 和浏览器合同验证通过。
 
 ### R4：检索与恢复协调成本
 

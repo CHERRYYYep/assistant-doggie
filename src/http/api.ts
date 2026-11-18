@@ -88,7 +88,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     this.#store = store;
     this.#runtime = runtime;
     this.#clock = options.clock ?? (() => new Date());
-    this.#query = new MemoryQueryService(store, this.#clock);
+    this.#query = new MemoryQueryService(store.memory, this.#clock);
     this.#correction = new CorrectionService(store);
     this.#status = new BucketStatusService(store);
     this.#todo = new TodoService(store, this.#clock);
@@ -118,7 +118,7 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
   chatHistory(limit: number): ChatHistoryResponse {
     return {
       ok: true,
-      messages: this.#store
+      messages: this.#store.conversation
         .listChatMessages(limit)
         .map((message) => this.#hydrateChatMessage(message)),
     } as const;

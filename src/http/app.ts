@@ -21,7 +21,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 
 import { chatTaskPayloadSchema } from "../domain/task.ts";
-import { taskEventStream, type TaskQueue } from "../application/task-queue.ts";
+import type { TaskQueue } from "../application/task-queue.ts";
+import { taskEventStream } from "./task-events.ts";
 
 import type { BucketType } from "../domain/types.ts";
 

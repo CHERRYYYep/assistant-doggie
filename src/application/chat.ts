@@ -12,7 +12,11 @@ import {
 } from "../llm/cancellation.ts";
 import { LlmError } from "../llm/structured-output.ts";
 import { StorageError } from "../storage/database.ts";
-import type { Store, ChatMessageRow } from "../storage/store.ts";
+import type { Store } from "../storage/store.ts";
+import type {
+  ChatMessageRow,
+  ConversationStore,
+} from "../storage/conversation.ts";
 import type {
   ArchiveRuntime,
   ArchiveExecution,
@@ -42,7 +46,15 @@ const CHAT_HISTORY_LIMIT = 40;
 
 export class ChatService {
   readonly #turns = new ChatTurns();
-  readonly #store: Store;
+  readonly #store: Pick<
+    Store,
+    | "getBucket"
+    | "getEntry"
+    | "getBucketDetail"
+    | "getEntryRevocation"
+    | "requirePendingArchiveAttempt"
+  >;
+  readonly #conversation: ConversationStore;
   readonly #runtime: ArchiveRuntime;
   readonly #chatResponder: ChatResponder | undefined;
 
@@ -52,6 +64,7 @@ export class ChatService {
     responder?: ChatResponder,
   ) {
     this.#store = store;
+    this.#conversation = store.conversation;
     this.#runtime = runtime;
     this.#chatResponder = responder;
   }
@@ -62,8 +75,8 @@ export class ChatService {
 
   async #chat(request: ChatInput, signal?: AbortSignal) {
     throwIfAborted(signal);
-    const contextRevision = this.#store.getMemoryContextRevision();
-    const userMessage = this.#store.appendChatMessage({
+    const contextRevision = this.#conversation.getMemoryContextRevision();
+    const userMessage = this.#conversation.appendChatMessage({
       role: "user",
       content: request.text,
       details: {
@@ -90,7 +103,7 @@ export class ChatService {
     let archive: ChatArchive = decorateChatArchive(
       projectArchiveExecution(this.#store, execution),
     );
-    const history = this.#store.listModelChatMessages(
+    const history = this.#conversation.listModelChatMessages(
       CHAT_HISTORY_LIMIT,
       userMessage.sequence,
     );
@@ -99,7 +112,7 @@ export class ChatService {
     let chatError: string | null = null;
     if (
       this.#chatResponder !== undefined &&
-      contextRevision === this.#store.getMemoryContextRevision()
+      contextRevision === this.#conversation.getMemoryContextRevision()
     ) {
       try {
         const responder = this.#chatResponder;
@@ -123,41 +136,44 @@ export class ChatService {
       }
     }
 
-    const replies = this.#store.appendChatTurnResults(userMessage.id, () => {
-      // Read the version under the same short transaction as the replies so a
-      // different connection cannot invalidate it between the check and commit.
-      if (contextRevision !== this.#store.getMemoryContextRevision()) {
-        toolMessages = [];
-        chatError = "记忆已更新，请重新提问。";
-        assistantText = chatError;
-        archive = this.#currentArchive(archive);
-      }
-      return [
-        ...toolMessages.map((tool) => ({
-          role: "tool" as const,
-          content: JSON.stringify(tool.output),
-          toolName: tool.name,
-          toolCallId: tool.callId,
-          details: {
-            kind: "agent_tool",
-            arguments: tool.arguments,
-            output: tool.output,
+    const replies = this.#conversation.appendChatTurnResults(
+      userMessage.id,
+      () => {
+        // Read the version under the same short transaction as the replies so a
+        // different connection cannot invalidate it between the check and commit.
+        if (contextRevision !== this.#conversation.getMemoryContextRevision()) {
+          toolMessages = [];
+          chatError = "记忆已更新，请重新提问。";
+          assistantText = chatError;
+          archive = this.#currentArchive(archive);
+        }
+        return [
+          ...toolMessages.map((tool) => ({
+            role: "tool" as const,
+            content: JSON.stringify(tool.output),
+            toolName: tool.name,
+            toolCallId: tool.callId,
+            details: {
+              kind: "agent_tool",
+              arguments: tool.arguments,
+              output: tool.output,
+            },
+          })),
+          {
+            role: "assistant",
+            content: assistantText,
+            details: {
+              kind: "archive_result",
+              source_text: request.text,
+              archive,
+              pending_confirmation:
+                archive.archive_state === "needs_confirmation",
+              chat_error: chatError,
+            },
           },
-        })),
-        {
-          role: "assistant",
-          content: assistantText,
-          details: {
-            kind: "archive_result",
-            source_text: request.text,
-            archive,
-            pending_confirmation:
-              archive.archive_state === "needs_confirmation",
-            chat_error: chatError,
-          },
-        },
-      ];
-    });
+        ];
+      },
+    );
 
     const assistantMessage = replies.at(-1);
     if (assistantMessage === undefined)
@@ -183,8 +199,8 @@ export class ChatService {
     throwIfAborted(signal);
     const confirmationText = confirmationUserText(request);
     this.#validateConfirmationBoundary(request);
-    const contextRevision = this.#store.getMemoryContextRevision();
-    const userMessage = this.#store.appendChatMessage({
+    const contextRevision = this.#conversation.getMemoryContextRevision();
+    const userMessage = this.#conversation.appendChatMessage({
       role: "user",
       content: confirmationText,
       details: {
@@ -216,11 +232,11 @@ export class ChatService {
       execution.result.archiveState === "discarded"
         ? null
         : execution.result.attemptId;
-    const [assistantMessage] = this.#store.appendChatTurnResults(
+    const [assistantMessage] = this.#conversation.appendChatTurnResults(
       userMessage.id,
       () => {
         const changed =
-          contextRevision !== this.#store.getMemoryContextRevision();
+          contextRevision !== this.#conversation.getMemoryContextRevision();
         if (changed && confirmationArchive.archive_state !== "discarded") {
           archive = {
             ...this.#currentArchive(confirmationArchive),
@@ -375,7 +391,7 @@ export class ChatService {
     const message = chatFailureMessage(error);
     let assistantMessage: ChatMessageRow | undefined;
     try {
-      [assistantMessage] = this.#store.appendChatTurnResults(
+      [assistantMessage] = this.#conversation.appendChatTurnResults(
         userMessage.id,
         () => [
           {

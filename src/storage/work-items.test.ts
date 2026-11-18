@@ -1,3 +1,7 @@
+import {
+  describeCreatedGoal,
+  describeUpdatedGoal,
+} from "../application/work-items.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { randomUUID } from "node:crypto";
@@ -103,11 +107,11 @@ test("genuine v7 migration preserves existing goals' inputs and CLI identities; 
       ...goal(),
       sources: [{ kind: "message", id: message.id }],
     };
-    const item = new WorkItemStore(db).create(request);
+    const item = new WorkItemStore(db).create(request, describeCreatedGoal);
     db.close();
     db = openDatabase(path);
     const store = new WorkItemStore(db);
-    assert.equal(store.create(request).id, item.id);
+    assert.equal(store.create(request, describeCreatedGoal).id, item.id);
     assert.equal(store.detail(item.id).sources[0]?.available, true);
     assert.equal(db.prepare("PRAGMA foreign_key_check").all().length, 0);
   } finally {
@@ -124,17 +128,20 @@ test("goal creation is atomic, idempotent and never archives instructions or add
     db.exec(
       "CREATE TRIGGER fail_goal_event BEFORE INSERT ON work_item_events BEGIN SELECT RAISE(ABORT,'injected'); END",
     );
-    assert.throws(() => store.create(request), /injected/);
+    assert.throws(() => store.create(request, describeCreatedGoal), /injected/);
     assert.equal(store.list().length, 0);
     assert.equal(new Store(db).listChatMessages(20).length, 0);
     db.exec("DROP TRIGGER fail_goal_event");
-    const created = store.create(request);
-    assert.equal(store.create(request).id, created.id);
+    const created = store.create(request, describeCreatedGoal);
+    assert.equal(store.create(request, describeCreatedGoal).id, created.id);
     assert.throws(
-      () => store.create({ ...request, title: "不同内容" }),
+      () =>
+        store.create({ ...request, title: "不同内容" }, describeCreatedGoal),
       /conflict/,
     );
-    assert.throws(() => store.create({ ...goal(), extra: true }));
+    assert.throws(() =>
+      store.create({ ...goal(), extra: true }, describeCreatedGoal),
+    );
     assert.equal(new Store(db).listChatMessages(20).length, 1);
     assert.equal(new Store(db).listModelChatMessages(20).length, 0);
     for (const table of ["entries", "memory_items", "archive_attempts"])
@@ -159,13 +166,16 @@ test("goal source references reflect revocation and deletion without copying sta
     );
     assert.ok(result.entryId && result.bucketId);
     const store = new WorkItemStore(db);
-    const item = store.create({
-      ...goal(),
-      sources: [
-        { kind: "entry", id: result.entryId },
-        { kind: "bucket", id: result.bucketId },
-      ],
-    });
+    const item = store.create(
+      {
+        ...goal(),
+        sources: [
+          { kind: "entry", id: result.entryId },
+          { kind: "bucket", id: result.bucketId },
+        ],
+      },
+      describeCreatedGoal,
+    );
     memory.deleteEntry(result.entryId, "撤销测试");
     assert.equal(
       store.detail(item.id).sources.find((source) => source.kind === "entry")
@@ -174,10 +184,13 @@ test("goal source references reflect revocation and deletion without copying sta
     );
     assert.throws(
       () =>
-        store.create({
-          ...goal(),
-          sources: [{ kind: "entry", id: result.entryId }],
-        }),
+        store.create(
+          {
+            ...goal(),
+            sources: [{ kind: "entry", id: result.entryId }],
+          },
+          describeCreatedGoal,
+        ),
       /invalid_reference/,
     );
     memory.deleteBucket(result.bucketId, "删除主题");
@@ -192,10 +205,13 @@ test("goal source references reflect revocation and deletion without copying sta
     });
     assert.throws(
       () =>
-        store.create({
-          ...goal(),
-          sources: [{ kind: "message", id: assistant.id }],
-        }),
+        store.create(
+          {
+            ...goal(),
+            sources: [{ kind: "message", id: assistant.id }],
+          },
+          describeCreatedGoal,
+        ),
       /invalid_reference/,
     );
   } finally {
@@ -208,8 +224,8 @@ test("goal proposal has exact compiled instructions, atomic deduplication and ex
   try {
     const goals = new WorkItemStore(db);
     const agents = new AgentStore(db);
-    const one = goals.create(goal());
-    const two = goals.create(goal());
+    const one = goals.create(goal(), describeCreatedGoal);
+    const two = goals.create(goal(), describeCreatedGoal);
     const request = attempt(one.revision);
     const task = agents.proposeForWorkItem(one.id, request);
     assert.match(task.instruction, /检查撤销机制/);
@@ -264,18 +280,26 @@ test("editing goal invalidates pending approval and session scope; status transi
   try {
     const goals = new WorkItemStore(db);
     const agents = new AgentStore(db);
-    const item = goals.create(goal());
+    const item = goals.create(goal(), describeCreatedGoal);
     const old = agents.proposeForWorkItem(item.id, attempt(item.revision));
     const current = goals.get(item.id);
     assert.throws(() =>
-      goals.update(item.id, { ...goal(), expectedRevision: item.revision }),
+      goals.update(
+        item.id,
+        { ...goal(), expectedRevision: item.revision },
+        describeUpdatedGoal,
+      ),
     );
-    const edited = goals.update(item.id, {
-      title: item.title,
-      goal: "新的范围",
-      acceptance: item.acceptance,
-      expectedRevision: current.revision,
-    });
+    const edited = goals.update(
+      item.id,
+      {
+        title: item.title,
+        goal: "新的范围",
+        acceptance: item.acceptance,
+        expectedRevision: current.revision,
+      },
+      describeUpdatedGoal,
+    );
     assert.equal(agents.task(old.id).status, "rejected");
     assert.throws(() => agents.approve(old.id, old.instruction));
     assert.throws(
@@ -316,7 +340,7 @@ test("approved work uses one in-flight attempt, success awaits user completion a
     const goals = new WorkItemStore(db);
     const agents = new AgentStore(db);
     const queue = new TaskStore(db);
-    const item = goals.create(goal());
+    const item = goals.create(goal(), describeCreatedGoal);
     const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
     const queued = agents.approve(task.id, task.instruction);
     assert.equal(goals.get(item.id).status, "in_progress");
@@ -368,7 +392,7 @@ test("goal cancellation intent blocks old approvals until execution actually sto
     const goals = new WorkItemStore(db);
     const agents = new AgentStore(db);
     const queue = new TaskStore(db);
-    const item = goals.create(goal());
+    const item = goals.create(goal(), describeCreatedGoal);
     const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
     const queued = agents.approve(task.id, task.instruction);
     const cancelling = goals.transition(item.id, {
@@ -396,7 +420,7 @@ test("interrupted execution reconciles goal to blocked and cannot restore failed
     const goals = new WorkItemStore(db);
     const agents = new AgentStore(db);
     const queue = new TaskStore(db);
-    const item = goals.create(goal());
+    const item = goals.create(goal(), describeCreatedGoal);
     const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
     agents.approve(task.id, task.instruction);
     queue.claim();

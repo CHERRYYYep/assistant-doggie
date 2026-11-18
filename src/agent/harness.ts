@@ -9,17 +9,22 @@ import {
 import { parseWireResponse, type WireToolCall } from "../llm/wire-response.ts";
 import { withCancellation, throwIfAborted } from "../llm/cancellation.ts";
 import type { StructuredOutputTransport } from "../llm/transport.ts";
-import type { JsonValue, Store } from "../storage/store.ts";
+import type { JsonValue } from "../storage/store.ts";
 import type {
   ChatResponder,
   ChatToolMessage,
 } from "../application/chat-types.ts";
 import {
-  DoggieMcpTools,
+  type MemoryTools,
   listActiveBucketsInputSchema,
   searchMemoryInputSchema,
   getBucketDetailInputSchema,
-} from "../mcp/tools.ts";
+} from "../application/memory-tools.ts";
+import { projectBucket } from "../application/archive-view.ts";
+import {
+  projectBucketDetail,
+  projectMemoryQuery,
+} from "../application/memory-view.ts";
 
 export const MAX_TOOL_ARGUMENT_BYTES = 32 * 1024;
 export const MAX_TOOL_RESULT_BYTES = 64 * 1024;
@@ -309,15 +314,19 @@ export class AgentHarness {
     }
   }
 }
-export function createMemoryHarnessTools(store: Store): readonly HarnessTool[] {
-  const tools = new DoggieMcpTools(store);
+export function createMemoryHarnessTools(
+  tools: MemoryTools,
+): readonly HarnessTool[] {
   return [
     {
       name: "list_active_buckets",
       description: "列出活跃工作记忆 Bucket",
       input: listActiveBucketsInputSchema,
       readOnly: true,
-      execute: () => tools.listActiveBuckets(),
+      execute: () => ({
+        ok: true,
+        buckets: tools.listActiveBuckets().map(projectBucket),
+      }),
     },
     {
       name: "search_memory",
@@ -325,17 +334,23 @@ export function createMemoryHarnessTools(store: Store): readonly HarnessTool[] {
       input: searchMemoryInputSchema,
       readOnly: true,
       execute: (input) =>
-        tools.searchMemory(searchMemoryInputSchema.parse(input).query),
+        projectMemoryQuery(
+          tools.searchMemory(searchMemoryInputSchema.parse(input).query),
+        ),
     },
     {
       name: "get_bucket_detail",
       description: "读取指定 Bucket 和记忆",
       input: getBucketDetailInputSchema,
       readOnly: true,
-      execute: (input) =>
-        tools.getBucketDetail(
-          getBucketDetailInputSchema.parse(input).bucket_id,
+      execute: (input) => ({
+        ok: true,
+        ...projectBucketDetail(
+          tools.getBucketDetail(
+            getBucketDetailInputSchema.parse(input).bucket_id,
+          ),
         ),
+      }),
     },
   ];
 }

@@ -1,4 +1,5 @@
-import type { ChatMessageRow, JsonValue } from "../storage/store.ts";
+import type { ChatMessageRow } from "../storage/conversation.ts";
+import type { JsonValue } from "../storage/store.ts";
 
 export type ChatInput = {
   readonly text: string;

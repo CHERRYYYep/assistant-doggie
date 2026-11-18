@@ -134,7 +134,7 @@ test("MCP returns stable errors without leaking unknown exception details", asyn
     });
 
     const sensitiveDetail = "/private/path/doggie.db secret-token stack";
-    const failing = t.mock.method(store, "listActiveBuckets", () => {
+    const failing = t.mock.method(store.memory, "listActiveBuckets", () => {
       throw new Error(sensitiveDetail);
     });
     for (const thrown of [new Error(sensitiveDetail), sensitiveDetail]) {

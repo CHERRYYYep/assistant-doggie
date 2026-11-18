@@ -92,7 +92,7 @@ export function projectArchive(
 }
 
 export function projectArchiveExecution(
-  store: Store,
+  store: Pick<Store, "getBucket" | "getBucketDetail">,
   execution: ArchiveExecution,
 ) {
   const memoryItemIds =

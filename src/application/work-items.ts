@@ -4,6 +4,7 @@ import {
   resolveWorkItem,
   resolveWorkItemSchema,
   workItemActionSchema,
+  type WorkItem,
 } from "../domain/work-item.ts";
 import { WorkItemStore } from "../storage/work-items.ts";
 
@@ -27,11 +28,11 @@ export class WorkItemService {
     return this.#store.detail(id);
   }
   create(input: unknown) {
-    return this.#store.create(input);
+    return this.#store.create(input, describeCreatedGoal);
   }
   update(id: string, input: unknown) {
     this.#reconcile();
-    return this.#store.update(id, input);
+    return this.#store.update(id, input, describeUpdatedGoal);
   }
   resolve(input: unknown) {
     const request = resolveWorkItemSchema.parse(input);
@@ -60,4 +61,14 @@ export class WorkItemService {
   propose(id: string, input: unknown) {
     return this.#agents.proposeForWorkItem(id, input);
   }
+}
+
+type GoalDescription = Pick<WorkItem, "title" | "goal" | "acceptance">;
+
+export function describeCreatedGoal(item: GoalDescription): string {
+  return `建立工作目标「${item.title}」\n${item.goal}\n验收要求：${item.acceptance}`;
+}
+
+export function describeUpdatedGoal(item: GoalDescription): string {
+  return `修改工作目标「${item.title}」\n${item.goal}\n验收要求：${item.acceptance}`;
 }

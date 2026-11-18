@@ -15,7 +15,7 @@ import {
 } from "../domain/work-item.ts";
 import { withTransaction } from "./database.ts";
 import { rejectPendingAction } from "./pending-actions.ts";
-import { Store } from "./store.ts";
+import { ConversationStore } from "./conversation.ts";
 
 const select = `SELECT id,title,goal,acceptance,status,revision,scope_revision AS scopeRevision,
  cancel_requested AS cancelRequested,last_attempt_id AS lastAttemptId,last_attempt_status AS lastAttemptStatus,
@@ -122,7 +122,7 @@ export class WorkItemStore {
       .run(requestId, kind, payload, resultId);
   }
 
-  create(input: unknown): WorkItem {
+  create(input: unknown, describe: (item: WorkItem) => string): WorkItem {
     const request = createWorkItemSchema.parse(input);
     return withTransaction(this.#db, () => {
       const payload = JSON.stringify(request);
@@ -143,15 +143,17 @@ export class WorkItemStore {
           .prepare("INSERT OR IGNORE INTO work_item_sources VALUES (?,?,?)")
           .run(id, ref.kind, ref.id);
       this.remember(request.requestId, "create", payload, id);
-      this.#event(this.get(id), "created", { requestId: request.requestId });
-      this.#message(
-        id,
-        `建立工作目标「${request.title}」\n${request.goal}\n验收要求：${request.acceptance}`,
-      );
-      return this.get(id);
+      const item = this.get(id);
+      this.#event(item, "created", { requestId: request.requestId });
+      this.#message(id, describe(item));
+      return item;
     });
   }
-  update(id: string, input: unknown): WorkItem {
+  update(
+    id: string,
+    input: unknown,
+    describe: (item: WorkItem) => string,
+  ): WorkItem {
     const request = updateWorkItemSchema.parse(input);
     return withTransaction(this.#db, () => {
       const item = this.#expected(id, request.expectedRevision);
@@ -173,10 +175,7 @@ export class WorkItemStore {
       this.#event(updated, "scope_updated", {
         previousScopeRevision: item.scopeRevision,
       });
-      this.#message(
-        id,
-        `修改工作目标「${updated.title}」\n${updated.goal}\n验收要求：${updated.acceptance}`,
-      );
+      this.#message(id, describe(updated));
       return updated;
     });
   }
@@ -376,7 +375,9 @@ export class WorkItemStore {
       );
   }
   #message(id: string, content: string): void {
-    const message = new Store(this.#db).appendChatMessageWithinTransaction({
+    const message = new ConversationStore(
+      this.#db,
+    ).appendChatMessageWithinTransaction({
       role: "user",
       content,
       details: { kind: "work_item", work_item_id: id },

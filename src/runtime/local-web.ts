@@ -1,3 +1,4 @@
+import { MemoryTools } from "../application/memory-tools.ts";
 import { WorkItemService } from "../application/work-items.ts";
 import { WorkItemStore } from "../storage/work-items.ts";
 import {
@@ -142,7 +143,7 @@ export async function startDoggieLocalWeb(
                 shutdownController.signal,
               ),
               config.model,
-              createMemoryHarnessTools(store),
+              createMemoryHarnessTools(new MemoryTools(store.memory)),
             ),
           )
         : undefined);
