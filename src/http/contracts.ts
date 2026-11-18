@@ -282,6 +282,8 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
         return new HttpBoundaryError(409, error.message);
       case "invalid_write":
         return new HttpBoundaryError(400, error.message);
+      case "storage_unavailable":
+        return new HttpBoundaryError(503, "storage is unavailable");
       case "foreign_database":
       case "unsupported_schema_version":
       case "pragma_not_applied":

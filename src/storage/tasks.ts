@@ -9,7 +9,7 @@ import {
   type TaskPayload,
   type TaskSnapshot,
 } from "../domain/task.ts";
-import { withTransaction } from "./database.ts";
+import { assertDatabaseAvailable, withTransaction } from "./database.ts";
 import {
   finishPendingAction,
   requirePendingAction,
@@ -66,6 +66,7 @@ export class TaskStore {
     });
   }
   releaseExecutor(ownerId: string): void {
+    assertDatabaseAvailable(this.#db);
     this.#db
       .prepare(
         "DELETE FROM background_task_executor WHERE singleton=1 AND owner_id=?",
@@ -235,6 +236,7 @@ export class TaskStore {
     status: TaskSnapshot["status"],
     error: TaskSnapshot["errorCode"],
   ): void {
+    assertDatabaseAvailable(this.#db);
     this.#db
       .prepare(
         "UPDATE background_tasks SET status=?,error_code=?,revision=revision+1,updated_at=? WHERE id=? AND status=?",

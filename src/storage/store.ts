@@ -1450,23 +1450,56 @@ export class Store {
   }
 
   /** Older history remains visible, but cannot silently restore revoked facts. */
-  listModelChatMessages(limit: number): ChatMessageRow[] {
+  listModelChatMessages(
+    limit: number,
+    throughSequence?: number,
+  ): ChatMessageRow[] {
     const fence = this.#memoryContextMaximum("history_sequence");
-    return (
-      this.listChatMessages(limit)
-        .filter((message) => message.sequence > fence)
-        .filter(
-          (message) =>
-            !(
-              message.details !== null &&
-              typeof message.details === "object" &&
-              "work_item_id" in message.details
-            ),
-        )
-        // Audit details can include old source text even when reply content has
-        // already been replaced after concurrent revocation. They are UI data.
-        .map((message) => ({ ...message, details: undefined }))
-    );
+    const rows = this.#database
+      .prepare(
+        `SELECT id, sequence, role, content, tool_name, tool_call_id, created_at
+         FROM conversation_messages
+         WHERE sequence > ? AND sequence <= ?
+           AND role IN ('user', 'assistant')
+           AND json_type(details_json, '$.work_item_id') IS NULL
+         ORDER BY sequence DESC LIMIT ?`,
+      )
+      .all(fence, throughSequence ?? Number.MAX_SAFE_INTEGER, limit);
+    return rows.reverse().map((row) => {
+      const {
+        id,
+        sequence,
+        role,
+        content,
+        tool_name,
+        tool_call_id,
+        created_at,
+      } = row;
+      if (
+        typeof id !== "string" ||
+        typeof sequence !== "number" ||
+        typeof role !== "string" ||
+        typeof content !== "string" ||
+        (tool_name !== null && typeof tool_name !== "string") ||
+        (tool_call_id !== null && typeof tool_call_id !== "string") ||
+        typeof created_at !== "string"
+      ) {
+        throw StorageError.invalidWrite(
+          "chat message",
+          "has invalid stored fields",
+        );
+      }
+      return {
+        id,
+        sequence,
+        role,
+        content,
+        toolName: tool_name,
+        toolCallId: tool_call_id,
+        details: undefined,
+        createdAt: created_at,
+      };
+    });
   }
 
   /** Most recent `limit` messages, returned oldest-first for rendering. */

@@ -31,7 +31,11 @@ import {
   drainDoggieNodeServer,
 } from "../http/server.ts";
 import { StructuredOutputAdapter } from "../llm/structured-output.ts";
-import { openDatabase } from "../storage/database.ts";
+import {
+  assertDatabaseAvailable,
+  onDatabaseFault,
+  openDatabase,
+} from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
 import type { DoggieRuntimeConfig } from "./config.ts";
 
@@ -111,6 +115,15 @@ export async function startDoggieLocalWeb(
   const shutdownController = new AbortController();
   let server: Server | undefined;
   let tasks: TaskQueue | undefined;
+  let application: DoggieLocalWeb | undefined;
+  onDatabaseFault(database, () => {
+    if (application === undefined) return; // Startup checks the fault before publishing.
+    console.error("doggie-local-web storage unavailable; stopping");
+    void application.close().catch(() => {
+      // A quarantined connection cannot release the persistent worker claim.
+      // The next process recovers the abandoned claim after this PID exits.
+    });
+  });
   try {
     const store = new Store(database);
     const model =
@@ -160,7 +173,8 @@ export async function startDoggieLocalWeb(
     });
     server.listen(config.server.port, config.server.host);
     await once(server, "listening");
-    return new DoggieLocalWeb({
+    assertDatabaseAvailable(database);
+    application = new DoggieLocalWeb({
       server,
       database,
       store,
@@ -169,6 +183,7 @@ export async function startDoggieLocalWeb(
       url: serverUrl(server),
       shutdownController,
     });
+    return application;
   } catch (error) {
     shutdownController.abort();
     const workerClose = tasks?.close();

@@ -35,11 +35,13 @@ export class WorkItemService {
   }
   resolve(input: unknown) {
     const request = resolveWorkItemSchema.parse(input);
-    // Explicit IDs remain addressable even when older than the recent list.
+    // Resolve identity independently of the bounded display list.
     const items =
-      request.workItemId === undefined
-        ? this.list()
-        : [this.detail(request.workItemId).workItem];
+      request.workItemId !== undefined
+        ? [this.#store.get(request.workItemId)]
+        : request.title !== undefined
+          ? this.#store.findExactTitle(request.title)
+          : this.list();
     return resolveWorkItem(request, items);
   }
   async transition(id: string, input: unknown) {

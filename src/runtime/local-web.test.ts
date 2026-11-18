@@ -14,7 +14,7 @@ import { createNew } from "../domain/classification.ts";
 import { minimalExtraction } from "../domain/memory.ts";
 import { BucketType } from "../domain/types.ts";
 import { DoggieMcpTools } from "../mcp/tools.ts";
-import { openDatabase } from "../storage/database.ts";
+import { openDatabase, withTransaction } from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
 import { resolveRuntimeConfig } from "./config.ts";
 import { startDoggieLocalWeb } from "./local-web.ts";
@@ -556,4 +556,40 @@ test("T13 real HTTP runtime composes approved CLI task queue, SSE and persisted 
     await runtime.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("rollback failure quarantines writes and drives Web worker and connection shutdown", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "doggie-storage-fault-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const web = await startDoggieLocalWeb(setupConfig(directory), {
+    model: new FakeModel(),
+  });
+  const stopped = once(web.server, "close");
+  const exec = web.database.exec.bind(web.database);
+  t.mock.method(web.database, "exec", (sql: string) => {
+    if (sql === "ROLLBACK") throw new Error("injected storage cleanup failure");
+    exec(sql);
+  });
+
+  const inserted = "未提交的消息";
+  assert.throws(
+    () =>
+      withTransaction(web.database, () => {
+        web.store.appendChatMessageWithinTransaction({
+          role: "user",
+          content: inserted,
+        });
+        throw new Error("injected write failure");
+      }),
+    { kind: "storage_unavailable" },
+  );
+  assert.throws(
+    () => web.store.appendChatMessage({ role: "user", content: "后一条消息" }),
+    { kind: "storage_unavailable" },
+  );
+  await stopped;
+  await assert.rejects(web.close(), { kind: "faulted" });
+  assert.equal(web.database.isOpen, false);
+  using observer = openDatabase(join(directory, "doggie.db"));
+  assert.deepEqual(new Store(observer).listChatMessages(10), []);
 });

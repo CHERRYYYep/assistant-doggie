@@ -20,6 +20,12 @@ import { Store } from "./store.ts";
 const select = `SELECT id,title,goal,acceptance,status,revision,scope_revision AS scopeRevision,
  cancel_requested AS cancelRequested,last_attempt_id AS lastAttemptId,last_attempt_status AS lastAttemptStatus,
  created_at AS createdAt,updated_at AS updatedAt FROM work_items`;
+const MAX_LISTED_WORK_ITEMS = 100;
+const workItemReferenceSchema = workItemSchema.pick({
+  id: true,
+  title: true,
+  status: true,
+});
 const bindingSchema = z.strictObject({
   workItemId: z.string().uuid(),
   scopeRevision: z.number().int().positive(),
@@ -47,15 +53,25 @@ export class WorkItemStore {
     return this.#db
       .prepare(
         select +
-          " ORDER BY CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END,updated_at DESC,id DESC LIMIT 100",
+          " ORDER BY CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END,updated_at DESC,id DESC LIMIT ?",
       )
-      .all()
+      .all(MAX_LISTED_WORK_ITEMS)
       .map((row) =>
         workItemSchema.parse({
           ...row,
           cancelRequested: row["cancelRequested"] === 1,
         }),
       );
+  }
+  findExactTitle(
+    title: string,
+  ): readonly Pick<WorkItem, "id" | "title" | "status">[] {
+    return this.#db
+      .prepare(
+        "SELECT id,title,status FROM work_items WHERE title = ? ORDER BY CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END,updated_at DESC,id DESC LIMIT ?",
+      )
+      .all(title, MAX_LISTED_WORK_ITEMS)
+      .map((row) => workItemReferenceSchema.parse(row));
   }
   detail(id: string) {
     const workItem = this.get(id);

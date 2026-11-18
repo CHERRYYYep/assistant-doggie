@@ -904,3 +904,53 @@ test("query candidate reads do not refresh Bucket activity", () => {
   assert.equal(store.searchEntryCandidates(["压测"]).length, 1);
   assert.deepEqual(store.getBucket(outcome.bucketId!), before);
 });
+
+test("model history fills its window with eligible rows, respects an upper bound and hides audit details", () => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database);
+  const first = store.appendChatMessage({
+    role: "user",
+    content: "早先的问题",
+    details: { other_key: "work_item_id" },
+  });
+  const second = store.appendChatMessage({
+    role: "assistant",
+    content: "早先的回答",
+  });
+  for (let index = 0; index < 41; index++) {
+    store.appendChatMessage({
+      role: "user",
+      content: "目标消息",
+      details: { work_item_id: null },
+    });
+    store.appendChatMessage({ role: "tool", content: "工具输出" });
+  }
+  const newest = store.appendChatMessage({ role: "user", content: "新的问题" });
+
+  assert.deepEqual(
+    store.listModelChatMessages(2).map(({ id, details }) => [id, details]),
+    [
+      [second.id, undefined],
+      [newest.id, undefined],
+    ],
+  );
+  assert.deepEqual(
+    store.listModelChatMessages(40, second.sequence).map(({ id }) => id),
+    [first.id, second.id],
+  );
+  assert.deepEqual(store.listModelChatMessages(40, 0), []);
+  assert.equal(store.listChatMessages(40).length, 40);
+});
+
+test("malformed model history details fail closed", () => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database);
+  const message = store.appendChatMessage({
+    role: "assistant",
+    content: "旧结果",
+  });
+  database
+    .prepare("UPDATE conversation_messages SET details_json = ? WHERE id = ?")
+    .run("{broken", message.id);
+  assert.throws(() => store.listModelChatMessages(40));
+});
