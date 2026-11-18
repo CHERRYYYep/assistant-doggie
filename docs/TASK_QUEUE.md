@@ -54,18 +54,20 @@ queued → running → succeeded | failed | cancelled
 queued → cancelled
 ```
 
-claim 与状态转换都是同步 SQLite 操作；claim 使用事务，终态更新比较旧状态（CAS）。没有跨 await 的 SQLite 事务。通用 `pending_actions` 不被队列当作可执行命令。
+claim 与状态转换都是同步 SQLite 操作；claim 与终态使用事务，终态比较旧状态（CAS）；关联 Agent/审批/WorkItem 的失败或取消投影在同一终态事务更新。没有跨 await 的 SQLite 事务。通用 `pending_actions` 不被队列当作可执行命令。
 
 重启时：
 
 1. 拒绝占有同一数据库的另一个活着或无法确认已死亡的 worker。
-2. 旧的 `running` 任务标记 `failed / interrupted`，**不自动重新执行**。
+2. 在取得所有权的同一事务中，旧的 `running` 任务标记 `failed / interrupted`，并恢复关联 Agent/WorkItem，**不自动重新执行**。
 3. `queued` 任务按持久化顺序继续执行。
 4. 正常关闭会取消当前工作并等待其实际返回；尚未开始的任务保持 queued。
 
 本地 PID 所有权是轻量化的同机策略，不支持跨机器共享数据库。PID 重用会导致保守拒绝启动，属于可用性限制，不能通过超时偷占一个可能仍在写入的 worker 来解决。
 
 如果 executor 成功后保存终态失败，效果可能已经提交。此时不伪造 cancelled/failed，不重放，而是停止队列接收、返回稳定的 unavailable 错误；任务暂留 running，重启后按 interrupted 处理。任务状态不是“恰好一次执行”的证明，既有归档事务和确认防重放仍独立有效。
+
+正常 GET 只读已提交状态；pruning 前保留异常投影恢复。已提交 Agent 成功但 queue 尚未终结的重启间隙会保留成功证据；反向的 queue 成功而 Agent 未完成则拒绝并报错。详见 [后端修缮验收](BACKEND_REPAIR_ACCEPTANCE.md)。
 
 ## 4. HTTP 合同
 

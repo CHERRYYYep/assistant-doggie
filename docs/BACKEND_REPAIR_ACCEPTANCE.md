@@ -1,6 +1,6 @@
 # 后端修缮验收记录
 
-2026-11-18 · 专用分支 `codex/main-conversation-backend` · R4 检索/恢复证据。
+2026-11-18 · 专用分支 `codex/main-conversation-backend` · R0–R5 完成；R4 实现提交为 `891cd49`。
 
 ## 检索对照
 
@@ -58,3 +58,49 @@ Entry 候选读取现在为五条批量 SELECT（无词项时四条），不随 
 旧版四个 HTTP GET（Agent/WorkItem 列表和详情）开启 **10 次 BEGIN**；同一回归在修复后为 **0**，业务快照不变。故障覆盖：排队/运行取消、目标取消意图、启动中断、孤立 queue 引用、队列淘汰 200 条后引用清空、审批/目标投影失败回滚、不可能成功、成功后 queue 间隙、恢复幂等和执行器所有权回滚。测试用 fake runner 与临时库。
 
 部分旧测试曾借正常 `queue.finish` 制造“不同步”的旧状态；新实现会当场同步或拒绝，因此改用临时库 SQL 明确注入遗留漂移。保留原来的防复用、恢复、脱敏和失败断言，并增加对新原子写入的断言。
+
+
+## R5 交接与完整门禁
+
+| 阶段 | 已提交的交付 |
+|---|---|
+| R0 | R1/R2 固定 F1–F4 复现；R4 固定 GET 副作用回归与可复现检索基准。回归先证明失败，再随修复通过。 |
+| R1 `5fab9b2` | 保护 COMMIT 与失败清理、隔离故障连接；完整标题查询；模型历史先筛选再限量及上界。 |
+| R2 `4689219` / `80c0864` | ChatService 抽取与有界 FIFO；直接/后台/确认共享轮次；source_message_id 关联，终结消息原子提交。 |
+| R3 `7e0b4fb` | ConversationStore / MemoryReadStore，中立 MemoryTools / 投影，HTTP SSE 编码，应用层目标文案和传递依赖门禁。 |
+| R4 `891cd49` | 批量检索与对照报告；正常终态同步投影，启动/pruning 恢复，GET 无写事务及完整故障回归。 |
+| R5 | 本文、修缮计划、总路线图、主对话计划及测试/不变量更新，交接下一产品阶段。 |
+
+最后运行 `npm run check`：Prettier、TypeScript、OpenAPI/浏览器 schema 漂移、**471 项后端 + 60 项前端测试全部通过，0 失败/跳过**。`git diff --check` 通过。普通测试和基准使用 fake model/runner、临时或内存 SQLite，没有真实模型调用、凭据读取或真实用户数据库操作。新增 schema 迁移为零；现有 schema 仍为 v8。HTTP/DTO/SSE、MCP allow-list 与浏览器合同保留。
+
+主要回归位置：
+
+- `src/storage/transactions.test.ts`、`src/runtime/local-web.test.ts`：COMMIT/ROLLBACK 失败、连接隔离及 shutdown drain。
+- `src/storage/store.test.ts`、`src/storage/work-items.test.ts`：过滤后历史窗口、上界、完整标题、固定批量查询及目标投影/取消/恢复。
+- `src/application/chat.test.ts`、`src/runtime/local-web.test.ts`：并发、确认等待、等待取消、直接与后台交错、消息组回滚和撤销晚结果。
+- `tests/architecture/backend-dependencies.test.ts`：受改聊天/记忆/队列/Harness 路径的传递依赖，包括 type imports。
+- `src/agent/control.test.ts`：真实 HTTP GET 无写事务、原批准/会话安全、遗留漂移、恢复拒绝不可能成功。
+- 既有 HTTP/MCP/browser/runtime 回归持续覆盖响应形状、安全请求头、SSE、背压和断连取消。
+
+## 剩余兼容门面和限制
+
+本轮收窄变化原因，没有完成全库抽象化。以下保留项供后续实施参考：
+
+| 保留项 | 实际边界与后续处理 |
+|---|---|
+| Store | 仍承担归档、确认、撤销、TODO 等原子写入，并为旧调用委派 conversation/memory 方法；公共行类型仍在 store.ts，部分窄模块通过 type import 引用。不是两套存储实现。 |
+| ChatService | 构造仍接收 Store 和 ArchiveRuntime；内部聊天持久化改用 ConversationStore。归档和来源校验仍经窄 Pick 及旧运行时，暂不为已有事务增加通用 repository/unit-of-work。 |
+| 应用投影 | archive-view/memory-view 保留原 wire 字段以兼容；HTTP contracts 显式委派。未来新产品 DTO 需独立演进，不把所有协议字段集中成万能 contracts。 |
+| WorkItem/Agent/TaskStore | 共享同一个 SQLite 事务，同步投影仍由具体 store 协作；不是独立微服务。AgentService 和队列的执行回调是生产组装，不代表可任意并行运行 CLI。 |
+| process.ts → mcp/main.ts | CLI 子进程使用实际 MCP 入口，是预期集成边界；不属于 Harness/聊天应用依赖 MCP adapter 的旧问题。 |
+| TODO | 原状态校验与原子写入仍在原模块，本次没有借拆分改变 T14 行为，也未完成所有 TODO 规则搬移。 |
+| 旧 Bucket 搜索 | 仍逐桶读取详情；本轮性能结论只针对 Entry 级 MemoryQueryService，不能外推。 |
+| 跨进程聊天与幂等 | 轮次 FIFO 只约束单 Web 所有者；旧 /api/chat 无 durable requestId，网络重试不能保证恰好一次。 |
+| 检索规模 | 有效语料仍线性读取，同步处理可阻塞，批量峰值 RSS 较高。后续索引/worker 需另做语义与迁移设计。 |
+| 真实体验与模型质量 | 本轮未做真人自用验收或真实模型质量实验；fake 测试证明合同，不证明自然语言理解率。 |
+
+## 下一阶段的明确起点
+
+R5 后可进入 [主对话 C0–C4](MAIN_CONVERSATION_PLAN.md)，当前这些产品行为**均未交付**。C0 在现有回归上增加多轮歧义样本；C1 直接复用 ChatService 增加用途判定，不重复抽取 HTTP；C2 才增加持久澄清、请求幂等、严格新接口和最小卡片；C3 接已有来源和批准链；C4 对照验收后再切默认入口。
+
+优先保留「统一入口、Bucket 主题记忆、WorkItem 目标、AgentSession 执行上下文」各自职责。下一阶段不以腾讯接入、向量库、框架迁移、多人、远程或视觉大改作为前置。真实数据升级或新的 schema 设计需要独立备份/恢复方案；本轮没有授权或执行真实库迁移。

@@ -141,3 +141,12 @@ Q1 收口追加 `src/agent/control.test.ts` 回归：提前创建的恢复提案
 `src/runtime/core-flow.test.ts` 三项集成测试使用临时库、fake model/runner 和真实 loopback：四种确认/低信息、防重放、证据来源、移动/幂等撤销、pending 与历史重启、中断不重放、MCP 共库、任务 SSE/取消及精确批准。第三项调用实际浏览器 API 模块及其生成验证器连接真实后端，避免只验证手写响应。
 
 完整门禁为 402 后端 + 58 前端通过（0 失败/跳过）。真实浏览器仅完成有限 smoke，原生确认弹窗受工具阻塞，窄屏只核验布局尺寸；触控/软键盘与全面人工体验未签收。详见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)，不要以自动 DOM harness 冒称人工浏览器验收。
+
+
+## R0–R5：主对话改造前的后端修缮
+
+2026-11-18 完整 `npm run check`：**471 后端 + 60 前端通过，0 失败/跳过**；`git diff --check` 通过。新增回归覆盖事务清理与隔离、完整标题、历史过滤与边界、直接/后台/确认轮次、消息组提交、传递依赖、批量检索及只读 GET。取消/异常终态与审批/Agent/目标投影故障同事务回滚；启动所有权恢复、旧漂移、反向成功、重复恢复和队列淘汰保持测试。
+
+部分旧故障测试现在用临时库 SQL 注入遗留不同步状态，因为正常终态已当场同步/拒绝；没有删除、跳过或放宽原安全断言。MCP 脱敏故障注入移到实际 MemoryReadStore 读取边界，仍断言 Error 与字符串异常均不泄露。
+
+性能脚本 `node scripts/benchmark-memory-read.ts single` / `multiple` 独立于普通门禁，只创建合成内存库，无模型或真实数据。原始对照、结果指纹、RSS、事件循环阻塞及未完成的索引边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md) 和 [JSON](BACKEND_REPAIR_BENCHMARK.json)。C0–C4 的产品澄清样本尚未实施。

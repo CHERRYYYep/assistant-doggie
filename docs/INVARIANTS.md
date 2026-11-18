@@ -249,3 +249,17 @@ T12 原始范围是后台聊天；T13 新增经显式批准、绑定 `agent_task
 `src/agent/control.test.ts` 覆盖六项工作区/会话检查、批准和队列原子事务、单次执行/恢复会话、重开、运行中断/取消及终态存储故障；`src/agent/process.test.ts` 覆盖两种 CLI JSONL、固定只读 argv/stdin、秘密环境隔离、输出限制、进程组取消和私有 cwd；`src/storage/agents.test.ts` 覆盖真实 v4→v5 数据保留；runtime/HTTP/MCP/web 测试覆盖实际入口及原文批准/XSS。
 
 这不等于任意恶意代码隔离，也不承诺真实模型的准确率或账号可用性。详见 [AGENT_CONTROL.md](AGENT_CONTROL.md) 与 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。
+
+
+## 14. 主对话前后端修缮增量验收（2026-11-18）
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 14.1 | COMMIT 失败会清理事务；清理失败隔离连接并关闭 Web/worker，BEGIN 失败不回滚外层 | `src/storage/transactions.test.ts`、`src/runtime/local-web.test.ts` |
+| 14.2 | 模型历史先筛选后取 limit，限定 throughSequence；完整标题唯一性不依赖展示窗口 | `src/storage/store.test.ts`、`src/application/work-items.test.ts` |
+| 14.3 | 直接/后台/确认共享有界轮次 FIFO；等待取消不写入，终结消息组原子提交并绑定来源消息 | `src/application/chat.test.ts`、`src/runtime/local-web.test.ts` |
+| 14.4 | 聊天/只读记忆/Harness/队列不传递依赖 HTTP/MCP adapter，包括类型 import | `tests/architecture/backend-dependencies.test.ts` |
+| 14.5 | Entry 候选批量读取，保持 SQL 字面与 Unicode 规则、有效性和全局排序；不逐 Entry filter 整桶 Memory | `src/storage/store.test.ts`、`src/application/query.test.ts`、撤销回归；合成基准单独运行 |
+| 14.6 | queue 终态与关联失败/取消投影原子提交；GET 不开写事务；启动恢复不重放 interrupted，拒绝不可能成功 | `src/agent/control.test.ts`、`src/storage/work-items.test.ts`、原队列/runtime 测试 |
+
+检索仍有同步线性扫描，R5 通过不等于已交付主对话澄清或索引检索。详细限制见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。

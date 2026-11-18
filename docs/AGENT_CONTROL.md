@@ -81,6 +81,8 @@ CLI：stdout 总计 1 MiB、单行 128 KiB、事件最多 8192、最终文本及
 
 进程失败/取消后的 session 不继续复用，避免恢复不确定上下文。重启时 queued 任务继续，running 任务标记 interrupted，不自动重跑。终态落盘故障会停止 worker 和新任务入场，不能把已经返回的结果伪报为取消；需重启并人工检查。
 
+2026-11-18 后端修缮后：正常 Agent/WorkItem GET 不触发全局恢复；queue 失败/取消同事务终结审批并更新 Agent/目标。启动恢复与执行器所有权在同一事务，pruning 前仍做异常恢复。Agent 成功与 queue 成功仍是两个提交，重启保留已提交 Agent 证据，不从 queue 成功臆造结果。完整故障与兼容边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。
+
 ## CLI 权限与兼容性
 
 Claude 使用当前支持的 `--bare --restricted`、`--tools`、`--allowedTools`、`--permission-mode dontAsk` 和 `--strict-mcp-config`。新会话使用 `--session-id`，恢复使用 `--resume`，两者不同时传入。代码阅读只开放 Read/Grep/Glob/WebSearch；无目录只开放 WebSearch，均附加 Doggie 三个只读 MCP 工具。关闭 hooks、项目/个人 settings，并拒绝写文件、Bash 和子 Agent 工具。

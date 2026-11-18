@@ -1,8 +1,8 @@
 # 主对话实施前的后端修缮设计
 
-2026-11-18 · 基线 `dev_ts@720453f` · **R1–R4 已实施；R0 回归与合成检索基准已固定，R5 待交接。**
+2026-11-18 · 基线 `codex/main-conversation-backend@e319dc2` · **R0–R5 已完成，验收记录见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。**
 
-先完成本文修缮与验收，再进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
+本文修缮与验收已完成；下一步进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
 
 ## 1. 当前关系：调用职责跨过了目录边界
 
@@ -149,3 +149,6 @@ R4 实施记录：Entry 候选读取改为固定批量 SELECT 与 entryId 分组
 | 门禁 | `npm run check`、`git diff --check`，只使用 fake 模型/runner 和临时数据库，阶段分别提交。 |
 
 R0–R4 不修改用户真实数据库或读取密钥。若需要 schema 变更，使用下一正式版本并另写临时旧库迁移和备份恢复方案；不能把代码 checkout 当数据库回滚。每次抽取可回退到前一提交，涉及语义修复的提交须保留测试。R5 更新实现状态与证据后，C0 复用修缮基线、只增加产品多轮样本；C1 直接在已抽出的 ChatService 增加意图分支；C2 再实现澄清持久化与新接口。修缮阶段不提前交付用户澄清功能。
+
+
+R5 实施记录：专用分支 `codex/main-conversation-backend` 已完成 R0–R4，完整门禁为 471 后端 + 60 前端通过。合成性能、恢复矩阵、剩余兼容门面和下一阶段入口均在 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。C0–C4 仍为规划，不把修缮完成等同主对话澄清完成。
