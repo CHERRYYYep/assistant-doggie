@@ -8,9 +8,9 @@
 
 ### 当前阶段与产品边界
 
-截至 2026-11-18，T14 TODO/Agenda 和 schema v8 的本地 WorkItem 基础已交付；下一阶段为 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**，仍属待实现计划。实施时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
+截至 2026-11-18，T14 TODO/Agenda 和 schema v8 的本地 WorkItem 基础已交付；先完成 [后端修缮设计](docs/BACKEND_REPAIR_PLAN.md) 的 **R0–R5**，再进入 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**；两者均为待实施计划。实施时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
 
-- 顺序为 C0 固定新旧行为基线 → C1 抽取对话编排 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。先完成可验证的纵向链路，再扩展能力。
+- 先按 R0–R5 修复事务、聊天并发、目标/历史查询，再抽取用例和只读记忆能力、优化检索与恢复；验收后 C0 复用这些回归，C1 复用已抽出的对话服务，避免重复重构。产品阶段顺序为 C0 固定新旧行为基线 → C1 抽取对话编排 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。先完成可验证的纵向链路，再扩展能力。
 - 保留统一主对话入口、多个工作目标、按需隔离的执行会话与 Bucket；普通聊天不自动拆成隐藏会话。
 - 腾讯记忆仍是 D3 隔离实验，完整 D3 未验收，D4b 生产接入暂缓。C0–C4 不引入自动历史捕获、向量库、全历史检索或自动摘要。
 - 保持 Hono、单机 SQLite 和单个队列执行所有者。更换框架、拆分布式服务、远程接入、多人协作、全面视觉改版及 T15–T17 均需各自需求与验收依据，不自动纳入本阶段。
@@ -30,7 +30,7 @@
 当前 TypeScript 主路径：
 
 - `src/domain/`：领域类型、Bucket/Entry/Memory 模型、低信息安全门控和确定性文本规则；不得访问数据库、HTTP 或模型。
-- `src/application/`：归档、确认、纠错、记忆查询、工作目标等用例服务；C1 起承接从 HTTP 抽出的每轮对话编排。
+- `src/application/`：归档、确认、纠错、记忆查询、工作目标等用例服务；R2/R3 抽出每轮对话编排，C1 在其上增加意图分流。
 - `src/storage/`：基于 Node 内置 `node:sqlite` 的 canonical schema、迁移、事务、查询和持久化。
 - `src/llm/`：模型端点配置、Responses/Chat Completions 适配、HTTP transport、结构化输出和 wire response 归一化。
 - `src/http/`：Hono 路由、HTTP DTO/contract、安全策略和 Node HTTP adapter。
@@ -47,6 +47,7 @@
 阅读和实施前优先查看：
 
 - `docs/PLAN.md`：当前阶段、已完成任务和后续边界；
+- [后端修缮设计](docs/BACKEND_REPAIR_PLAN.md)：现状/目标架构图、R0–R5 与前置验收；
 - [主对话实施计划](docs/MAIN_CONVERSATION_PLAN.md)：C0–C4、拟议接口、澄清规则与验收样例；
 - [本地任务实施记录](docs/LOCAL_TASK_IMPLEMENTATION.md)：已交付的目标、来源与执行关联；
 - [架构决策](docs/ARCHITECTURE_DECISIONS.md) 与 [API 契约](docs/API_CONTRACT.md)：分层、部署边界和 OpenAPI；
