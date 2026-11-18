@@ -9,6 +9,8 @@ import { AgentError } from "../domain/agent.ts";
 import { openDatabase } from "../storage/database.ts";
 import { AgentStore } from "../storage/agents.ts";
 import { TaskStore } from "../storage/tasks.ts";
+import { WorkItemStore } from "../storage/work-items.ts";
+import { WorkItemService } from "../application/work-items.ts";
 import { TaskQueue } from "../application/task-queue.ts";
 import { taskEventStream } from "../http/task-events.ts";
 import { WorkspacePolicy, assertWorkspaceUnchanged } from "./workspace.ts";
@@ -315,11 +317,16 @@ for (const interruption of [
         sessionId: first.sessionId,
       });
       const admitted = store.approve(first.id, first.instruction);
-      if (interruption === "queued_cancelled") queue.cancelQueued(admitted.id);
-      else {
+      if (interruption === "queued_cancelled") {
+        db.prepare(
+          "UPDATE background_tasks SET status='cancelled' WHERE id=?",
+        ).run(admitted.id);
+      } else {
         queue.claim();
         store.start(first.id);
-        queue.acquireExecutor(randomUUID());
+        db.prepare(
+          "UPDATE background_tasks SET status='failed',error_code='interrupted' WHERE id=?",
+        ).run(admitted.id);
       }
       assert.throws(
         () => store.propose({ ...proposal, sessionId: first.sessionId }),
@@ -353,9 +360,8 @@ test("T13 generic queued cancellation survives queue retention and keeps its ses
       sessionId: first.sessionId,
     });
     const admitted = store.approve(first.id, first.instruction);
-    // The generic task cancellation API does not reconcile the Agent view.
     queue.cancelQueued(admitted.id);
-    assert.equal(store.task(first.id).status, "queued");
+    assert.equal(store.task(first.id).status, "cancelled");
     for (let i = 0; i < 200; i++) {
       const queued = queue.enqueue({ message: `temporary history ${i}` });
       queue.cancelQueued(queued.id);
@@ -407,7 +413,10 @@ test("T13 enqueue reconciles interrupted agents atomically and rolls it back if 
     const admitted = store.approve(first.id, first.instruction);
     queue.claim();
     store.start(first.id);
-    queue.finish(admitted.id, "failed", "interrupted");
+    // Simulate legacy drift before terminal projection shared the transaction.
+    db.prepare(
+      "UPDATE background_tasks SET status='failed',error_code='interrupted' WHERE id=?",
+    ).run(admitted.id);
     db.exec(
       "CREATE TRIGGER reject_queue_insert BEFORE INSERT ON background_tasks BEGIN SELECT RAISE(ABORT,'injected'); END;",
     );
@@ -471,8 +480,27 @@ test("T13 queue success without an agent result faults reconciliation and admiss
     const first = store.propose(proposal);
     const admitted = store.approve(first.id, first.instruction);
     queue.claim();
-    queue.finish(admitted.id, "succeeded");
+    const before = queue.get(admitted.id);
+    assert.throws(
+      () => queue.finish(admitted.id, "succeeded"),
+      /executor is unavailable/,
+    );
+    assert.deepEqual(queue.get(admitted.id), before);
+    // Recovery must also reject an already persisted impossible legacy state.
+    db.prepare("UPDATE background_tasks SET status='succeeded' WHERE id=?").run(
+      admitted.id,
+    );
     assert.throws(() => store.reconcile(), /executor is unavailable/);
+    assert.throws(
+      () => queue.acquireExecutor(randomUUID()),
+      /executor is unavailable/,
+    );
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS n FROM background_task_executor").get()?.[
+        "n"
+      ],
+      0,
+    );
     assert.throws(
       () => queue.enqueue({ message: "must not admit" }),
       /executor is unavailable/,
@@ -641,6 +669,69 @@ test("T13 success persistence failure faults worker, prevents replay/admission a
     await queue.close().catch(() => {});
     await f.cleanup();
   }
+});
+
+test("Agent and WorkItem GETs use committed projections without starting write transactions", async (t) => {
+  using db = openDatabase(":memory:");
+  const store = new AgentStore(db);
+  const service = new AgentService({
+    store,
+    policy: new WorkspacePolicy([]),
+    runner: {
+      async run() {
+        throw new Error("GET must not execute");
+      },
+    },
+    databasePath: "/unused-fixture.db",
+    enabled: ["codex"],
+  });
+  const goals = new WorkItemStore(db);
+  const workItems = new WorkItemService(goals, service);
+  const item = workItems.create({
+    requestId: randomUUID(),
+    title: "Read projected status",
+    goal: "Review the code",
+    acceptance: "Report evidence",
+  });
+  const task = await workItems.propose(item.id, {
+    requestId: randomUUID(),
+    expectedRevision: item.revision,
+    ...proposal,
+  });
+  store.approve(task.id, task.instruction);
+  const memory = new Store(db);
+  const api = new ConcreteDoggieHttpApi(
+    memory,
+    new ArchiveRuntime(memory, {
+      modelName: "fixture",
+      async classify() {
+        throw new Error("GET must not classify");
+      },
+      async extract() {
+        throw new Error("GET must not extract");
+      },
+    }),
+  );
+  const app = createDoggieApp(api, [], [], undefined, service, workItems);
+  const before = goals.detail(item.id);
+  const exec = t.mock.method(db, "exec");
+  for (const path of [
+    "/api/work-items",
+    `/api/work-items/${item.id}`,
+    "/api/agent/tasks",
+    `/api/agent/tasks/${task.id}`,
+  ]) {
+    const response = await app.request(`http://127.0.0.1:8787${path}`, {
+      headers: { host: "127.0.0.1:8787" },
+    });
+    assert.equal(response.status, 200);
+  }
+  assert.deepEqual(goals.detail(item.id), before);
+  assert.equal(
+    exec.mock.calls.filter(({ arguments: [sql] }) => /^BEGIN/i.test(sql))
+      .length,
+    0,
+  );
 });
 
 test("T13 HTTP strict proposal/approval, Origin defense, generic queue bypass rejection and SSE", async () => {

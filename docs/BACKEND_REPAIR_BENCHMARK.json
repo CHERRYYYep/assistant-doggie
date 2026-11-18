@@ -1,0 +1,227 @@
+{
+  "generatedDate": "2026-11-18",
+  "baselineCommit": "7e0b4fb",
+  "candidate": "R4 changes included with this report",
+  "machine": "Intel Core i7-14650HX",
+  "command": "node scripts/benchmark-memory-read.ts single|multiple",
+  "database": "fresh synthetic :memory: only",
+  "allResponseFingerprintsEqual": true,
+  "layouts": {
+    "single": {
+      "before": {
+        "node": "v24.18.0",
+        "platform": "linux",
+        "arch": "x64",
+        "layout": "single",
+        "buckets": 1,
+        "entries": 3000,
+        "memories": 18000,
+        "repetitions": 9,
+        "processPeakRssKiB": 303872,
+        "rows": [
+          {
+            "case": "miss",
+            "hits": 0,
+            "hash": "d0a35f166e772c7a21660a99d12c4306204d595702e336c687dc2deaa15e495e",
+            "syncMedianMs": 468.0979970000003,
+            "loopWaitMedianMs": 468.1541820000002,
+            "syncMaxMs": 484.47627999999986
+          },
+          {
+            "case": "wide",
+            "hits": 12,
+            "hash": "43f72d07c2ca92a32a633b7ecac800145571945057b9b61c9de04c16b46fcf91",
+            "syncMedianMs": 469.41354499999943,
+            "loopWaitMedianMs": 469.95771799999966,
+            "syncMaxMs": 513.383202
+          },
+          {
+            "case": "unicode",
+            "hits": 12,
+            "hash": "3e9ee39271589e453febce416d4d6232a1f5bef902f23e193b663339f2463008",
+            "syncMedianMs": 457.38527299999987,
+            "loopWaitMedianMs": 458.0416920000007,
+            "syncMaxMs": 499.9777979999999
+          },
+          {
+            "case": "revoked-only",
+            "hits": 0,
+            "hash": "f32e46c858d2de7a86a2162b24366738451b50892fc9e6329215c032b6b30711",
+            "syncMedianMs": 469.06784100000004,
+            "loopWaitMedianMs": 469.115088999999,
+            "syncMaxMs": 484.02981100000034
+          },
+          {
+            "case": "filtered",
+            "hits": 12,
+            "hash": "a02e08d0b474eb5b093c9886abff946c9071fed632b4a57bece248e000620dba",
+            "syncMedianMs": 463.8948020000025,
+            "loopWaitMedianMs": 464.2069980000015,
+            "syncMaxMs": 527.3877780000003
+          }
+        ]
+      },
+      "after": {
+        "node": "v24.18.0",
+        "platform": "linux",
+        "arch": "x64",
+        "layout": "single",
+        "buckets": 1,
+        "entries": 3000,
+        "memories": 18000,
+        "repetitions": 9,
+        "processPeakRssKiB": 396452,
+        "rows": [
+          {
+            "case": "miss",
+            "hits": 0,
+            "hash": "d0a35f166e772c7a21660a99d12c4306204d595702e336c687dc2deaa15e495e",
+            "syncMedianMs": 91.01195600000005,
+            "loopWaitMedianMs": 91.07710800000007,
+            "syncMaxMs": 105.10145499999999
+          },
+          {
+            "case": "wide",
+            "hits": 12,
+            "hash": "43f72d07c2ca92a32a633b7ecac800145571945057b9b61c9de04c16b46fcf91",
+            "syncMedianMs": 102.30182099999979,
+            "loopWaitMedianMs": 102.3420259999998,
+            "syncMaxMs": 103.97213499999998
+          },
+          {
+            "case": "unicode",
+            "hits": 12,
+            "hash": "3e9ee39271589e453febce416d4d6232a1f5bef902f23e193b663339f2463008",
+            "syncMedianMs": 83.97670100000005,
+            "loopWaitMedianMs": 84.01750300000003,
+            "syncMaxMs": 87.32625800000005
+          },
+          {
+            "case": "revoked-only",
+            "hits": 0,
+            "hash": "f32e46c858d2de7a86a2162b24366738451b50892fc9e6329215c032b6b30711",
+            "syncMedianMs": 82.81033100000013,
+            "loopWaitMedianMs": 82.85232399999995,
+            "syncMaxMs": 91.54095200000029
+          },
+          {
+            "case": "filtered",
+            "hits": 12,
+            "hash": "a02e08d0b474eb5b093c9886abff946c9071fed632b4a57bece248e000620dba",
+            "syncMedianMs": 76.70794399999977,
+            "loopWaitMedianMs": 76.9881690000002,
+            "syncMaxMs": 83.22586599999977
+          }
+        ]
+      }
+    },
+    "multiple": {
+      "before": {
+        "node": "v24.18.0",
+        "platform": "linux",
+        "arch": "x64",
+        "layout": "multiple",
+        "buckets": 100,
+        "entries": 3000,
+        "memories": 18000,
+        "repetitions": 9,
+        "processPeakRssKiB": 293064,
+        "rows": [
+          {
+            "case": "miss",
+            "hits": 0,
+            "hash": "d0a35f166e772c7a21660a99d12c4306204d595702e336c687dc2deaa15e495e",
+            "syncMedianMs": 105.61432100000002,
+            "loopWaitMedianMs": 105.75366600000001,
+            "syncMaxMs": 110.99978099999998
+          },
+          {
+            "case": "wide",
+            "hits": 12,
+            "hash": "973ff4c11bef06599884efc49d6801dc0f23440526857e715a2d39cf3f7e7c58",
+            "syncMedianMs": 140.97738099999992,
+            "loopWaitMedianMs": 141.35015499999986,
+            "syncMaxMs": 157.36068
+          },
+          {
+            "case": "unicode",
+            "hits": 12,
+            "hash": "95b720f4ac686fbf40aaf1466c386eb4804500d2553e3db9fcfe27c08776e82e",
+            "syncMedianMs": 105.82432999999992,
+            "loopWaitMedianMs": 105.86370299999999,
+            "syncMaxMs": 106.49288800000022
+          },
+          {
+            "case": "revoked-only",
+            "hits": 0,
+            "hash": "f32e46c858d2de7a86a2162b24366738451b50892fc9e6329215c032b6b30711",
+            "syncMedianMs": 103.74398199999996,
+            "loopWaitMedianMs": 104.62833200000023,
+            "syncMaxMs": 105.69127599999956
+          },
+          {
+            "case": "filtered",
+            "hits": 12,
+            "hash": "5de04a5f1853c8c8beec794c4efa0b46a4f71247cd5962cf19b10209f0094a89",
+            "syncMedianMs": 105.9052099999999,
+            "loopWaitMedianMs": 105.95248899999933,
+            "syncMaxMs": 124.07470699999976
+          }
+        ]
+      },
+      "after": {
+        "node": "v24.18.0",
+        "platform": "linux",
+        "arch": "x64",
+        "layout": "multiple",
+        "buckets": 100,
+        "entries": 3000,
+        "memories": 18000,
+        "repetitions": 9,
+        "processPeakRssKiB": 390596,
+        "rows": [
+          {
+            "case": "miss",
+            "hits": 0,
+            "hash": "d0a35f166e772c7a21660a99d12c4306204d595702e336c687dc2deaa15e495e",
+            "syncMedianMs": 89.93509399999999,
+            "loopWaitMedianMs": 90.265605,
+            "syncMaxMs": 116.591902
+          },
+          {
+            "case": "wide",
+            "hits": 12,
+            "hash": "973ff4c11bef06599884efc49d6801dc0f23440526857e715a2d39cf3f7e7c58",
+            "syncMedianMs": 109.27440000000001,
+            "loopWaitMedianMs": 109.31951800000002,
+            "syncMaxMs": 118.067816
+          },
+          {
+            "case": "unicode",
+            "hits": 12,
+            "hash": "95b720f4ac686fbf40aaf1466c386eb4804500d2553e3db9fcfe27c08776e82e",
+            "syncMedianMs": 87.0265089999998,
+            "loopWaitMedianMs": 87.07637900000009,
+            "syncMaxMs": 105.25232200000028
+          },
+          {
+            "case": "revoked-only",
+            "hits": 0,
+            "hash": "f32e46c858d2de7a86a2162b24366738451b50892fc9e6329215c032b6b30711",
+            "syncMedianMs": 84.06499299999996,
+            "loopWaitMedianMs": 84.10915799999975,
+            "syncMaxMs": 90.24299500000006
+          },
+          {
+            "case": "filtered",
+            "hits": 12,
+            "hash": "5de04a5f1853c8c8beec794c4efa0b46a4f71247cd5962cf19b10209f0094a89",
+            "syncMedianMs": 71.43730400000004,
+            "loopWaitMedianMs": 71.47725300000002,
+            "syncMaxMs": 73.95678599999974
+          }
+        ]
+      }
+    }
+  }
+}

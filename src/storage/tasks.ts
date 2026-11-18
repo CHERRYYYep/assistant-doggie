@@ -15,6 +15,8 @@ import {
   requirePendingAction,
 } from "./pending-actions.ts";
 
+import { WorkItemStore } from "./work-items.ts";
+
 const rowSchema = z.object({
   id: z.string(),
   payload_json: z.string(),
@@ -63,6 +65,8 @@ export class TaskStore {
           "UPDATE background_tasks SET status='failed', error_code='interrupted', revision=revision+1, updated_at=? WHERE status='running'",
         )
         .run(new Date().toISOString());
+      // Settle projections before the new owner can start processing queued work.
+      this.#recoverProjectionsWithinTransaction();
     });
   }
   releaseExecutor(ownerId: string): void {
@@ -111,28 +115,45 @@ export class TaskStore {
     return this.get(id);
   }
 
-  reconcileAgentTasks(): void {
+  recoverProjections(): void {
     withTransaction(this.#db, () =>
-      this.#reconcileAgentTasksWithinTransaction(),
+      this.#recoverProjectionsWithinTransaction(),
     );
   }
 
-  #reconcileAgentTasksWithinTransaction(): void {
-    if (!this.#db.isTransaction) throw new TaskError("faulted");
-    // Historical v4 migration fixtures have queues but no agent control tables.
-    if (
+  #recoverProjectionsWithinTransaction(): void {
+    this.#reconcileAgentTasksWithinTransaction();
+    // Older versions could persist Agent terminal status before updating the
+    // WorkItem. Repair that legacy drift at startup, not on every GET.
+    if (this.#hasTable("work_item_attempts"))
+      new WorkItemStore(this.#db).reconcileWithinTransaction();
+  }
+
+  #hasTable(name: string): boolean {
+    return (
       this.#db
-        .prepare(
-          "SELECT name FROM sqlite_schema WHERE type='table' AND name='agent_tasks'",
-        )
-        .get() === undefined
-    )
-      return;
-    const rows = this.#db
-      .prepare(
-        "SELECT t.id,t.pending_action_id AS pendingActionId,t.instruction,t.workspace_id AS workspaceId,q.status AS queueStatus,q.error_code AS queueErrorCode FROM agent_tasks t LEFT JOIN background_tasks q ON q.id=t.queue_id WHERE t.status IN ('queued','running') AND (q.status IN ('cancelled','failed','succeeded') OR q.id IS NULL)",
-      )
-      .all();
+        .prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?")
+        .get(name) !== undefined
+    );
+  }
+
+  #reconcileAgentTasksWithinTransaction(queueId?: string): void {
+    if (!this.#db.isTransaction) throw new TaskError("faulted");
+    // Historical queue fixtures also exercise this store before Agent/WorkItem
+    // tables exist.
+    if (!this.#hasTable("agent_tasks")) return;
+    const select = `SELECT t.id,t.pending_action_id AS pendingActionId,t.instruction,t.workspace_id AS workspaceId,
+      q.status AS queueStatus,q.error_code AS queueErrorCode
+      FROM agent_tasks t LEFT JOIN background_tasks q ON q.id=t.queue_id
+      WHERE t.status IN ('queued','running') AND (q.status IN ('cancelled','failed','succeeded') OR q.id IS NULL)`;
+    const rows =
+      queueId === undefined
+        ? this.#db.prepare(select).all()
+        : this.#db.prepare(select + " AND t.queue_id=?").all(queueId);
+    const goals =
+      rows.length > 0 && this.#hasTable("work_item_attempts")
+        ? new WorkItemStore(this.#db)
+        : undefined;
     for (const row of rows) {
       const task = z
         .object({
@@ -179,6 +200,7 @@ export class TaskStore {
           "UPDATE agent_tasks SET status=?,output='',failure_code=?,updated_at=? WHERE id=? AND status IN ('queued','running')",
         )
         .run(status, failureCode, now, task.id);
+      goals?.projectAttempt(task.id);
     }
   }
 
@@ -219,29 +241,39 @@ export class TaskStore {
     });
   }
   cancelQueued(id: string): TaskSnapshot {
-    this.#transition(id, "queued", "cancelled", null);
-    return this.get(id);
+    return this.#end(id, "queued", "cancelled", null);
   }
   finish(
     id: string,
     status: "succeeded" | "failed" | "cancelled",
     errorCode: TaskSnapshot["errorCode"] = null,
   ): TaskSnapshot {
-    this.#transition(id, "running", status, errorCode);
-    return this.get(id);
+    return this.#end(id, "running", status, errorCode);
+  }
+  #end(
+    id: string,
+    expected: "queued" | "running",
+    status: "succeeded" | "failed" | "cancelled",
+    errorCode: TaskSnapshot["errorCode"],
+  ): TaskSnapshot {
+    return withTransaction(this.#db, () => {
+      if (this.#transition(id, expected, status, errorCode))
+        this.#reconcileAgentTasksWithinTransaction(id);
+      return this.get(id);
+    });
   }
   #transition(
     id: string,
     expected: TaskSnapshot["status"],
     status: TaskSnapshot["status"],
     error: TaskSnapshot["errorCode"],
-  ): void {
-    assertDatabaseAvailable(this.#db);
-    this.#db
+  ): boolean {
+    const changed = this.#db
       .prepare(
         "UPDATE background_tasks SET status=?,error_code=?,revision=revision+1,updated_at=? WHERE id=? AND status=?",
       )
-      .run(status, error, new Date().toISOString(), id, expected);
+      .run(status, error, new Date().toISOString(), id, expected).changes;
+    return changed !== 0 && changed !== 0n;
   }
   #read(id: string): z.infer<typeof rowSchema> {
     const row = this.#db

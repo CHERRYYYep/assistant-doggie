@@ -35,17 +35,14 @@ export class AgentService {
   attachQueue(queue: TaskQueue): void {
     if (this.#queue !== undefined) throw new AgentError("conflict");
     this.#queue = queue;
-    this.#store.reconcile();
   }
   capabilities() {
     return { backends: this.#enabled, permission: "read_only" as const };
   }
   list() {
-    this.#store.reconcile();
     return this.#store.tasks();
   }
   get(id: string) {
-    this.#store.reconcile();
     return this.#store.task(id);
   }
   workspaces() {
@@ -79,7 +76,6 @@ export class AgentService {
         await this.#policy.inspect(workspace.path),
       );
     }
-    this.#store.reconcile();
     return this.#store.proposeForWorkItem(id, request);
   }
   async approve(id: string, instruction: string, signal?: AbortSignal) {
@@ -109,7 +105,6 @@ export class AgentService {
     if (task.status === "pending") throw new AgentError("conflict");
     if (task.queueId !== null && this.#queue !== undefined)
       await this.#queue.cancel(task.queueId);
-    this.#store.reconcile();
     return this.#store.task(id);
   }
   async execute(id: string, signal: AbortSignal): Promise<void> {

@@ -954,3 +954,60 @@ test("malformed model history details fail closed", () => {
     .run("{broken", message.id);
   assert.throws(() => store.listModelChatMessages(40));
 });
+
+test("query candidates batch reads and preserve SQL-only and folded cross-field matches", (t) => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database, steppingClock());
+  const first = store.archive(
+    "entry-head",
+    createNew("first"),
+    createExtraction({
+      summary: "summary",
+      evidences: ["fixture"],
+    }),
+    AUDIT,
+  );
+  assert.ok(first.bucketId && first.entryId);
+  database
+    .prepare("UPDATE buckets SET summary=? WHERE id=?")
+    .run("Straße", first.bucketId);
+  // The legacy SQL path sees literal formatting that the reserialized
+  // metadata in the folded corpus does not preserve.
+  database
+    .prepare(
+      "UPDATE memory_items SET metadata_json=? WHERE entry_id=? AND kind='evidence'",
+    )
+    .run('{"marker":  "fixture"}', first.entryId);
+  for (let index = 0; index < 16; index++) {
+    store.archive(
+      "another source",
+      createNew(`unrelated ${index}`),
+      minimalExtraction("another summary"),
+      AUDIT,
+    );
+  }
+  const prepare = t.mock.method(database, "prepare");
+  const matched = store.memory.searchEntryCandidates([
+    'marker":  "fixture',
+    "STRASSE entry-head",
+  ]);
+  assert.deepEqual(
+    matched.map(({ entry }) => entry.id),
+    [first.entryId],
+  );
+  assert.ok(
+    prepare.mock.callCount() <= 5,
+    "reads must not grow with Bucket count",
+  );
+  for (const term of ['marker":  "fixture', "STRASSE entry-head"]) {
+    const only = store.memory.searchEntryCandidates([term]);
+    assert.deepEqual(
+      only.map(({ entry }) => entry.id),
+      [first.entryId],
+    );
+    assert.deepEqual(
+      only[0]?.memories.find(({ kind }) => kind === "evidence")?.metadata,
+      { marker: "fixture" },
+    );
+  }
+});

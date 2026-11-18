@@ -310,18 +310,19 @@ export class WorkItemStore {
       status: attempt.status,
     });
   }
-  reconcile(): void {
-    withTransaction(this.#db, () => {
-      const rows = this.#db
-        .prepare(
-          "SELECT last_attempt_id AS id FROM work_items WHERE last_attempt_id IS NOT NULL AND status NOT IN ('done','cancelled')",
-        )
-        .all();
-      for (const row of rows)
-        this.projectAttempt(
-          z.strictObject({ id: z.string().uuid() }).parse(row).id,
-        );
-    });
+  reconcileWithinTransaction(): void {
+    if (!this.#db.isTransaction) throw new WorkItemError("conflict");
+    const rows = this.#db
+      .prepare(
+        `SELECT w.last_attempt_id AS id FROM work_items w
+         JOIN agent_tasks t ON t.id=w.last_attempt_id
+         WHERE w.status NOT IN ('done','cancelled') AND w.last_attempt_status IS NOT t.status`,
+      )
+      .all();
+    for (const row of rows)
+      this.projectAttempt(
+        z.strictObject({ id: z.string().uuid() }).parse(row).id,
+      );
   }
   #expected(id: string, revision: number): WorkItem {
     const item = this.get(id);

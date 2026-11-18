@@ -357,10 +357,9 @@ export class AgentStore {
     });
   }
   reconcile(): void {
-    // Run only after the T12 owner has been acquired. Interrupted CLI work is
-    // never resumed automatically; no process is started during recovery.
-    new TaskStore(this.#db).reconcileAgentTasks();
-    new WorkItemStore(this.#db).reconcile();
+    // Explicit maintenance entry point. Production startup also repairs these
+    // projections while acquiring queue ownership in the same transaction.
+    new TaskStore(this.#db).recoverProjections();
   }
   #assertSessionReusable(sessionId: string): void {
     this.assertMemoryContextCurrent(sessionId);

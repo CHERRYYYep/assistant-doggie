@@ -15,23 +15,16 @@ export class WorkItemService {
     this.#store = store;
     this.#agents = agents;
   }
-  #reconcile(): void {
-    this.#agents.list();
-    this.#store.reconcile();
-  }
   list() {
-    this.#reconcile();
     return this.#store.list();
   }
   detail(id: string) {
-    this.#reconcile();
     return this.#store.detail(id);
   }
   create(input: unknown) {
     return this.#store.create(input, describeCreatedGoal);
   }
   update(id: string, input: unknown) {
-    this.#reconcile();
     return this.#store.update(id, input, describeUpdatedGoal);
   }
   resolve(input: unknown) {
@@ -47,7 +40,6 @@ export class WorkItemService {
   }
   async transition(id: string, input: unknown) {
     const request = workItemActionSchema.parse(input);
-    this.#reconcile();
     this.#store.transition(id, request);
     if (request.action === "cancel") {
       // Persist intent first. A failed/aborted response cannot revive approval.
@@ -55,7 +47,6 @@ export class WorkItemService {
       for (const taskId of this.#store.inFlight(id))
         await this.#agents.cancel(taskId);
     }
-    this.#reconcile();
     return this.#store.get(id);
   }
   propose(id: string, input: unknown) {

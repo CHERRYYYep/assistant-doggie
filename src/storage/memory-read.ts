@@ -13,6 +13,8 @@ import type {
   BucketDetail,
   BucketSearchHit,
   EntryRow,
+  JsonValue,
+  MemoryRow,
   QueryEntryCandidate,
 } from "./store.ts";
 
@@ -195,39 +197,97 @@ export class MemoryReadStore {
     }
 
     const foldedTerms = normalizedTerms.map(unicodeCaseFold);
+    const tags = groupRows(
+      this.#database
+        .prepare(
+          "SELECT bucket_id, tag FROM bucket_tags ORDER BY bucket_id, position ASC",
+        )
+        .all() as { bucket_id: string; tag: string }[],
+      (row) => row.bucket_id,
+    );
+    const buckets = this.#database
+      .prepare(
+        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
+              last_active_at, archived_at FROM buckets`,
+      )
+      .all() as BucketColumns[];
+    const contexts = new Map(
+      buckets.map((row) => {
+        const bucket = toBucketRow(
+          row,
+          (tags.get(row.id) ?? []).map(({ tag }) => tag),
+        );
+        return [
+          row.id,
+          {
+            bucket,
+            foldedPrefix:
+              foldedTerms.length === 0
+                ? ""
+                : unicodeCaseFold(
+                    [bucket.title, bucket.summary, ...bucket.tags].join(" ") +
+                      " ",
+                  ),
+          },
+        ];
+      }),
+    );
+    const entries = this.#database
+      .prepare(
+        `SELECT e.id, e.bucket_id, e.raw_text, e.summary, e.content_type, e.classification_confidence,
+              e.classification_reason, e.created_at, e.moved_from_bucket_id, e.archive_state, e.archived_at
+       FROM entries e JOIN buckets b ON b.id = e.bucket_id
+       WHERE e.revoked_at IS NULL
+       ORDER BY b.created_at ASC, b.id ASC, e.created_at ASC, e.id ASC`,
+      )
+      .all() as EntryColumns[];
+    const memoryRows = this.#database
+      .prepare(
+        `SELECT m.id, m.bucket_id, m.entry_id, m.kind, m.text, m.status, m.due_at, m.scheduled_at,
+              m.todo_rule_json, m.todo_raw_time_json, m.todo_occurrence, m.occurred_at,
+              m.source, m.reason, m.created_at, m.updated_at, m.metadata_json
+       FROM memory_items m JOIN entries e ON e.id = m.entry_id AND e.bucket_id = m.bucket_id
+       WHERE e.revoked_at IS NULL ORDER BY m.created_at ASC, m.id ASC`,
+      )
+      .all() as (MemoryColumns & { entry_id: string })[];
+    const byEntry = groupRows(memoryRows, (row) => row.entry_id);
+
     const candidates: QueryEntryCandidate[] = [];
-    for (const bucket of this.listBuckets()) {
-      const detail = this.getBucketDetail(bucket.id);
-      if (detail === undefined) continue;
-      for (const entry of detail.entries) {
-        const memories = detail.memories.filter(
-          (memory) => memory.entryId === entry.id,
-        );
-        const corpus = unicodeCaseFold(
-          [
-            bucket.title,
-            bucket.summary,
-            ...bucket.tags,
-            entry.rawText,
-            entry.summary ?? "",
-            entry.contentType,
-            ...memories.flatMap((memory) => [
-              memory.kind,
-              memory.text,
-              memory.status ?? "",
-              memory.source ?? "",
-              JSON.stringify(memory.metadata),
-            ]),
-          ].join(" "),
-        );
-        if (
-          foldedTerms.length === 0 ||
-          sqlMatchedIds.has(entry.id) ||
-          foldedTerms.some((term) => corpus.includes(term))
-        ) {
-          candidates.push({ bucket, entry, memories });
-        }
+    for (const entry of entries) {
+      const context = contexts.get(entry.bucket_id);
+      // The joined Entry query excludes missing buckets. The lookup also avoids
+      // emitting a candidate if the separately read Bucket has disappeared.
+      if (context === undefined) continue;
+      const memories = byEntry.get(entry.id) ?? [];
+      const metadata = memories.map((memory) =>
+        parseMetadata(memory.metadata_json),
+      );
+      if (foldedTerms.length > 0 && !sqlMatchedIds.has(entry.id)) {
+        const corpus =
+          context.foldedPrefix +
+          unicodeCaseFold(
+            [
+              entry.raw_text,
+              entry.summary ?? "",
+              entry.content_type,
+              ...memories.flatMap((memory, index) => [
+                memory.kind,
+                memory.text,
+                memory.status ?? "",
+                memory.source ?? "",
+                JSON.stringify(metadata[index]),
+              ]),
+            ].join(" "),
+          );
+        if (!foldedTerms.some((term) => corpus.includes(term))) continue;
       }
+      candidates.push({
+        bucket: context.bucket,
+        entry: toEntryRow(entry),
+        memories: memories.map((row, index) =>
+          toMemoryRow(row, metadata[index]),
+        ),
+      });
     }
     return candidates;
   }
@@ -259,25 +319,7 @@ export class MemoryReadStore {
     return {
       bucket,
       entries: entries.map(toEntryRow),
-      memories: memories.map((row) => ({
-        id: row.id,
-        bucketId: row.bucket_id,
-        entryId: row.entry_id,
-        kind: row.kind,
-        text: row.text,
-        status: row.status,
-        dueAt: row.due_at,
-        scheduledAt: row.scheduled_at,
-        todoRule: parseTodoRule(row.todo_rule_json),
-        todoRawTime: parseTodoRawTime(row.todo_raw_time_json),
-        todoOccurrence: row.todo_occurrence,
-        occurredAt: row.occurred_at,
-        source: row.source,
-        reason: row.reason,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        metadata: parseMetadata(row.metadata_json),
-      })),
+      memories: memories.map((row) => toMemoryRow(row)),
     };
   }
 
@@ -287,18 +329,10 @@ export class MemoryReadStore {
         "SELECT tag FROM bucket_tags WHERE bucket_id = ? ORDER BY position ASC",
       )
       .all(row.id) as { tag: string }[];
-    return {
-      id: row.id,
-      title: row.title,
-      kind: row.kind as BucketType,
-      lifecycle: row.lifecycle as BucketStatus,
-      summary: row.summary,
-      tags: tags.map((tag) => tag.tag),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      lastActiveAt: row.last_active_at,
-      archivedAt: row.archived_at,
-    };
+    return toBucketRow(
+      row,
+      tags.map((tag) => tag.tag),
+    );
   }
 }
 
@@ -347,6 +381,60 @@ export type MemoryColumns = {
   updated_at: string;
   metadata_json: string;
 };
+
+function groupRows<T>(
+  rows: readonly T[],
+  key: (row: T) => string,
+): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const id = key(row);
+    const group = groups.get(id);
+    if (group === undefined) groups.set(id, [row]);
+    else group.push(row);
+  }
+  return groups;
+}
+
+function toBucketRow(row: BucketColumns, tags: readonly string[]): BucketRow {
+  return {
+    id: row.id,
+    title: row.title,
+    kind: row.kind as BucketType,
+    lifecycle: row.lifecycle as BucketStatus,
+    summary: row.summary,
+    tags,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastActiveAt: row.last_active_at,
+    archivedAt: row.archived_at,
+  };
+}
+
+function toMemoryRow(
+  row: MemoryColumns,
+  metadata: JsonValue = parseMetadata(row.metadata_json),
+): MemoryRow {
+  return {
+    id: row.id,
+    bucketId: row.bucket_id,
+    entryId: row.entry_id,
+    kind: row.kind,
+    text: row.text,
+    status: row.status,
+    dueAt: row.due_at,
+    scheduledAt: row.scheduled_at,
+    todoRule: parseTodoRule(row.todo_rule_json),
+    todoRawTime: parseTodoRawTime(row.todo_raw_time_json),
+    todoOccurrence: row.todo_occurrence,
+    occurredAt: row.occurred_at,
+    source: row.source,
+    reason: row.reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    metadata,
+  };
+}
 
 function escapeLikeLiteral(value: string): string {
   return value

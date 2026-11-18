@@ -405,10 +405,31 @@ test("goal cancellation intent blocks old approvals until execution actually sto
       () => agents.proposeForWorkItem(item.id, attempt(cancelling.revision)),
       /conflict/,
     );
+    db.exec(
+      "CREATE TRIGGER reject_goal_projection BEFORE UPDATE OF last_attempt_status ON work_items BEGIN SELECT RAISE(ABORT,'injected'); END;",
+    );
+    assert.throws(() => queue.cancelQueued(queued.id), /injected/);
+    assert.equal(queue.get(queued.id).status, "queued");
+    assert.equal(agents.task(task.id).status, "queued");
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "approved",
+    );
+    assert.deepEqual(goals.get(item.id), cancelling);
+    db.exec("DROP TRIGGER reject_goal_projection");
+    queue.cancelQueued(queued.id);
+    const terminal = goals.detail(item.id);
+    assert.equal(terminal.workItem.status, "cancelled");
+    assert.equal(terminal.workItem.cancelRequested, false);
+    assert.equal(terminal.workItem.lastAttemptStatus, "cancelled");
+    assert.equal(agents.task(task.id).status, "cancelled");
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "failed",
+    );
     queue.cancelQueued(queued.id);
     agents.reconcile();
-    assert.equal(goals.get(item.id).status, "cancelled");
-    assert.equal(goals.get(item.id).cancelRequested, false);
+    assert.deepEqual(goals.detail(item.id), terminal);
   } finally {
     db.close();
   }
@@ -427,8 +448,11 @@ test("interrupted execution reconciles goal to blocked and cannot restore failed
     agents.start(task.id);
     const owner = randomUUID();
     queue.acquireExecutor(owner);
-    agents.reconcile();
     assert.equal(goals.get(item.id).status, "blocked");
+    assert.equal(goals.get(item.id).lastAttemptStatus, "failed");
+    const terminal = goals.detail(item.id);
+    agents.reconcile();
+    assert.deepEqual(goals.detail(item.id), terminal);
     assert.throws(
       () =>
         agents.proposeForWorkItem(item.id, {
@@ -447,3 +471,94 @@ test("interrupted execution reconciles goal to blocked and cannot restore failed
     db.close();
   }
 });
+
+test("startup keeps a committed Agent success when queue finish was interrupted", () => {
+  using db = openDatabase(":memory:");
+  const goals = new WorkItemStore(db);
+  const agents = new AgentStore(db);
+  const queue = new TaskStore(db);
+  const item = goals.create(goal(), describeCreatedGoal);
+  const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
+  const queued = agents.approve(task.id, task.instruction);
+  queue.claim();
+  agents.start(task.id);
+  agents.complete(task.id, {
+    status: "succeeded",
+    output: "Committed evidence",
+    failureCode: null,
+  });
+  // Simulate an older version with a lagging WorkItem projection as well.
+  db.prepare(
+    "UPDATE work_items SET last_attempt_status='running' WHERE id=?",
+  ).run(item.id);
+  const owner = randomUUID();
+  queue.acquireExecutor(owner);
+  assert.equal(queue.get(queued.id).errorCode, "interrupted");
+  assert.equal(agents.task(task.id).status, "succeeded");
+  assert.equal(agents.task(task.id).output, "Committed evidence");
+  assert.equal(
+    new Store(db).getPendingAction(task.pendingActionId)?.status,
+    "executed",
+  );
+  assert.equal(goals.get(item.id).status, "in_progress");
+  assert.equal(goals.get(item.id).lastAttemptStatus, "succeeded");
+  assert.equal(queue.claim(), undefined);
+  queue.releaseExecutor(owner);
+});
+
+for (const outcome of ["failed", "cancelled"] as const) {
+  test(`queue ${outcome} commits Agent, approval and WorkItem together without a read repair`, () => {
+    using db = openDatabase(":memory:");
+    const goals = new WorkItemStore(db);
+    const agents = new AgentStore(db);
+    const queue = new TaskStore(db);
+    const item = goals.create(goal(), describeCreatedGoal);
+    const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
+    const queued = agents.approve(task.id, task.instruction);
+    queue.claim();
+    agents.start(task.id);
+    const before = goals.detail(item.id);
+    db.exec(
+      "CREATE TRIGGER reject_goal_terminal BEFORE UPDATE OF last_attempt_status ON work_items BEGIN SELECT RAISE(ABORT,'injected'); END;",
+    );
+    assert.throws(() => queue.finish(queued.id, outcome), /injected/);
+    assert.equal(queue.get(queued.id).status, "running");
+    assert.equal(agents.task(task.id).status, "running");
+    assert.deepEqual(goals.detail(item.id), before);
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "approved",
+    );
+    db.exec("DROP TRIGGER reject_goal_terminal");
+    queue.finish(queued.id, outcome);
+    assert.equal(agents.task(task.id).status, outcome);
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "failed",
+    );
+    assert.equal(goals.get(item.id).lastAttemptStatus, outcome);
+    assert.equal(goals.get(item.id).status, "blocked");
+    const terminal = goals.detail(item.id);
+    const eventCount = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM work_item_events WHERE work_item_id=?",
+      )
+      .get(item.id)?.["n"];
+    for (let i = 0; i < 201; i++) {
+      const temporary = queue.enqueue({ message: "synthetic queue retention" });
+      queue.cancelQueued(temporary.id);
+    }
+    assert.equal(agents.task(task.id).queueId, null);
+    assert.deepEqual(goals.get(item.id), terminal.workItem);
+    agents.reconcile();
+    assert.deepEqual(goals.get(item.id), terminal.workItem);
+    assert.equal(
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM work_item_events WHERE work_item_id=?",
+        )
+        .get(item.id)?.["n"],
+      eventCount,
+    );
+  });
+}
