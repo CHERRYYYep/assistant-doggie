@@ -593,3 +593,70 @@ test("rollback failure quarantines writes and drives Web worker and connection s
   using observer = openDatabase(join(directory, "doggie.db"));
   assert.deepEqual(new Store(observer).listChatMessages(10), []);
 });
+
+test(
+  "production direct and queued chat share the same turn coordinator",
+  { timeout: 5000 },
+  async (t) => {
+    const directory = mkdtempSync(join(tmpdir(), "doggie-shared-turn-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const directText = "直接聊天正在整理实验结果 100%";
+    const queuedText = "后台聊天正在记录测试结果 100%";
+    const seen: string[][] = [];
+    const web = await startDoggieLocalWeb(setupConfig(directory), {
+      model: new FakeModel(),
+      chatResponder: {
+        async respond({ history, sourceText }) {
+          seen.push(history.map(({ content }) => content));
+          if (sourceText === directText) {
+            started.resolve();
+            await release.promise;
+          }
+          return { assistantText: `回复：${sourceText}` };
+        },
+      },
+    });
+    const post = (path: string, message: string) =>
+      fetch(new URL(path, web.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ message }),
+      });
+    const direct = post("api/chat", directText);
+    try {
+      await Promise.race([
+        started.promise,
+        direct.then(() => assert.fail("direct reply did not wait")),
+      ]);
+      assert.equal((await post("api/tasks", queuedText)).status, 202);
+      assert.equal(web.tasks.list()[0]?.status, "running");
+      assert.deepEqual(
+        web.store.listChatMessages(10).map(({ content }) => content),
+        [directText],
+      );
+      const finished = Promise.withResolvers<void>();
+      const unsubscribe = web.tasks.subscribe(({ status }) => {
+        if (status === "succeeded") finished.resolve();
+        if (status === "failed" || status === "cancelled")
+          finished.reject(new Error(status));
+      });
+      try {
+        release.resolve();
+        assert.equal((await direct).status, 200);
+        await finished.promise;
+        assert.deepEqual(seen, [
+          [directText],
+          [directText, `回复：${directText}`, queuedText],
+        ]);
+      } finally {
+        unsubscribe();
+      }
+    } finally {
+      release.resolve();
+      await web.close();
+      await direct.catch(() => undefined);
+    }
+  },
+);

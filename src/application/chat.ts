@@ -20,6 +20,7 @@ import type {
   RuntimeConfirmationRequest,
 } from "./archive-runtime.ts";
 import { ApplicationError } from "./archive.ts";
+import { ChatTurns } from "./chat-turns.ts";
 import { CorrectionError } from "./correction.ts";
 import { MemoryQueryError } from "./memory-query.ts";
 import { projectBucket, projectArchiveExecution } from "./archive-view.ts";
@@ -40,6 +41,7 @@ type ChatArchive = Omit<ArchiveSnapshot, "archive_state"> & {
 const CHAT_HISTORY_LIMIT = 40;
 
 export class ChatService {
+  readonly #turns = new ChatTurns();
   readonly #store: Store;
   readonly #runtime: ArchiveRuntime;
   readonly #chatResponder: ChatResponder | undefined;
@@ -54,7 +56,11 @@ export class ChatService {
     this.#chatResponder = responder;
   }
 
-  async chat(request: ChatInput, signal?: AbortSignal) {
+  chat(request: ChatInput, signal?: AbortSignal) {
+    return this.#turns.run(() => this.#chat(request, signal), signal);
+  }
+
+  async #chat(request: ChatInput, signal?: AbortSignal) {
     throwIfAborted(signal);
     const contextRevision = this.#store.getMemoryContextRevision();
     const userMessage = this.#store.appendChatMessage({
@@ -84,7 +90,10 @@ export class ChatService {
     let archive: ChatArchive = decorateChatArchive(
       projectArchiveExecution(this.#store, execution),
     );
-    const history = this.#store.listModelChatMessages(CHAT_HISTORY_LIMIT);
+    const history = this.#store.listModelChatMessages(
+      CHAT_HISTORY_LIMIT,
+      userMessage.sequence,
+    );
     let assistantText = archiveAssistantText(archive);
     let toolMessages: readonly ChatToolMessage[] = [];
     let chatError: string | null = null;
@@ -114,57 +123,67 @@ export class ChatService {
       }
     }
 
-    // Old tool results and model answers have no complete dependency graph.
-    // A concurrent revocation invalidates this answer before any reply is saved.
-    if (contextRevision !== this.#store.getMemoryContextRevision()) {
-      toolMessages = [];
-      chatError = "记忆已更新，请重新提问。";
-      assistantText = chatError;
-      archive = this.#currentArchive(archive);
-    }
-
-    const messages: ChatMessageRow[] = [userMessage];
-    for (const tool of toolMessages) {
-      const message = this.#store.appendChatMessage({
-        role: "tool",
-        content: JSON.stringify(tool.output),
-        toolName: tool.name,
-        toolCallId: tool.callId,
-        details: {
-          kind: "agent_tool",
-          arguments: tool.arguments,
-          output: tool.output,
+    const replies = this.#store.appendChatTurnResults(userMessage.id, () => {
+      // Read the version under the same short transaction as the replies so a
+      // different connection cannot invalidate it between the check and commit.
+      if (contextRevision !== this.#store.getMemoryContextRevision()) {
+        toolMessages = [];
+        chatError = "记忆已更新，请重新提问。";
+        assistantText = chatError;
+        archive = this.#currentArchive(archive);
+      }
+      return [
+        ...toolMessages.map((tool) => ({
+          role: "tool" as const,
+          content: JSON.stringify(tool.output),
+          toolName: tool.name,
+          toolCallId: tool.callId,
+          details: {
+            kind: "agent_tool",
+            arguments: tool.arguments,
+            output: tool.output,
+          },
+        })),
+        {
+          role: "assistant",
+          content: assistantText,
+          details: {
+            kind: "archive_result",
+            source_text: request.text,
+            archive,
+            pending_confirmation:
+              archive.archive_state === "needs_confirmation",
+            chat_error: chatError,
+          },
         },
-      });
-      messages.push(message);
-    }
-    const assistantMessage = this.#store.appendChatMessage({
-      role: "assistant",
-      content: assistantText,
-      details: {
-        kind: "archive_result",
-        source_text: request.text,
-        archive,
-        pending_confirmation: archive.archive_state === "needs_confirmation",
-        chat_error: chatError,
-      },
+      ];
     });
-    messages.push(assistantMessage);
 
+    const assistantMessage = replies.at(-1);
+    if (assistantMessage === undefined)
+      throw new Error("missing conversation reply");
     return {
       archive,
       userMessage,
       toolMessages,
       assistantMessage,
-      messages,
+      messages: [userMessage, ...replies],
       chatError,
     } as const;
   }
 
-  async confirmChat(request: RuntimeConfirmationRequest, signal?: AbortSignal) {
+  confirmChat(request: RuntimeConfirmationRequest, signal?: AbortSignal) {
+    return this.#turns.run(() => this.#confirmChat(request, signal), signal);
+  }
+
+  async #confirmChat(
+    request: RuntimeConfirmationRequest,
+    signal?: AbortSignal,
+  ) {
     throwIfAborted(signal);
     const confirmationText = confirmationUserText(request);
     this.#validateConfirmationBoundary(request);
+    const contextRevision = this.#store.getMemoryContextRevision();
     const userMessage = this.#store.appendChatMessage({
       role: "user",
       content: confirmationText,
@@ -185,25 +204,52 @@ export class ChatService {
         throw new DOMException("operation cancelled", "AbortError");
       this.#throwConfirmationFailure(request, userMessage, error);
     }
-    const archive = this.#projectConfirmation(execution, request.attemptId);
+    const confirmationArchive = this.#projectConfirmation(
+      execution,
+      request.attemptId,
+    );
+    let archive:
+      | typeof confirmationArchive
+      | (ChatArchive & { readonly result_attempt_id: string | null }) =
+      confirmationArchive;
     const resultAttemptId =
       execution.result.archiveState === "discarded"
         ? null
         : execution.result.attemptId;
-    const assistantMessage = this.#store.appendChatMessage({
-      role: "assistant",
-      content: confirmationAssistantText(request.action, archive),
-      details: {
-        kind: "archive_confirmation_result",
-        confirmation_action: request.action,
-        source_text: request.rawText,
-        attempt_id: request.attemptId,
-        source_attempt_id: request.attemptId,
-        result_attempt_id: resultAttemptId,
-        archive,
-        pending_confirmation: false,
+    const [assistantMessage] = this.#store.appendChatTurnResults(
+      userMessage.id,
+      () => {
+        const changed =
+          contextRevision !== this.#store.getMemoryContextRevision();
+        if (changed && confirmationArchive.archive_state !== "discarded") {
+          archive = {
+            ...this.#currentArchive(confirmationArchive),
+            result_attempt_id: resultAttemptId,
+          };
+        }
+        return [
+          {
+            role: "assistant",
+            content:
+              changed && archive.archive_state !== "discarded"
+                ? "记忆已更新，请重新提问。"
+                : confirmationAssistantText(request.action, archive),
+            details: {
+              kind: "archive_confirmation_result",
+              confirmation_action: request.action,
+              source_text: request.rawText,
+              attempt_id: request.attemptId,
+              source_attempt_id: request.attemptId,
+              result_attempt_id: resultAttemptId,
+              archive,
+              pending_confirmation: false,
+            },
+          },
+        ];
       },
-    });
+    );
+    if (assistantMessage === undefined)
+      throw new Error("missing confirmation reply");
     return {
       archive,
       action: request.action,
@@ -329,11 +375,16 @@ export class ChatService {
     const message = chatFailureMessage(error);
     let assistantMessage: ChatMessageRow | undefined;
     try {
-      assistantMessage = this.#store.appendChatMessage({
-        role: "assistant",
-        content: `${prefix}：${message}`,
-        details: { kind: "chat_error", ...details, error: message },
-      });
+      [assistantMessage] = this.#store.appendChatTurnResults(
+        userMessage.id,
+        () => [
+          {
+            role: "assistant",
+            content: `${prefix}：${message}`,
+            details: { kind: "chat_error", ...details, error: message },
+          },
+        ],
+      );
     } catch (writeError) {
       if (
         writeError instanceof StorageError &&

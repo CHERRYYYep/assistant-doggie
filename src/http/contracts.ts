@@ -1,3 +1,4 @@
+import { ChatCapacityError } from "../application/chat-turns.ts";
 import { WorkItemError } from "../domain/work-item.ts";
 import { AgentError, HarnessError } from "../domain/agent.ts";
 import { TaskError } from "../domain/task.ts";
@@ -247,6 +248,8 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
     );
   if (error instanceof HarnessError)
     return new HttpBoundaryError(500, error.message);
+  if (error instanceof ChatCapacityError)
+    return new HttpBoundaryError(429, error.message);
   if (error instanceof TaskError)
     return new HttpBoundaryError(
       error.kind === "missing" ? 404 : error.kind === "capacity" ? 429 : 503,

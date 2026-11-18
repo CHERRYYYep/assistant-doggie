@@ -1401,6 +1401,34 @@ export class Store {
     );
   }
 
+  /** Attach replies to the accepted user row and publish them as one group. */
+  appendChatTurnResults(
+    sourceMessageId: string,
+    build: () => readonly (Omit<ChatMessageInput, "role" | "details"> & {
+      readonly role: "assistant" | "tool";
+      readonly details: Readonly<Record<string, unknown>>;
+    })[],
+  ): ChatMessageRow[] {
+    return withTransaction(this.#database, () => {
+      const source = this.#database
+        .prepare(
+          "SELECT 1 FROM conversation_messages WHERE id = ? AND role = 'user'",
+        )
+        .get(sourceMessageId);
+      if (source === undefined)
+        throw StorageError.missingRecord(
+          "conversation_messages",
+          sourceMessageId,
+        );
+      return build().map((message) =>
+        this.#appendChatMessage({
+          ...message,
+          details: { ...message.details, source_message_id: sourceMessageId },
+        }),
+      );
+    });
+  }
+
   /** Caller owns the transaction that also persists its goal/approval links. */
   appendChatMessageWithinTransaction(
     message: ChatMessageInput,
