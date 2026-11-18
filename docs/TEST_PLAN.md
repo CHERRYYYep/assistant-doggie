@@ -122,6 +122,8 @@ npm run check
 
 普通门禁只执行 `scripts/d3/` 的 fake HTTP、严格响应解析、loopback URL、来源绑定/撤销闸门、超时未知写入不重试和 synthetic fixture 测试；不得联网启动上游 Core 或模型。显式 `npm run d3:l0` 需要仓库外已安装的固定 MemoryCore checkout (`D3_UPSTREAM_DIR`)，只使用临时目录、合成凭据、模型关闭及 loopback。报告经严格 schema 校验且只含合成 Entry ID/有界指标。该 runner 记录“无 OS 网络出口沙箱”，不得把它当网络隔离证明。实际执行结果见 [D3 执行计划](D3_EXPERIMENT_PLAN.md) 与 [D3.4 矩阵](D3_FAULT_MATRIX_PLAN.md)。`npm run d3:matrix` 追加临时 SQLite、重开和故障注入，仍不执行真 Core 或真实模型。`npm run d3:l0 -- --matrix-probe` 显式执行固定上游的部分 L0 验证；未覆盖的 V01–V12 和 L1–L3 不写作通过。
 
+D3 L0 后续：`recovery-probe.test.ts` 验证清理对象边界、响应丢失不重试、残留不判成功；`retrieval-probe.test.ts` 验证打分及真实 Doggie 查询排除撤销来源。显式 `npm run d3:l0 -- --recovery-probe` 或 `--retrieval-probe` 才启动真 Core，详见 [恢复与检索计划](D3_L0_RECOVERY_PLAN.md)。
+
 Q1 收口追加 `src/agent/control.test.ts` 回归：提前创建的恢复提案在前次失败/取消后拒绝批准和启动；未 reconcile 的 queue 终态也不能绕过检查；通用取消后超过 200 条队列历史淘汰不破坏 Agent 列表；入队失败同步回滚；遗留缺队列记录稳定失败；反向成功状态 fail closed。完整门禁 368 后端 + 53 前端通过。
 
 ## Q2：Entry 撤销

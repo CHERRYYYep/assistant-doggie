@@ -20,6 +20,21 @@ import { format } from "prettier";
 import { CoreClient, UPSTREAM_COMMIT, healthSchema } from "./client.ts";
 import { smokeReportSchema } from "./report.ts";
 import { runMatrixProbe } from "./matrix-probe.ts";
+import { runRecoveryProbe } from "./recovery-probe.ts";
+import { runRetrievalProbe } from "./retrieval-probe.ts";
+
+const modes = process.argv.slice(2);
+if (
+  modes.length > 1 ||
+  (modes[0] !== undefined &&
+    !["--matrix-probe", "--recovery-probe", "--retrieval-probe"].includes(
+      modes[0],
+    ))
+)
+  throw new Error(
+    "D3 requires exactly one probe mode or no arguments for the original smoke.",
+  );
+const mode = modes[0];
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const upstreamDir = process.env["D3_UPSTREAM_DIR"];
@@ -183,32 +198,88 @@ try {
     TZ: "UTC",
   };
   abort.signal.throwIfAborted();
-  const core = start(
-    ["--import", "tsx", "src/gateway/server.ts"],
-    coreDir,
-    childEnv,
-    "core.log",
-  );
   const endpoint = "http://127.0.0.1:" + port;
   const probe = new CoreClient(endpoint, gatewayKey, instanceId, 500, 32768);
-  const deadline = performance.now() + 30000;
-  let ready = false;
-  while (performance.now() < deadline && !core.done) {
+  let core: ManagedChild | undefined;
+  let starts = 0;
+  const startCore = async () => {
     abort.signal.throwIfAborted();
-    try {
-      const health = await probe.request("/health", healthSchema);
-      if (health.status === "ok") {
-        ready = true;
-        break;
+    if (core !== undefined && !core.done)
+      throw new Error("D3 Core already running");
+    const child = start(
+      ["--import", "tsx", "src/gateway/server.ts"],
+      coreDir,
+      childEnv,
+      `core-${++starts}.log`,
+    );
+    core = child;
+    const deadline = performance.now() + 30000;
+    while (performance.now() < deadline && !child.done) {
+      abort.signal.throwIfAborted();
+      try {
+        const health = await probe.request("/health", healthSchema);
+        if (health.status === "ok") return;
+      } catch {
+        /* Retry only the local read-only startup probe. */
       }
-    } catch {
-      /* Retry only the local read-only startup probe. */
+      await delay(250, undefined, { signal: abort.signal });
     }
-    await delay(250, undefined, { signal: abort.signal });
-  }
-  if (!ready) throw new Error("MemoryCore startup failed.");
+    throw new Error("MemoryCore startup failed.");
+  };
+  await startCore();
   abort.signal.throwIfAborted();
-  if (process.argv.includes("--matrix-probe")) {
+  if (mode === "--retrieval-probe") {
+    const experiment = new CoreClient(endpoint, gatewayKey, instanceId, 1000);
+    const report = await runRetrievalProbe(
+      experiment,
+      instanceId,
+      abort.signal,
+    );
+    await writeProbe(
+      "D3_L0_RETRIEVAL_REPORT.json",
+      {
+        ...probeMetadata(["retrieval-probe.ts", "retrieval-fixtures.ts"]),
+        modelRequests: 0,
+        index:
+          "Core L0 SQLite FTS/BM25; Doggie local lexical query; embedding disabled",
+        ...report,
+      },
+      {
+        failedAt: report.failedAt,
+        queryRuns: report.rows.length,
+        summary: report.summary,
+      },
+    );
+    if (report.failedAt !== null) process.exitCode = 1;
+  } else if (mode === "--recovery-probe") {
+    const experiment = new CoreClient(endpoint, gatewayKey, instanceId, 1000);
+    const recovery = await runRecoveryProbe(
+      experiment,
+      {
+        stop: async () => {
+          if (core === undefined || core.done)
+            throw new Error("D3 Core not running");
+          await stop(core);
+        },
+        start: startCore,
+      },
+      tempRoot,
+      abort.signal,
+    );
+    const artifact = {
+      ...probeMetadata([
+        "recovery-probe.ts",
+        "matrix-harness.ts",
+        "matrix-journal.ts",
+      ]),
+      modelRequests: 0,
+      environment:
+        "isolated loopback Core; model and embedding disabled; no OS egress isolation",
+      recovery,
+    };
+    await writeProbe("D3_L0_RECOVERY_REPORT.json", artifact, recovery);
+    if (recovery.failedAt !== null) process.exitCode = 1;
+  } else if (mode === "--matrix-probe") {
     const report = await runMatrixProbe(
       endpoint,
       gatewayKey,
@@ -259,6 +330,34 @@ try {
   process.removeListener("SIGTERM", interrupt);
   if (normalizedTempRoot.startsWith(resolve(tmpdir()) + "/"))
     rmSync(normalizedTempRoot, { recursive: true, force: true });
+}
+
+function probeMetadata(files: readonly string[]) {
+  return {
+    upstreamCommit: UPSTREAM_COMMIT,
+    upstreamLockSha256: sha256(join(coreDir, "package-lock.json")),
+    doggieBaseCommit: git(repoRoot, ["rev-parse", "HEAD"]),
+    harnessSha256: Object.fromEntries(
+      ["run.ts", "source-guard.ts", "client.ts", ...files].map((file) => [
+        file,
+        sha256(join(repoRoot, "scripts/d3", file)),
+      ]),
+    ),
+    node: process.version,
+  };
+}
+
+async function writeProbe(
+  filename: "D3_L0_RECOVERY_REPORT.json" | "D3_L0_RETRIEVAL_REPORT.json",
+  report: unknown,
+  summary: unknown,
+) {
+  const rendered = await format(JSON.stringify(report), { parser: "json" });
+  const path = join(repoRoot, "docs", filename);
+  writeFileSync(path, rendered, { mode: 0o600 });
+  process.stdout.write(
+    JSON.stringify({ reportPath: path, summary }, null, 2) + "\n",
+  );
 }
 
 async function runSmoke(
