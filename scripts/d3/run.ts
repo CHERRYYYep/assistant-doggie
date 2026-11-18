@@ -19,6 +19,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { format } from "prettier";
 import { CoreClient, UPSTREAM_COMMIT, healthSchema } from "./client.ts";
 import { smokeReportSchema } from "./report.ts";
+import { runMatrixProbe } from "./matrix-probe.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const upstreamDir = process.env["D3_UPSTREAM_DIR"];
@@ -207,6 +208,66 @@ try {
   }
   if (!ready) throw new Error("MemoryCore startup failed.");
   abort.signal.throwIfAborted();
+  if (process.argv.includes("--matrix-probe")) {
+    const report = await runMatrixProbe(
+      endpoint,
+      gatewayKey,
+      instanceId,
+      tempRoot,
+      abort.signal,
+    );
+    const artifact = {
+      upstreamCommit: UPSTREAM_COMMIT,
+      upstreamLockSha256: sha256(join(coreDir, "package-lock.json")),
+      doggieBaseCommit: git(repoRoot, ["rev-parse", "HEAD"]),
+      harnessSha256: Object.fromEntries(
+        [
+          "run.ts",
+          "matrix-probe.ts",
+          "matrix-journal.ts",
+          "matrix-harness.ts",
+          "source-guard.ts",
+          "client.ts",
+        ].map((file) => [file, sha256(join(repoRoot, "scripts/d3", file))]),
+      ),
+      node: process.version,
+      modelRequests: 0,
+      mode: "real Core L0 with client-side receipt loss; no OS egress isolation",
+      startedAt: report.startedAt,
+      completed: report.completed,
+      failedAt: report.failedAt,
+    };
+    const rendered = await format(JSON.stringify(artifact), { parser: "json" });
+    writeFileSync(
+      join(repoRoot, "docs/D3_L0_MATRIX_PROBE_REPORT.json"),
+      rendered,
+      { mode: 0o600 },
+    );
+    process.stdout.write(rendered);
+    if (report.failedAt !== null) process.exitCode = 1;
+  } else {
+    await runSmoke(endpoint, gatewayKey, instanceId, childEnv, port);
+  }
+} catch {
+  process.stderr.write(
+    "D3 isolated L0 runner failed; temporary processes and data are being cleaned up.\n",
+  );
+  process.exitCode = 1;
+} finally {
+  for (const child of [...children].reverse()) await stop(child);
+  process.removeListener("SIGINT", interrupt);
+  process.removeListener("SIGTERM", interrupt);
+  if (normalizedTempRoot.startsWith(resolve(tmpdir()) + "/"))
+    rmSync(normalizedTempRoot, { recursive: true, force: true });
+}
+
+async function runSmoke(
+  endpoint: string,
+  gatewayKey: string,
+  instanceId: string,
+  childEnv: NodeJS.ProcessEnv,
+  port: number,
+): Promise<void> {
   const reportPath = join(tempRoot, "report.json");
   const smoke = start(
     ["scripts/d3/live-smoke.ts"],
@@ -309,15 +370,4 @@ try {
       2,
     ) + "\n",
   );
-} catch {
-  process.stderr.write(
-    "D3 isolated L0 runner failed; temporary processes and data are being cleaned up.\n",
-  );
-  process.exitCode = 1;
-} finally {
-  for (const child of [...children].reverse()) await stop(child);
-  process.removeListener("SIGINT", interrupt);
-  process.removeListener("SIGTERM", interrupt);
-  if (normalizedTempRoot.startsWith(resolve(tmpdir()) + "/"))
-    rmSync(normalizedTempRoot, { recursive: true, force: true });
 }

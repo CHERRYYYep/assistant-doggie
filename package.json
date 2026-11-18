@@ -13,6 +13,7 @@
     "test:web": "node --test --test-isolation=none 'web/tests/**/*.test.ts'",
     "d3:l0": "node scripts/d3/run.ts",
     "d3:l1": "node scripts/d3/live-l1.ts",
+    "d3:matrix": "node --test scripts/d3/source-guard.test.ts scripts/d3/fault-matrix.test.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run format:check && npm run typecheck && npm run openapi:check && npm test && npm run test:web",

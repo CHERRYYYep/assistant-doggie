@@ -1,0 +1,24 @@
+{
+  "upstreamCommit": "42d4cde50c5a83182fced8c584f9ddb32a620615",
+  "upstreamLockSha256": "3567e5ca72eb724122540c2474492d90175483222a8d63d3300e71eb8bd8e958",
+  "doggieBaseCommit": "d72c0bc67c07ef75e38e06b7d545a3908047caa2",
+  "harnessSha256": {
+    "run.ts": "f97ac15bab369110676588dc97e8211b5981bc16020154c74b7c128511f99ae5",
+    "matrix-probe.ts": "62f7e932475f3dc893b810227d5b6c29a9e75473bb59647c85f21260e185437b",
+    "matrix-journal.ts": "fe38916003441986acd002be57f80f5be2aabcdc629826284408fc04642c7a3b",
+    "matrix-harness.ts": "8da177342ffde1ab1045cf3d05def9b6fc26fe6169857331fa4deb2c4d71a163",
+    "source-guard.ts": "17ca698f2c37d4162b92a4cb87ae696ad3901d676fdfa52f8cb7d478740c5d35",
+    "client.ts": "dc4e36db9e858a83b687c47af6c5f011f7c01525aea0555f76445c26b0f087c7"
+  },
+  "node": "v24.18.0",
+  "modelRequests": 0,
+  "mode": "real Core L0 with client-side receipt loss; no OS egress isolation",
+  "startedAt": "2026-11-18T10:59:18.546Z",
+  "completed": [
+    "remote_commit_receipt_dropped",
+    "no_replay_on_local_reopen",
+    "rebuild_from_effective_sources",
+    "old_scope_write_excluded"
+  ],
+  "failedAt": null
+}
