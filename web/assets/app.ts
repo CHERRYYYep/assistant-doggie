@@ -11,6 +11,9 @@ import {
   chatInput,
   chatMessages,
   chatSend,
+  conversationPreview,
+  conversationRetry,
+  replyClear,
   detail,
   memoryQueryButton,
   memoryQueryInput,
@@ -23,6 +26,11 @@ import {
 } from "./dom.ts";
 import {
   confirmArchive,
+  actOnClarification,
+  clearClarificationReply,
+  discardClarificationReply,
+  retryConversationTurn,
+  setConversationPreview,
   cancelTask,
   resumeTasks,
   deleteBucket,
@@ -60,7 +68,8 @@ chatMessages.addEventListener("click", async (event: MouseEvent) => {
   const button = closestActionButton(event);
   if (!button) return;
   try {
-    if (button.dataset["action"] === "chat-confirm") await confirmArchive(button);
+    if (button.dataset["action"]?.startsWith("clarification-")) await actOnClarification(button);
+    else if (button.dataset["action"] === "chat-confirm") await confirmArchive(button);
     else if (button.dataset["action"] === "move-entry") await moveEntry(button);
     else if (button.dataset["action"] === "revoke-entry") await revokeEntry(button);
     else if (button.dataset["action"] === "show-bucket") {
@@ -113,6 +122,25 @@ detail.addEventListener("click", async (event: MouseEvent) => {
   }
 });
 
+const previewKey = "doggie.mainConversationPreview";
+function rememberedPreview(): boolean {
+  try {
+    return sessionStorage.getItem(previewKey) === "true";
+  } catch {
+    return false;
+  }
+}
+conversationPreview.checked = rememberedPreview();
+conversationPreview.addEventListener("change", () => {
+  void setConversationPreview(conversationPreview.checked);
+  try {
+    sessionStorage.setItem(previewKey, String(conversationPreview.checked));
+  } catch {
+    /* preview remains usable without browser storage */
+  }
+});
+conversationRetry.addEventListener("click", () => void retryConversationTurn());
+replyClear.addEventListener("click", discardClarificationReply);
 chatSend.addEventListener("click", () => void sendMessage());
 chatInput.addEventListener("keydown", (event: KeyboardEvent) => {
   if (event.key === "Enter" && !event.shiftKey) {
@@ -126,6 +154,7 @@ chatInput.addEventListener("input", () => {
 });
 newChatButton.addEventListener("click", () => {
   activateWorkspace("chat");
+  clearClarificationReply();
   chatInput.value = "";
   chatInput.style.height = "auto";
   chatInput.focus();
@@ -152,7 +181,7 @@ taskRefresh.addEventListener("click", () => void resumeTasks());
 void Promise.all([
   refreshBuckets(),
   refreshAgenda(),
-  loadHistory(),
+  conversationPreview.checked ? setConversationPreview(true) : loadHistory(),
   resumeTasks(),
   refreshWorkItems(),
 ]);

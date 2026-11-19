@@ -1,3 +1,5 @@
+import type { MainConversationService } from "../application/main-conversation.ts";
+import { conversationTurnSchema } from "../domain/main-conversation.ts";
 import type { WorkItemService } from "../application/work-items.ts";
 import {
   createWorkItemSchema,
@@ -215,6 +217,7 @@ export function createDoggieApp(
   tasks?: TaskQueue,
   agents?: AgentService,
   workItems?: WorkItemService,
+  conversation?: MainConversationService,
 ): Hono {
   const app = new Hono();
   const authorityPolicy = new AuthorityPolicy(additionalAllowedAuthorities);
@@ -230,7 +233,8 @@ export function createDoggieApp(
         operation !== undefined &&
         (operation.feature !== "tasks" || tasks !== undefined) &&
         (operation.feature !== "agents" || agents !== undefined) &&
-        (operation.feature !== "workItems" || workItems !== undefined);
+        (operation.feature !== "workItems" || workItems !== undefined) &&
+        (operation.feature !== "conversation" || conversation !== undefined);
       if (enabled) {
         const query: Record<string, string> = {};
         for (const [key, value] of new URL(context.req.url).searchParams) {
@@ -575,6 +579,21 @@ export function createDoggieApp(
         task: await agents.cancel(agentId(context.req.param("id"))),
       });
     });
+  }
+
+  if (conversation !== undefined) {
+    app.get("/api/conversation/clarifications", (context) =>
+      context.json({ ok: true, clarifications: conversation.list() }),
+    );
+    app.post("/api/conversation/turns", async (context) =>
+      context.json({
+        ok: true,
+        result: await conversation.turn(
+          await parseBody(context, conversationTurnSchema),
+          context.req.raw.signal,
+        ),
+      }),
+    );
   }
 
   if (workItems !== undefined) {

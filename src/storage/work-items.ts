@@ -63,6 +63,35 @@ export class WorkItemStore {
         }),
       );
   }
+  clarificationPool() {
+    const rows = this.#db
+      .prepare(
+        select +
+          " WHERE status IN ('open','in_progress','blocked') AND cancel_requested=0 ORDER BY updated_at DESC,id LIMIT 101",
+      )
+      .all();
+    return {
+      items: rows
+        .slice(0, 100)
+        .map((row) => workItemSchema.parse({ ...row, cancelRequested: false })),
+      truncated: rows.length > 100,
+    };
+  }
+  hasAvailableScopeSources(id: string): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM work_item_sources s WHERE s.work_item_id=? AND
+         CASE s.kind
+           WHEN 'entry' THEN NOT EXISTS (SELECT 1 FROM entries WHERE id=s.source_id AND revoked_at IS NULL)
+           WHEN 'bucket' THEN NOT EXISTS (SELECT 1 FROM buckets WHERE id=s.source_id)
+           WHEN 'message' THEN NOT EXISTS (SELECT 1 FROM conversation_messages WHERE id=s.source_id AND role='user')
+           ELSE 1
+         END LIMIT 1`,
+        )
+        .get(id) === undefined
+    );
+  }
   findExactTitle(
     title: string,
   ): readonly Pick<WorkItem, "id" | "title" | "status">[] {

@@ -6,7 +6,13 @@
  */
 
 import type { TaskSnapshot } from "../../src/domain/task.ts";
-import type { BucketDto, TodoDto, UiChatMessageDto } from "../../src/http/dto.ts";
+import type { ConversationTurnRequest } from "../../src/http/contracts.ts";
+import type {
+  ClarificationCardDto,
+  BucketDto,
+  TodoDto,
+  UiChatMessageDto,
+} from "../../src/http/dto.ts";
 
 export type FrontendState = {
   /** Active buckets as last returned by the server. */
@@ -16,6 +22,10 @@ export type FrontendState = {
   selectedBucketId: string | null;
   /** Chat messages currently rendered, oldest first. */
   history: UiChatMessageDto[];
+  preview: boolean;
+  clarifications: readonly ClarificationCardDto[];
+  reply: { readonly clarificationId: string; readonly expectedRevision: number } | null;
+  retryTurn: ConversationTurnRequest | null;
   tasks: Map<string, TaskSnapshot>;
   taskObservers: Map<string, AbortController>;
   pausedTasks: Set<string>;
@@ -34,6 +44,10 @@ export const state: FrontendState = {
   agenda: [],
   selectedBucketId: null,
   history: [],
+  preview: false,
+  clarifications: [],
+  reply: null,
+  retryTurn: null,
   tasks: new Map(),
   taskObservers: new Map(),
   pausedTasks: new Set(),

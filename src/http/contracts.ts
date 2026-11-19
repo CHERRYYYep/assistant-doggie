@@ -1,3 +1,7 @@
+import {
+  ConversationError,
+  type ConversationTurn,
+} from "../domain/main-conversation.ts";
 import { ChatCapacityError } from "../application/chat-turns.ts";
 import { WorkItemError } from "../domain/work-item.ts";
 import { AgentError, HarnessError } from "../domain/agent.ts";
@@ -172,6 +176,7 @@ export type ChatRequest = z.infer<typeof chatRequestSchema>;
 export type ChatConfirmationRequest = z.infer<
   typeof chatConfirmationRequestSchema
 >;
+export type ConversationTurnRequest = ConversationTurn;
 export type MoveEntryRequest = z.infer<typeof moveEntryRequestSchema>;
 export type BucketStatusRequest = z.infer<typeof bucketStatusRequestSchema>;
 export type MemoryQueryRequest = z.infer<typeof memoryQueryRequestSchema>;
@@ -220,6 +225,11 @@ export function stableError(error: unknown): {
 
 export function normalizeHttpError(error: unknown): HttpBoundaryError {
   if (error instanceof HttpBoundaryError) return error;
+  if (error instanceof ConversationError)
+    return new HttpBoundaryError(
+      error.code === "missing" ? 404 : 409,
+      error.message,
+    );
   if (error instanceof WorkItemError)
     return new HttpBoundaryError(
       error.code === "missing"

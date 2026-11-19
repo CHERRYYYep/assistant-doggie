@@ -81,6 +81,7 @@ export class ConversationStore {
       readonly role: "assistant" | "tool";
       readonly details: Readonly<Record<string, unknown>>;
     })[],
+    publish?: (replies: readonly ChatMessageRow[]) => void,
   ): ChatMessageRow[] {
     return withTransaction(this.#database, () => {
       const source = this.#database
@@ -93,12 +94,14 @@ export class ConversationStore {
           "conversation_messages",
           sourceMessageId,
         );
-      return build().map((message) =>
+      const replies = build().map((message) =>
         this.#append({
           ...message,
           details: { ...message.details, source_message_id: sourceMessageId },
         }),
       );
+      publish?.(replies);
+      return replies;
     });
   }
 
@@ -163,6 +166,7 @@ export class ConversationStore {
          WHERE sequence > ? AND sequence <= ?
            AND role IN ('user', 'assistant')
            AND json_type(details_json, '$.work_item_id') IS NULL
+           AND COALESCE(json_extract(details_json, '$.kind') NOT IN ('task_clarification_input','task_clarification_result','task_clarification_reply'), 1)
          ORDER BY sequence DESC LIMIT ?`,
       )
       .all(fence, throughSequence ?? Number.MAX_SAFE_INTEGER, limit);

@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { setImmediate } from "node:timers/promises";
 import { after, afterEach, test } from "node:test";
 import type { TaskSnapshot } from "../../src/domain/task.ts";
-import type { ChatMessageDto } from "../../src/http/dto.ts";
+import type { ChatMessageDto, ClarificationCardDto } from "../../src/http/dto.ts";
 import { installDom, StubElement } from "./dom-harness.ts";
 
 const dom = installDom();
 const { state } = await import("../assets/state.ts");
 const views = await import("../assets/views.ts");
-const { renderTranscript } = await import("../assets/render-chat.ts");
+const { renderTranscript, renderClarification } = await import("../assets/render-chat.ts");
 const originalFetch = globalThis.fetch;
 after(() => dom.restore());
 afterEach(async () => {
@@ -19,6 +20,10 @@ afterEach(async () => {
   state.pausedTasks.clear();
   state.cancellingTasks.clear();
   state.history = [];
+  state.preview = false;
+  state.clarifications = [];
+  state.retryTurn = null;
+  views.clearClarificationReply();
   state.activeBuckets = [];
   state.agenda = [];
   state.selectedBucketId = null;
@@ -783,4 +788,134 @@ test("T13 agent refresh schedules a follow-up when requested during an in-flight
   await Promise.all([first, second]);
   assert.equal(capabilities, 2);
   assert.equal(element("agent-propose").disabled, true);
+});
+
+const tcp = {
+  id: randomUUID(),
+  scopeRevision: 1,
+  title: 'TCP <img src=x onerror="alert(1)">',
+  hint: "<svg onload=alert(1)>",
+};
+const card: ClarificationCardDto = {
+  id: randomUUID(),
+  originalMessageId: randomUUID(),
+  assistantMessageId: randomUUID(),
+  originalText: "帮我改那个计网实验<script>bad()</script>",
+  latestReply: null,
+  status: "pending",
+  revision: 1,
+  question: "TCP 还是 UDP？",
+  candidates: [tcp],
+  selected: null,
+};
+
+test("C2 cards render escaped user data and stable action IDs, including after falling out of chat history", () => {
+  const html = renderClarification(card);
+  assert.doesNotMatch(html, /<(?:img|svg|script)/);
+  assert.match(html, /&lt;img/);
+  assert.match(html, /&lt;script/);
+  assert.match(html, /都不是/);
+  assert.ok(html.includes(`data-clarification-id="${card.id}"`));
+  assert.ok(html.includes(`data-work-item-id="${tcp.id}"`));
+  const stale = renderClarification({ ...card, status: "stale", candidates: [] });
+  assert.doesNotMatch(stale, /clarification-(reply|select|none)/);
+});
+
+test("preview restores cards, keeps interludes independent, retries the same payload and refreshes 409 cards", async () => {
+  let current = card;
+  let mode: "ok" | "drop" | "conflict" = "ok";
+  let gets = 0;
+  const posts: unknown[] = [];
+  const json = (body: unknown, status = 200) => Response.json(body, { status });
+  globalThis.fetch = async (url, options) => {
+    switch (String(url)) {
+      case "/api/chat/history?limit=40":
+        return json({ ok: true, messages: [] });
+      case "/api/conversation/clarifications":
+        gets++;
+        return json({ ok: true, clarifications: [current] });
+      case "/api/conversation/turns": {
+        assert.equal(options?.method, "POST");
+        assert.equal(new Headers(options.headers).get("content-type"), "application/json");
+        const request: unknown = JSON.parse(String(options.body));
+        posts.push(request);
+        if (mode === "drop") throw new Error("response lost");
+        if (mode === "conflict") return json({ ok: false, error: "版本已变化" }, 409);
+        return json({
+          ok: true,
+          result: {
+            kind: "clarification",
+            clarificationId: current.id,
+            userMessageId: randomUUID(),
+            assistantMessageId: randomUUID(),
+          },
+        });
+      }
+      default:
+        throw new Error(`Unexpected route: ${String(url)}`);
+    }
+  };
+  const element = (id: string) => {
+    const node = dom.elements.get(id);
+    assert.ok(node);
+    return node;
+  };
+  const button = (action: string) => {
+    const node = new StubElement();
+    Object.assign(node.dataset, {
+      action,
+      clarificationId: card.id,
+      revision: "1",
+      workItemId: tcp.id,
+    });
+    return node as unknown as HTMLButtonElement;
+  };
+
+  await views.loadHistory();
+  assert.equal(gets, 0);
+  assert.equal(state.preview, false);
+  await views.setConversationPreview(true);
+  assert.match(element("chat-messages").nodes[0]?.innerHTML ?? "", /任务澄清/);
+  const composer = element("chat-input");
+  composer.value = "SYN-ACK 是什么？";
+  await views.sendMessage();
+  assert.equal(Reflect.get(Object(posts[0]), "action"), "message");
+  assert.equal(composer.value, "");
+
+  await views.actOnClarification(button("clarification-reply"));
+  assert.equal(element("clarification-reply-context").hidden, false);
+  composer.value = "抓三次握手那个，只改报告";
+  mode = "drop";
+  await views.sendMessage();
+  assert.equal(element("conversation-retry").hidden, false);
+  assert.equal(composer.value, "抓三次握手那个，只改报告");
+  assert.deepEqual(posts[1], state.retryTurn);
+  assert.equal(state.retryTurn?.action, "reply");
+  assert.equal(Reflect.get(Object(posts[1]), "clarificationId"), card.id);
+  assert.equal(Reflect.get(Object(posts[1]), "expectedRevision"), 1);
+
+  current = {
+    ...card,
+    status: "resolved",
+    selected: tcp,
+    candidates: [],
+    revision: 2,
+    latestReply: composer.value,
+  };
+  mode = "ok";
+  await views.retryConversationTurn();
+  assert.deepEqual(posts[1], posts[2]);
+  assert.equal(element("conversation-retry").hidden, true);
+  assert.equal(element("clarification-reply-context").hidden, true);
+  assert.match(element("chat-messages").nodes[0]?.innerHTML ?? "", /已选目标/);
+
+  current = { ...current, status: "stale", selected: null };
+  const previousGets = gets;
+  mode = "conflict";
+  await views.actOnClarification(button("clarification-select"));
+  assert.equal(Reflect.get(Object(posts[3]), "expectedRevision"), 1);
+  assert.ok(gets > previousGets);
+  assert.equal(state.clarifications[0]?.status, "stale");
+  assert.equal(state.retryTurn, null);
+  assert.match(element("chat-status").textContent ?? "", /版本已变化/);
 });

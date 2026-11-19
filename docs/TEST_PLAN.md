@@ -170,3 +170,8 @@ B2：134 项定向回归；550 后端 + 60 前端完整门禁通过。覆盖双 
 ## C1：主对话用途分流（2026-11-19）
 
 [用途规则](../src/domain/chat-purpose.test.ts)、[应用层](../src/application/main-chat.test.ts)与 [Harness](../src/agent/harness.test.ts)覆盖直答不查工具、取证只读、归档继续使用原合同、文本确认不改变审批、取消/撤销后不发布迟到结果。含旧入口的定向回归 64 项，`npm run check` 561 项后端与 60 项前端全部通过。详见 [C1 验收](MAIN_CONVERSATION_C1_ACCEPTANCE.md)。
+
+
+## C2：主对话预览和可恢复澄清
+
+`node --test src/http/main-conversation.test.ts` 验证临时库迁移和回滚、原文与补充恢复、候选和过期范围、真实 loopback 重放及旧确认边界；`npm run test:web` 验证同一前端模块图上的选择、显式回复、重试和转义。运行完整门禁后才提交。详见 [C2 验收记录](MAIN_CONVERSATION_C2_ACCEPTANCE.md)。

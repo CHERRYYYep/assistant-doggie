@@ -5,7 +5,11 @@
  * call or a state mutation lives here so the two never interleave.
  */
 
-import type { ChatConfirmationRequest, ChatRequest } from "../../src/http/contracts.ts";
+import type {
+  ChatConfirmationRequest,
+  ChatRequest,
+  ConversationTurnRequest,
+} from "../../src/http/contracts.ts";
 import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type { PendingChatMessageDto } from "../../src/http/dto.ts";
 import type { BucketType } from "../../src/domain/types.ts";
@@ -14,6 +18,9 @@ import {
   fetchActiveBuckets,
   fetchBucketDetail,
   fetchChatHistory,
+  fetchClarifications,
+  postConversationTurn,
+  ApiRequestError,
   fetchMemoryQuery,
   fetchAgenda,
   isConflictError,
@@ -36,6 +43,11 @@ import {
   chatInput,
   chatMessages,
   chatSend,
+  conversationPreview,
+  conversationRetry,
+  replyClear,
+  replyContext,
+  replyLabel,
   detail,
   memoryQueryInput,
   memoryQueryResult,
@@ -331,15 +343,23 @@ export async function showBucket(bucketId: string | undefined, reveal = true): P
 }
 
 export function renderHistory(): void {
-  renderTranscript(state.history);
+  renderTranscript(state.history, state.preview ? state.clarifications : []);
 }
 
 export async function loadHistory(): Promise<void> {
   const revision = ++state.historyRequestRevision;
   try {
-    const data = await fetchChatHistory();
+    const [data, cards] = await Promise.all([
+      fetchChatHistory(),
+      state.preview ? fetchClarifications().catch((error: unknown) => ({ error })) : undefined,
+    ]);
     if (revision !== state.historyRequestRevision) return;
     state.history = [...data.messages];
+    if (cards && "clarifications" in cards) state.clarifications = cards.clarifications;
+    if (cards && "error" in cards) {
+      state.clarifications = [];
+      setStatus(`无法恢复澄清卡：${errorMessage(cards.error)}`, "warning");
+    }
     renderHistory();
   } catch (error) {
     if (revision !== state.historyRequestRevision) return;
@@ -365,9 +385,127 @@ export async function runMemoryQuery(): Promise<void> {
   }
 }
 
+export async function setConversationPreview(enabled: boolean): Promise<void> {
+  if (!enabled && state.reply !== null && chatInput.value.trim() !== "") {
+    conversationPreview.checked = true;
+    setStatus("请先发送或丢弃卡片回复草稿。", "warning");
+    return;
+  }
+  state.preview = enabled;
+  if (!enabled) {
+    state.clarifications = [];
+    clearClarificationReply();
+    renderHistory();
+  }
+  await loadHistory();
+}
+
+export function discardClarificationReply(): void {
+  if (state.reply !== null) {
+    chatInput.value = "";
+    chatInput.style.height = "auto";
+  }
+  clearClarificationReply();
+}
+
+export function clearClarificationReply(): void {
+  state.reply = null;
+  replyContext.hidden = true;
+}
+
+export async function actOnClarification(button: HTMLButtonElement): Promise<void> {
+  if (!state.preview || chatSend.disabled || state.retryTurn !== null) return;
+  const clarificationId = requireDataset(button, "clarificationId");
+  const expectedRevision = Number(requireDataset(button, "revision"));
+  const action = button.dataset["action"];
+  if (action === "clarification-reply") {
+    const card = state.clarifications.find(({ id }) => id === clarificationId);
+    if (!card || card.revision !== expectedRevision) return;
+    if (chatInput.value.trim() && state.reply?.clarificationId !== clarificationId) {
+      setStatus("输入框中还有草稿，请先处理后再回复这张卡。", "warning");
+      return;
+    }
+    state.reply = { clarificationId, expectedRevision };
+    replyLabel.textContent = `回复：${card.originalText.slice(0, 100)}`;
+    replyContext.hidden = false;
+    chatInput.focus();
+    return;
+  }
+  const base = { clarificationId, expectedRevision, requestId: crypto.randomUUID() };
+  if (action === "clarification-select") {
+    await submitPreviewTurn({
+      ...base,
+      action: "select",
+      workItemId: requireDataset(button, "workItemId"),
+    });
+  } else if (action === "clarification-none" || action === "clarification-cancel") {
+    await submitPreviewTurn({
+      ...base,
+      action: action === "clarification-none" ? "none" : "cancel",
+    });
+  }
+}
+
+export async function retryConversationTurn(): Promise<void> {
+  if (state.retryTurn !== null) await submitPreviewTurn(state.retryTurn);
+}
+
+async function submitPreviewTurn(request: ConversationTurnRequest): Promise<void> {
+  if (chatSend.disabled) return;
+  chatSend.disabled = true;
+  conversationPreview.disabled = true;
+  conversationRetry.disabled = true;
+  replyClear.disabled = true;
+  setStatus("正在处理主对话…");
+  try {
+    const { result } = await postConversationTurn(request);
+    state.retryTurn = null;
+    if ("text" in request && chatInput.value.trim() === request.text) {
+      chatInput.value = "";
+      chatInput.style.height = "auto";
+      if (request.action === "reply") clearClarificationReply();
+    }
+    if (result.kind === "archive") await Promise.all([refreshBuckets(), refreshAgenda()]);
+    setStatus(
+      "chatError" in result ? result.chatError : "",
+      "chatError" in result && result.chatError ? "warning" : "",
+    );
+    await loadHistory();
+  } catch (error) {
+    const known = error instanceof ApiRequestError && error.status < 500;
+    state.retryTurn = known ? null : request;
+    await loadHistory();
+    setStatus(known ? errorMessage(error) : "提交结果未确认。可用同一请求核对或重试。", "warning");
+  } finally {
+    chatSend.disabled = false;
+    conversationPreview.disabled = state.retryTurn !== null;
+    conversationRetry.hidden = state.retryTurn === null;
+    conversationRetry.disabled = false;
+    replyClear.disabled = false;
+    chatInput.focus();
+  }
+}
+
 export async function sendMessage(): Promise<void> {
   const text = chatInput.value.trim();
   if (!text || chatSend.disabled) return;
+  if (state.retryTurn !== null) {
+    setStatus("请先核对上次发送结果。", "warning");
+    return;
+  }
+  if (state.preview) {
+    if (text.length > 4000) {
+      setStatus("主对话预览每条消息最多 4000 字符。", "warning");
+      return;
+    }
+    const requestId = crypto.randomUUID();
+    await submitPreviewTurn(
+      state.reply === null
+        ? { action: "message", text, requestId }
+        : { action: "reply", text, requestId, ...state.reply },
+    );
+    return;
+  }
   chatInput.value = "";
   chatInput.style.height = "auto";
   const pending: PendingChatMessageDto = {

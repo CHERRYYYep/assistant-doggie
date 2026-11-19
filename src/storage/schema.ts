@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -322,6 +322,29 @@ CREATE TRIGGER work_item_attempt_immutable BEFORE UPDATE ON work_item_attempts
 BEGIN SELECT RAISE(ABORT,'work item attempt binding is immutable'); END;
 `;
 
+const ADD_MAIN_CLARIFICATIONS_V9 = `
+CREATE TABLE conversation_clarifications (
+ id TEXT PRIMARY KEY,
+ original_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ assistant_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ latest_reply_id TEXT REFERENCES conversation_messages(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','resolved','cancelled','stale')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ candidates_json TEXT NOT NULL CHECK(json_valid(candidates_json)),
+ truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+ selected_id TEXT REFERENCES work_items(id),
+ selected_scope_revision INTEGER CHECK(selected_scope_revision > 0),
+ CHECK ((selected_id IS NULL) = (selected_scope_revision IS NULL)),
+ CHECK (status != 'resolved' OR selected_id IS NOT NULL)
+);
+CREATE INDEX ix_conversation_clarification_status ON conversation_clarifications(status);
+CREATE TABLE conversation_requests (
+ request_id TEXT PRIMARY KEY,
+ payload_hash TEXT NOT NULL,
+ result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json))
+);
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -335,6 +358,11 @@ export const MIGRATIONS: readonly Migration[] = [
   { version: 6, name: "add_entry_revocation_v6", sql: ADD_ENTRY_REVOCATION_V6 },
   { version: 7, name: "add_todo_plan_v7", sql: ADD_TODO_PLAN_V7 },
   { version: 8, name: "add_work_items_v8", sql: ADD_WORK_ITEMS_V8 },
+  {
+    version: 9,
+    name: "add_main_clarifications_v9",
+    sql: ADD_MAIN_CLARIFICATIONS_V9,
+  },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */
@@ -360,4 +388,6 @@ export const OWNED_TABLES: readonly string[] = [
   "work_item_events",
   "corrections",
   "conversation_messages",
+  "conversation_clarifications",
+  "conversation_requests",
 ];

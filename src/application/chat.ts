@@ -53,6 +53,13 @@ type AcceptedTurn = {
   readonly userMessage: ChatMessageRow;
   readonly contextRevision: number;
 };
+type TurnPublished = (
+  kind: ChatPurpose["kind"],
+  user: ChatMessageRow,
+  assistant: ChatMessageRow,
+  error: string | null,
+) => void;
+
 type AnswerAttempt = {
   readonly response?: ChatResponse;
   readonly error: string | null;
@@ -89,15 +96,35 @@ export class ChatService {
 
   /** Internal entry for the next main-chat transport. The legacy API stays archive-first. */
   mainChat(input: Pick<ChatInput, "text">, signal?: AbortSignal) {
-    return this.#turns.run(() => this.#mainChat(input, signal), signal);
+    return this.#turns.run(() => this.#mainChat(input.text, signal), signal);
   }
 
-  async #mainChat(input: Pick<ChatInput, "text">, signal?: AbortSignal) {
+  /** The C2 application service may commit a clarification or dispatch a regular turn in this slot. */
+  coordinateMain<T>(
+    operation: (
+      dispatch: (text: string, publish?: TurnPublished) => Promise<unknown>,
+    ) => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    return this.#turns.run(
+      () => operation((text, publish) => this.#mainChat(text, signal, publish)),
+      signal,
+    );
+  }
+
+  async #mainChat(
+    rawText: string,
+    signal?: AbortSignal,
+    publish?: TurnPublished,
+  ) {
     throwIfAborted(signal);
-    const text = requiredText(input.text, "text");
+    const text = requiredText(rawText, "text");
     const purpose = decideChatPurpose(text);
     if (purpose.kind === "archive")
-      return { ...(await this.#chat({ text }, signal)), purpose } as const;
+      return {
+        ...(await this.#chat({ text }, signal, publish)),
+        purpose,
+      } as const;
 
     const turn = this.#acceptInput({ text }, signal);
     const answer =
@@ -113,19 +140,23 @@ export class ChatService {
     throwIfAborted(signal);
     const fallback = mainChatFallback(purpose);
     let chatError = answer?.error ?? null;
-    const result = this.#appendReplies(turn, (memoryChanged) => {
-      if (memoryChanged) chatError = MEMORY_CHANGED;
-      return {
-        assistantText: memoryChanged
-          ? MEMORY_CHANGED
-          : (answer?.response?.assistantText ?? fallback),
-        toolMessages:
-          !memoryChanged && purpose.kind === "lookup"
-            ? (answer?.response?.toolMessages ?? [])
-            : [],
-        details: { kind: "main_chat_result", purpose, chat_error: chatError },
-      };
-    });
+    const result = this.#appendReplies(
+      turn,
+      (memoryChanged) => {
+        if (memoryChanged) chatError = MEMORY_CHANGED;
+        return {
+          assistantText: memoryChanged
+            ? MEMORY_CHANGED
+            : (answer?.response?.assistantText ?? fallback),
+          toolMessages:
+            !memoryChanged && purpose.kind === "lookup"
+              ? (answer?.response?.toolMessages ?? [])
+              : [],
+          details: { kind: "main_chat_result", purpose, chat_error: chatError },
+        };
+      },
+      (user, assistant) => publish?.(purpose.kind, user, assistant, chatError),
+    );
     return { ...result, purpose, chatError } as const;
   }
 
@@ -143,7 +174,11 @@ export class ChatService {
     return { sourceText: request.text, userMessage, contextRevision };
   }
 
-  async #chat(request: ChatInput, signal?: AbortSignal) {
+  async #chat(
+    request: ChatInput,
+    signal?: AbortSignal,
+    publish?: TurnPublished,
+  ) {
     const turn = this.#acceptInput(request, signal);
     const { userMessage } = turn;
 
@@ -169,29 +204,33 @@ export class ChatService {
     // truthful fallback and does not roll back the archive.
     const answer = await this.#tryAnswer(turn, { archive }, signal);
     let chatError = answer.error;
-    const result = this.#appendReplies(turn, (memoryChanged) => {
-      if (memoryChanged) {
-        chatError = MEMORY_CHANGED;
-        archive = this.#currentArchive(archive);
-      }
-      const pending = archive.archive_state === "needs_confirmation";
-      return {
-        assistantText: memoryChanged
-          ? MEMORY_CHANGED
-          : ((!pending ? answer.response?.assistantText : undefined) ??
-            archiveAssistantText(archive)),
-        toolMessages: memoryChanged
-          ? []
-          : (answer.response?.toolMessages ?? []),
-        details: {
-          kind: "archive_result",
-          source_text: request.text,
-          archive,
-          pending_confirmation: pending,
-          chat_error: chatError,
-        },
-      };
-    });
+    const result = this.#appendReplies(
+      turn,
+      (memoryChanged) => {
+        if (memoryChanged) {
+          chatError = MEMORY_CHANGED;
+          archive = this.#currentArchive(archive);
+        }
+        const pending = archive.archive_state === "needs_confirmation";
+        return {
+          assistantText: memoryChanged
+            ? MEMORY_CHANGED
+            : ((!pending ? answer.response?.assistantText : undefined) ??
+              archiveAssistantText(archive)),
+          toolMessages: memoryChanged
+            ? []
+            : (answer.response?.toolMessages ?? []),
+          details: {
+            kind: "archive_result",
+            source_text: request.text,
+            archive,
+            pending_confirmation: pending,
+            chat_error: chatError,
+          },
+        };
+      },
+      (user, assistant) => publish?.("archive", user, assistant, chatError),
+    );
     return { ...result, archive, chatError } as const;
   }
 
@@ -241,6 +280,7 @@ export class ChatService {
       readonly toolMessages: readonly ChatToolMessage[];
       readonly details: Readonly<Record<string, unknown>>;
     },
+    publish?: (user: ChatMessageRow, assistant: ChatMessageRow) => void,
   ) {
     let publishedTools: readonly ChatToolMessage[] = [];
     const replies = this.#conversation.appendChatTurnResults(
@@ -270,6 +310,10 @@ export class ChatService {
             details: reply.details,
           },
         ];
+      },
+      (rows) => {
+        const assistant = rows.at(-1);
+        if (assistant !== undefined) publish?.(turn.userMessage, assistant);
       },
     );
     const assistantMessage = replies.at(-1);

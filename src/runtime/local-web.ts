@@ -1,3 +1,5 @@
+import { MainConversationService } from "../application/main-conversation.ts";
+import { ClarificationStore } from "../storage/clarifications.ts";
 import { MemoryTools } from "../application/memory-tools.ts";
 import { WorkItemService } from "../application/work-items.ts";
 import { WorkItemStore } from "../storage/work-items.ts";
@@ -168,10 +170,16 @@ export async function startDoggieLocalWeb(
           ),
     );
     agents.attachQueue(tasks);
+    const workItemStore = new WorkItemStore(database);
     server = createDoggieNodeServer(api, {
       tasks,
       agents,
-      workItems: new WorkItemService(new WorkItemStore(database), agents),
+      workItems: new WorkItemService(workItemStore, agents),
+      conversation: new MainConversationService(
+        new ClarificationStore(database, store.conversation),
+        workItemStore,
+        chatService,
+      ),
       signal: shutdownController.signal,
       ...(dependencies.assets === undefined
         ? {}

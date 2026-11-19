@@ -125,6 +125,14 @@
             <div id="work-items" aria-live="polite"><p class="muted">加载中…</p></div>
           </section>
           <div class="composer-wrap">
+            <label class="composer-hint">
+              <input id="conversation-preview" type="checkbox" /> 启用主对话预览
+            </label>
+            <div id="clarification-reply-context" class="composer-hint" hidden>
+              <span id="clarification-reply-label"></span>
+              <button id="clarification-reply-clear" type="button">退出回复并丢弃草稿</button>
+            </div>
+            <button id="conversation-retry" type="button" hidden>核对或重试上次发送</button>
             <div class="composer">
               <label class="sr-only" for="chat-input">输入工作事实或消息</label
               ><textarea

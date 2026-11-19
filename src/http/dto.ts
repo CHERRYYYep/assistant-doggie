@@ -101,3 +101,12 @@ export type WorkItemDetailResponse = ResponseDto<
 export type WorkItemResolutionResponse = ResponseDto<
   typeof schema.workItemResolutionResponseSchema
 >;
+
+export type ConversationTurnResponse = ResponseDto<
+  typeof schema.conversationTurnResponseSchema
+>;
+export type ClarificationListResponse = ResponseDto<
+  typeof schema.clarificationListResponseSchema
+>;
+export type ClarificationCardDto =
+  ClarificationListResponse["clarifications"][number];

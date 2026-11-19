@@ -52,6 +52,12 @@ node --test src/http/openapi.test.ts
 - 任务提交返回 202，Agent 提案和工作区登记返回 201；提案创建不启动 CLI。批准返回 202，并携带 Agent task 与 queueTask；批准仍须用户原文绑定与明确确认。
 - 不将所有 POST 宣称为幂等。超时/断线可能发生在效果已经提交之后，不能自动重复归档、提交或批准。优先读取任务/历史恢复；取消是显式操作，断线不等于取消。
 
+## 主对话预览（C2）
+
+- `POST /api/conversation/turns`：严格区分 `message`（独立发言）、`reply`（补充）、`select`（选择目标）、`none`（都不是）和 `cancel`。每次写入需要 UUID `requestId`；卡片操作还需要 `clarificationId` 和 `expectedRevision`。文本 trim 后最多 4000 UTF-16 单元；不接受批准、Bucket 焦点或工作区字段。
+- 回执给出类型、实际持久化的用户/助手消息 ID，以及澄清 ID（适用时）。同键同规范化载荷返回原回执，同键不同载荷、陈旧版本或无效候选返回 409；卡片缺失返回 404。常规回合效果未确认时，同键返回 409，客户端先核对历史，不另换编号自动重发。
+- `GET /api/conversation/clarifications`：优先返回等待卡及最近历史，最多 40 张，每卡最多 5 个候选；显示最新补充与当前有效的选定目标，目标范围或来源失效时显示 `stale`。最多同时保留 20 张等待卡。完整边界与验收见 [C2 记录](MAIN_CONVERSATION_C2_ACCEPTANCE.md)。
+
 ## SSE
 
 `GET /api/tasks/{taskId}/events` 成功使用 `text/event-stream`，不是 JSON envelope。每个 task 事件包含：

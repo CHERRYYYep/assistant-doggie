@@ -1,3 +1,4 @@
+import { conversationTurnSchema } from "../domain/main-conversation.ts";
 import {
   createWorkItemSchema,
   updateWorkItemSchema,
@@ -70,7 +71,7 @@ export type HttpOperation = {
   readonly bodySchema?: z.ZodType;
   readonly querySchema?: z.ZodObject;
   readonly paramsSchema?: z.ZodObject;
-  readonly feature?: "tasks" | "agents" | "workItems";
+  readonly feature?: "tasks" | "agents" | "workItems" | "conversation";
   readonly stream?: true;
   readonly description?: string;
 };
@@ -164,6 +165,23 @@ export const HTTP_OPERATIONS = [
     successStatus: 200,
     bodySchema: chatRequestSchema,
     responseSchema: response.chatResponseSchema,
+  },
+  {
+    operationId: "conversationTurn",
+    method: "post",
+    path: "/api/conversation/turns",
+    successStatus: 200,
+    feature: "conversation",
+    bodySchema: conversationTurnSchema,
+    responseSchema: response.conversationTurnResponseSchema,
+  },
+  {
+    operationId: "conversationClarifications",
+    method: "get",
+    path: "/api/conversation/clarifications",
+    successStatus: 200,
+    feature: "conversation",
+    responseSchema: response.clarificationListResponseSchema,
   },
   {
     operationId: "confirmChat",

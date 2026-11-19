@@ -6,6 +6,7 @@ import type { WorkItem, WorkItemAttempt } from "../../src/domain/work-item.ts";
 import type {
   ChatConfirmationRequest,
   ChatRequest,
+  ConversationTurnRequest,
   MoveEntryRequest,
   TodoAdvanceRequest,
   TodoPlanRequest,
@@ -18,6 +19,8 @@ import type {
   ChatConfirmationResponse,
   ChatHistoryResponse,
   ChatResponse,
+  ConversationTurnResponse,
+  ClarificationListResponse,
   DeleteBucketResponse,
   EntryRevocationResponse,
   MemoryQueryResponse,
@@ -28,6 +31,8 @@ import type {
 
 export const ROUTES = {
   chat: "/api/chat",
+  conversationTurns: "/api/conversation/turns",
+  clarifications: "/api/conversation/clarifications",
   tasks: "/api/tasks",
   chatConfirm: "/api/chat/confirm",
   chatHistory: "/api/chat/history",
@@ -165,6 +170,16 @@ export function fetchBucketDetail(bucketId: string): Promise<BucketDetailRespons
 
 export function fetchChatHistory(limit = 40): Promise<ChatHistoryResponse> {
   return jsonRequest(`${ROUTES.chatHistory}?limit=${limit}`);
+}
+
+export function fetchClarifications(): Promise<ClarificationListResponse> {
+  return jsonRequest(ROUTES.clarifications);
+}
+
+export function postConversationTurn(
+  request: ConversationTurnRequest,
+): Promise<ConversationTurnResponse> {
+  return postJson(ROUTES.conversationTurns, request);
 }
 
 export function fetchMemoryQuery(query: string, limit = 20): Promise<MemoryQueryResponse> {

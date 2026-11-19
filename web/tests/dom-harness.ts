@@ -16,6 +16,7 @@ export class StubElement {
     this.attributes.delete(name);
   }
   value = "";
+  checked = false;
   disabled = false;
   textContent: string | null = "";
   className = "";
@@ -90,6 +91,8 @@ export function installDom(): {
     "workspace-title",
     "chat-messages",
     "chat-status",
+    "clarification-reply-context",
+    "clarification-reply-label",
     "buckets",
     "agenda",
     "detail",
@@ -110,6 +113,8 @@ export function installDom(): {
     "nav-search",
     "nav-tools",
     "chat-send",
+    "clarification-reply-clear",
+    "conversation-retry",
     "memory-query-button",
     "new-chat",
     "refresh-buckets",
@@ -127,6 +132,7 @@ export function installDom(): {
   elements.set("agent-instruction", new StubTextarea());
   elements.set("chat-input", new StubTextarea());
   elements.set("memory-query", new StubInput());
+  elements.set("conversation-preview", new StubInput());
   const globals = {
     Element: StubElement,
     HTMLElement: StubElement,

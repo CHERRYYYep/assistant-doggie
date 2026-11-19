@@ -1,6 +1,6 @@
 /** Chat transcript rendering: the empty state and one message. */
 
-import type { UiChatMessageDto } from "../../src/http/dto.ts";
+import type { ClarificationCardDto, UiChatMessageDto } from "../../src/http/dto.ts";
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import { chatMessages } from "./dom.ts";
 import { renderArchiveCard } from "./render-archive.ts";
@@ -34,10 +34,56 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
+export function renderClarification(card: ClarificationCardDto): string {
+  const binding = `data-clarification-id="${escapeHtml(card.id)}" data-revision="${card.revision}"`;
+  const button = (action: string, label: string) =>
+    `<button type="button" data-action="clarification-${action}" ${binding}>${label}</button>`;
+  const candidates = card.candidates
+    .map(
+      (item) =>
+        `<li><button type="button" data-action="clarification-select" ${binding} data-work-item-id="${escapeHtml(item.id)}">${escapeHtml(item.title)}</button> <span>${escapeHtml(item.hint)}</span></li>`,
+    )
+    .join("");
+  const active = card.status === "pending" || card.status === "resolved";
+  return `<article class="clarification-card"><strong>任务澄清</strong>
+    <p>原请求：${escapeHtml(card.originalText)}</p>
+    ${card.latestReply === null ? "" : `<p>最新补充：${escapeHtml(card.latestReply)}</p>`}
+    <p>${escapeHtml(card.question)}</p>
+    ${card.selected === null ? "" : `<p>已选目标：<strong>${escapeHtml(card.selected.title)}</strong></p>`}
+    ${candidates ? `<ul>${candidates}</ul>${button("none", "都不是")}` : ""}
+    ${active ? button("reply", "补充这条请求") : ""}
+    ${card.status !== "cancelled" ? button("cancel", "取消澄清") : ""}
+  </article>`;
+}
+
 /** Preserve unchanged confirmation form controls and focused nodes between history refreshes. */
 const renderedRows = new Map<string, { readonly node: HTMLElement; readonly html: string }>();
 
-export function renderTranscript(messages: readonly UiChatMessageDto[]): void {
+export function renderTranscript(
+  messages: readonly UiChatMessageDto[],
+  cards: readonly ClarificationCardDto[] = [],
+): void {
+  const rows = messages.map((message) => ({
+    id: message.id,
+    html: renderMessage(message),
+  }));
+  const historyIds = new Set(rows.map(({ id }) => id));
+  const byAssistant = new Map(cards.map((card) => [card.assistantMessageId, card]));
+  const timeline = rows.flatMap((row) => {
+    const card = byAssistant.get(row.id);
+    return card === undefined
+      ? [row]
+      : [row, { id: `card-${card.id}`, html: renderClarification(card) }];
+  });
+  // A pending request can outlive the ordinary history window.
+  timeline.push(
+    ...cards
+      .filter((card) => !historyIds.has(card.assistantMessageId))
+      .slice()
+      .reverse()
+      .map((card) => ({ id: `card-${card.id}`, html: renderClarification(card) })),
+  );
+
   // Minimal DOM harnesses can still execute the real module graph without pretending
   // to implement node movement. Production browsers always use the keyed path.
   if (
@@ -45,17 +91,17 @@ export function renderTranscript(messages: readonly UiChatMessageDto[]): void {
     typeof chatMessages.insertBefore !== "function"
   ) {
     renderedRows.clear();
-    if (!messages.length) renderEmpty();
-    else chatMessages.innerHTML = messages.map(renderMessage).join("");
+    if (!timeline.length) renderEmpty();
+    else chatMessages.innerHTML = timeline.map(({ html }) => html).join("");
     return;
   }
   const atBottom =
     chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
-  const ids = new Set(messages.map((message) => message.id));
-  if (ids.size !== messages.length) {
+  const ids = new Set(timeline.map(({ id }) => id));
+  if (ids.size !== timeline.length) {
     // An invalid duplicate key must not merge two unrelated confirmation cards.
     renderedRows.clear();
-    chatMessages.innerHTML = messages.map(renderMessage).join("");
+    chatMessages.innerHTML = timeline.map(({ html }) => html).join("");
     return;
   }
   for (const [id, row] of renderedRows) {
@@ -64,19 +110,18 @@ export function renderTranscript(messages: readonly UiChatMessageDto[]): void {
       renderedRows.delete(id);
     }
   }
-  if (!messages.length) {
+  if (!timeline.length) {
     renderEmpty();
     return;
   }
   if (!renderedRows.size) chatMessages.innerHTML = "";
-  messages.forEach((message, index) => {
-    const html = renderMessage(message);
-    const previous = renderedRows.get(message.id);
+  timeline.forEach(({ id, html }, index) => {
+    const previous = renderedRows.get(id);
     const node = previous?.node ?? document.createElement("div");
     if (previous?.html !== html) node.innerHTML = html;
     const position = chatMessages.children.item(index);
     if (position !== node) chatMessages.insertBefore(node, position);
-    renderedRows.set(message.id, { node, html });
+    renderedRows.set(id, { node, html });
   });
   if (atBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
 }

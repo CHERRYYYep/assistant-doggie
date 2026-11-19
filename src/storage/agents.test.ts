@@ -50,7 +50,7 @@ test("T13 genuine v4 migrates through v5 to the current schema preserving conver
       db
         .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
         .get()?.["value"],
-      "8",
+      "9",
     );
     assert.equal(
       new Store(db).listChatMessages(10)[0]?.content,

@@ -1,3 +1,8 @@
+import {
+  clarificationCardSchema,
+  conversationReceiptSchema,
+  MAX_CLARIFICATION_CARDS,
+} from "../domain/main-conversation.ts";
 import { workItemSchema, workItemSourceSchema } from "../domain/work-item.ts";
 /** Runtime JSON contracts. These schemas are also the OpenAPI source of truth. */
 import { z } from "zod";
@@ -406,4 +411,15 @@ export const workItemResolutionResponseSchema = z.strictObject({
   candidates: z
     .array(z.strictObject({ id: z.string().uuid(), title: z.string() }))
     .max(100),
+});
+
+export const conversationTurnResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  result: conversationReceiptSchema,
+});
+export const clarificationListResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  clarifications: z
+    .array(clarificationCardSchema)
+    .max(MAX_CLARIFICATION_CARDS * 2),
 });
