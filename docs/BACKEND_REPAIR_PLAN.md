@@ -1,8 +1,8 @@
 # 主对话实施前的后端修缮设计
 
-2026-11-18 · 基线 `codex/main-conversation-backend@e319dc2` · **R0–R5 已完成，验收记录见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。**
+2026-11-18 · 基线 `codex/main-conversation-backend@e319dc2` · **R0–R5 已完成，验收记录见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。2026-11-19 后续 A1–A3 已修复，见 [实施计划与记录](BACKEND_FOLLOWUP_PLAN.md)。**
 
-本文修缮与验收已完成；2026-11-19 的后续审查与实际当前架构见 [架构审查](BACKEND_ARCHITECTURE_REVIEW.md)。接下来先按 [后端后续修复计划](BACKEND_FOLLOWUP_PLAN.md) 处理新增确认的问题，再进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
+本文修缮与验收已完成；2026-11-19 后续审查的基线与修复后的差异见 [架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 和 [后续修复实施记录](BACKEND_FOLLOWUP_PLAN.md)。A1–A3 已修复，下一步进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
 
 ## 1. 修缮前基线关系：调用职责跨过了目录边界
 

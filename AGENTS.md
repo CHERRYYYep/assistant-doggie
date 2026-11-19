@@ -2,15 +2,15 @@
 
 ## 仓库定位
 
-本仓库当前分支 `dev_ts` 的目标实现是 **TypeScript 本地优先个人工作记忆 Agent**。所有新功能、修复、测试和文档都必须以 TypeScript 路径为准。
+本仓库的 TypeScript 集成基线分支为 `dev_ts`，当前后端实施分支为 `codex/main-conversation-backend`；目标实现是 **TypeScript 本地优先个人工作记忆 Agent**。所有新功能、修复、测试和文档都必须以 TypeScript 路径为准。
 
 当前分支已在 T13 验收后删除历史 Rust workspace。需要查询迁移前行为时使用 Git 历史和冻结 fixture；产品启动、开发、CI 只使用 TypeScript/Node。验收范围见 `docs/TS_ACCEPTANCE.md`。
 
 ### 当前阶段与产品边界
 
-截至 2026-11-19，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础及后端修缮 **R0–R5 均已交付**；后续已确认的后端跟进问题与实施顺序见 [后端后续修复计划](docs/BACKEND_FOLLOWUP_PLAN.md)，当前尚未实施。之后进入 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**，这些产品阶段仍待实施。修改时更新状态，不把拟议接口、表或模型能力写成已经可用。
+截至 2026-11-19，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 及后续计划阶段 **0–3（A1–A3）均已交付**；阶段证据见 [后端后续修复计划](docs/BACKEND_FOLLOWUP_PLAN.md)。阶段 5a 索引/分页和 5b 职责收敛仍按设计门/渐进批次处理。下一步进入 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**；产品阶段仍待实施。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
 
-- R0–R5 已修复事务、聊天并发、目标/历史查询并抽出 ChatService 与只读记忆能力。当前按 `BACKEND_FOLLOWUP_PLAN.md` 先处理状态投影一致、模型响应有界读取和归档按 Entry 读取；验收后 C0 固定新旧行为基线，C1 直接在已有 ChatService 上增加用途判定，不重复抽取。产品阶段顺序为 C0 → C1 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。
+- R0–R5 已修复事务、聊天并发、目标/历史查询并抽出 ChatService 与只读记忆能力。Follow-up 阶段 1–3 已收敛 WorkItem 历史摘要、LLM wire-body 上限和按 Entry 的归档 ID 投影；后续 C0 固定新旧行为基线，C1 直接在已有 ChatService 上增加用途判定，不重复抽取。产品阶段顺序为 C0 → C1 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。
 - 保留统一主对话入口、多个工作目标、按需隔离的执行会话与 Bucket；普通聊天不自动拆成隐藏会话。
 - 腾讯记忆仍是 D3 隔离实验，完整 D3 未验收，D4b 生产接入暂缓。C0–C4 不引入自动历史捕获、向量库、全历史检索或自动摘要。
 - 保持 Hono、单机 SQLite 和单个队列执行所有者。更换框架、拆分布式服务、远程接入、多人协作、全面视觉改版及 T15–T17 均需各自需求与验收依据，不自动纳入本阶段。
