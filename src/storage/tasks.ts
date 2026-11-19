@@ -183,10 +183,11 @@ export class TaskStore {
         throw new TaskError("faulted");
       const status = task.queueStatus === "cancelled" ? "cancelled" : "failed";
       const failureCode =
-        task.queueStatus === null
-          ? "queue_history_missing"
-          : (task.queueErrorCode ??
-            (status === "cancelled" ? "cancelled" : "execution_failed"));
+        status === "cancelled"
+          ? "cancelled"
+          : task.queueStatus === null
+            ? "queue_history_missing"
+            : (task.queueErrorCode ?? "execution_failed");
       const now = new Date().toISOString();
       finishPendingAction(
         this.#db,

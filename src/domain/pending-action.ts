@@ -1,5 +1,6 @@
 /** Durable proposals are data, never authority to execute a side effect. */
 import { z } from "zod";
+import { failureCodeSchema } from "./failure-code.ts";
 import { BucketType } from "./types.ts";
 
 const text = z
@@ -88,7 +89,7 @@ export const actionCompletionSchema = z.discriminatedUnion("status", [
   z
     .object({
       status: z.literal("failed"),
-      failureCode: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      failureCode: failureCodeSchema,
     })
     .strict(),
 ]);

@@ -3,6 +3,7 @@ import {
   AgentError,
   agentProposalSchema,
   type AgentBackend,
+  type AgentCompletion,
   type AgentTask,
 } from "../domain/agent.ts";
 import { WorkItemError, workItemAttemptSchema } from "../domain/work-item.ts";
@@ -157,27 +158,27 @@ export class AgentService {
       });
     } catch (error) {
       if (error instanceof TaskError && error.kind === "faulted") throw error;
-      const code = signal.aborted
-        ? "cancelled"
-        : error instanceof WorkItemError
+      const code =
+        error instanceof WorkItemError
           ? "conflict"
           : error instanceof AgentError
             ? error.code
             : "process_failed";
       // Persist an execution failure once. If persistence fails, fault the
       // worker rather than retrying or misreporting the task.
-      this.#complete(id, {
-        status: signal.aborted ? "cancelled" : "failed",
-        output: "",
-        failureCode: code,
-      });
+      this.#complete(
+        id,
+        signal.aborted
+          ? { status: "cancelled", output: "", failureCode: "cancelled" }
+          : { status: "failed", output: "", failureCode: code },
+      );
       if (signal.aborted) throwIfAborted(signal);
       throw new AgentError(
         error instanceof AgentError ? error.code : "process_failed",
       );
     }
   }
-  #complete(id: string, outcome: Parameters<AgentStore["complete"]>[1]): void {
+  #complete(id: string, outcome: AgentCompletion): void {
     try {
       this.#store.complete(id, outcome);
     } catch (error) {

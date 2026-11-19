@@ -4,11 +4,13 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import {
   AgentError,
+  agentCompletionSchema,
   agentProposalSchema,
   agentTaskSchema,
   sessionSchema,
   workspaceSchema,
   type AgentTask,
+  type AgentCompletion,
   type AgentProposal,
   type AgentSession,
   type AgentWorkspace,
@@ -300,34 +302,37 @@ export class AgentStore {
       return this.task(id);
     });
   }
-  complete(
-    id: string,
-    outcome: {
-      readonly status: "succeeded" | "failed" | "cancelled";
-      readonly output: string;
-      readonly failureCode: string | null;
-      readonly remoteId?: string;
-    },
-  ): AgentTask {
+  complete(id: string, completion: AgentCompletion): AgentTask {
+    const parsed = agentCompletionSchema.safeParse(completion);
+    if (!parsed.success) throw new AgentError("invalid_event");
+    const outcome = parsed.data;
+    if (Buffer.byteLength(outcome.output) > 64 * 1024)
+      throw new AgentError("output_limit");
     return withTransaction(this.#db, () => {
       const task = this.task(id);
-      this.#bound(task, task.instruction, "approved");
       if (task.status !== "running" && task.status !== "queued")
         throw new AgentError("conflict");
+      this.#bound(task, task.instruction, "approved");
       if (outcome.status === "succeeded") {
+        if (
+          task.status !== "running" ||
+          task.queueId === null ||
+          new TaskStore(this.#db).get(task.queueId).status !== "running"
+        )
+          throw new AgentError("conflict");
         this.assertMemoryContextCurrent(task.sessionId);
         new WorkItemStore(this.#db).assertExecutable(id);
-      }
-      if (Buffer.byteLength(outcome.output) > 64 * 1024)
-        throw new AgentError("output_limit");
-      if (outcome.remoteId !== undefined) {
-        z.string().uuid().parse(outcome.remoteId);
-        const session = this.session(task.sessionId);
-        if (session.remoteId !== null && session.remoteId !== outcome.remoteId)
-          throw new AgentError("binding_mismatch");
-        this.#db
-          .prepare("UPDATE agent_sessions SET remote_id=? WHERE id=?")
-          .run(outcome.remoteId, task.sessionId);
+        if (outcome.remoteId !== undefined) {
+          const session = this.session(task.sessionId);
+          if (
+            session.remoteId !== null &&
+            session.remoteId !== outcome.remoteId
+          )
+            throw new AgentError("binding_mismatch");
+          this.#db
+            .prepare("UPDATE agent_sessions SET remote_id=? WHERE id=?")
+            .run(outcome.remoteId, task.sessionId);
+        }
       }
       finishPendingAction(
         this.#db,
@@ -337,7 +342,7 @@ export class AgentStore {
           ? { status: "executed", result: { referenceId: task.id } }
           : {
               status: "failed",
-              failureCode: outcome.failureCode ?? "cancelled",
+              failureCode: outcome.failureCode,
             },
         new Date().toISOString(),
       );

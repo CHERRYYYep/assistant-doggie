@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { failureCodeSchema } from "./failure-code.ts";
 export const agentBackendSchema = z.enum(["claude", "codex"]);
 export type AgentBackend = z.infer<typeof agentBackendSchema>;
 export const workspaceRequestSchema = z
@@ -77,6 +78,41 @@ export const agentTaskSchema = z
   })
   .strict();
 export type AgentTask = Readonly<z.infer<typeof agentTaskSchema>>;
+
+/**
+ * The only shapes that may cross the AgentStore completion boundary.
+ * A terminal failure never carries output or a remote identity, and a
+ * successful result never carries a failure code.
+ */
+export const agentCompletionSchema = z.discriminatedUnion("status", [
+  z
+    .object({
+      status: z.literal("succeeded"),
+      output: z.string(),
+      failureCode: z.null(),
+      remoteId: z.string().uuid().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("failed"),
+      output: z.literal(""),
+      failureCode: failureCodeSchema.refine(
+        (value) => value !== "cancelled",
+        "failed results must use a non-cancelled failure code",
+      ),
+    })
+    .strict(),
+  z
+    .object({
+      status: z.literal("cancelled"),
+      output: z.literal(""),
+      failureCode: z.literal("cancelled"),
+    })
+    .strict(),
+]);
+export type AgentCompletion = Readonly<z.infer<typeof agentCompletionSchema>>;
+
 export class AgentError extends Error {
   readonly code:
     | "disabled"

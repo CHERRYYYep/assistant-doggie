@@ -258,6 +258,45 @@ test("T13 storage approval binding, immutable identities, busy canonical directo
   }
 });
 
+test("Agent completion rejects a failed result without a failure code through the approved execution path", () => {
+  const db = openDatabase(":memory:");
+  try {
+    const store = new AgentStore(db);
+    const queue = new TaskStore(db);
+    const task = store.propose(proposal);
+    const admitted = store.approve(task.id, task.instruction);
+    queue.claim();
+    store.start(task.id);
+
+    assert.throws(
+      () =>
+        Reflect.apply(store.complete, store, [
+          task.id,
+          {
+            status: "failed",
+            output: "",
+            failureCode: null,
+          },
+        ]),
+      (error: unknown) =>
+        error instanceof AgentError && error.code === "invalid_event",
+    );
+    assert.equal(store.task(task.id).status, "running");
+    assert.equal(store.task(task.id).failureCode, null);
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "approved",
+    );
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.failureCode,
+      null,
+    );
+    queue.finish(admitted.id, "failed", "execution_failed");
+  } finally {
+    db.close();
+  }
+});
+
 for (const outcome of ["failed", "cancelled"] as const) {
   test(`T13 a pending continuation cannot approve after its session becomes ${outcome}`, () => {
     const db = openDatabase(":memory:");
@@ -272,11 +311,12 @@ for (const outcome of ["failed", "cancelled"] as const) {
       const admitted = store.approve(first.id, first.instruction);
       queue.claim();
       store.start(first.id);
-      store.complete(first.id, {
-        status: outcome,
-        output: "",
-        failureCode: outcome === "failed" ? "process_failed" : "cancelled",
-      });
+      store.complete(
+        first.id,
+        outcome === "failed"
+          ? { status: "failed", output: "", failureCode: "process_failed" }
+          : { status: "cancelled", output: "", failureCode: "cancelled" },
+      );
       queue.finish(admitted.id, outcome);
 
       assert.throws(
