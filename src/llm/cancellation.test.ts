@@ -210,10 +210,12 @@ for (const outcome of ["valid", "invalid", "failure", "abort_error"] as const) {
     const adapter = new StructuredOutputAdapter(endpoint, {
       send: async (request) => {
         calls += 1;
-        assert.equal(request.signal, controller.signal);
+        assert.ok(request.signal);
+        assert.equal(request.signal.aborted, false);
         if (outcome === "abort_error")
           throw new DOMException(secret, "AbortError");
         controller.abort(secret);
+        assert.equal(request.signal.aborted, true);
         if (outcome === "failure") throw LlmTransportError.request();
         return outcome === "valid" ? response : { body: {} };
       },
@@ -226,15 +228,21 @@ for (const outcome of ["valid", "invalid", "failure", "abort_error"] as const) {
 test("legacy parse and generate both preserve normal bounded retries", async () => {
   const controller = new AbortController();
   let calls = 0;
+  const waits: number[] = [];
   const transport: StructuredOutputTransport = {
     send: async (request) => {
-      assert.equal(request.signal, controller.signal);
+      assert.ok(request.signal && !request.signal.aborted);
       calls += 1;
       if (calls % 2 === 1) throw LlmTransportError.request();
       return response;
     },
   };
-  const adapter = new StructuredOutputAdapter(endpoint, transport);
+  const adapter = new StructuredOutputAdapter(endpoint, transport, {
+    random: () => 0,
+    async sleep(ms) {
+      waits.push(ms);
+    },
+  });
   assert.deepEqual(await generate(adapter, controller.signal), {
     summary: "ok",
   });
@@ -250,6 +258,7 @@ test("legacy parse and generate both preserve normal bounded retries", async () 
     { summary: "ok" },
   );
   assert.equal(calls, 4);
+  assert.deepEqual(waits, [500, 500]);
 });
 
 test("StructuredMemoryModel forwards both classify and extract cancellation", async () => {
@@ -272,5 +281,7 @@ test("StructuredMemoryModel forwards both classify and extract cancellation", as
   );
   assert.equal(requests.length, 2);
   for (const request of requests)
-    assert.equal(request.signal, controller.signal);
+    assert.ok(request.signal && !request.signal.aborted);
+  controller.abort(secret);
+  for (const request of requests) assert.equal(request.signal?.aborted, true);
 });

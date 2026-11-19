@@ -7,6 +7,11 @@ import {
   type LlmEndpointConfig,
   resolveLlmEndpoint,
 } from "./config.ts";
+import {
+  defaultStructuredRetryTiming,
+  type StructuredRetryTiming,
+} from "./retry-policy.ts";
+import { inspect } from "node:util";
 import { bucketSummaryContract } from "./contracts.ts";
 import { LlmError, StructuredOutputAdapter } from "./structured-output.ts";
 import type {
@@ -21,7 +26,7 @@ import {
 } from "./transport.ts";
 
 class FakeTransport implements StructuredOutputTransport {
-  readonly requests: LlmHttpRequest[] = [];
+  readonly requests: Omit<LlmHttpRequest, "signal">[] = [];
   readonly #results: Array<LlmHttpResponse | Error>;
 
   constructor(results: Iterable<LlmHttpResponse | Error> = []) {
@@ -29,7 +34,10 @@ class FakeTransport implements StructuredOutputTransport {
   }
 
   async send(request: LlmHttpRequest): Promise<LlmHttpResponse> {
-    this.requests.push(structuredClone(request));
+    assert.ok(request.signal instanceof AbortSignal);
+    this.requests.push(
+      structuredClone({ url: request.url, body: request.body }),
+    );
     const result = this.#results.shift();
     if (result === undefined) throw new Error("fake transport queue exhausted");
     if (result instanceof Error) throw result;
@@ -234,6 +242,7 @@ test("retryable response failures use the complete bounded retry budget", async 
   const adapter = new StructuredOutputAdapter(
     resolveLlmEndpoint({}),
     transport,
+    fakeTiming().timing,
   );
 
   assert.deepEqual(
@@ -256,6 +265,7 @@ test("request failures and retryable HTTP statuses can recover", async () => {
   const adapter = new StructuredOutputAdapter(
     resolveLlmEndpoint({}),
     transport,
+    fakeTiming().timing,
   );
 
   assert.deepEqual(
@@ -436,6 +446,7 @@ test("attempt exhaustion reports the exact count and sanitized last failure", as
   const adapter = new StructuredOutputAdapter(
     resolveLlmEndpoint({}),
     transport,
+    fakeTiming().timing,
   );
   const error = await expectAttemptError(
     adapter.parse(bucketSummaryContract, "model", "system", secretPrompt, 1),
@@ -554,4 +565,341 @@ test("unsupported or malformed tool-call states are non-retryable structured fai
     );
     assert.equal(transport.requests.length, 1);
   }
+});
+
+for (const apiMode of ["responses", "chat"] as const) {
+  test(`structured ${apiMode} retries wait between retryable failures`, async () => {
+    let time = 0;
+    const events: string[] = [];
+    const transport = new FakeTransport([
+      LlmTransportError.httpStatus(429),
+      LlmTransportError.request(),
+      apiMode === "chat"
+        ? chatText('{"summary":"recovered"}')
+        : responsesText('{"summary":"recovered"}'),
+    ]);
+    const adapter = new StructuredOutputAdapter(
+      resolveLlmEndpoint({ apiMode }),
+      {
+        send(request) {
+          events.push(`send:${time}`);
+          return transport.send(request);
+        },
+      },
+      {
+        now: () => time,
+        random: () => 0,
+        async sleep(ms: number) {
+          events.push(`wait:${ms}`);
+          time += ms;
+        },
+      },
+    );
+    assert.deepEqual(
+      await adapter.parse(bucketSummaryContract, "fake", "system", "user", 2),
+      { summary: "recovered" },
+    );
+    assert.deepEqual(events, [
+      "send:0",
+      "wait:500",
+      "send:500",
+      "wait:1000",
+      "send:1500",
+    ]);
+  });
+}
+
+function fakeTiming(budgetMs = 90_000) {
+  let time = 0;
+  let onExpiry: (() => void) | undefined;
+  const waits: number[] = [];
+  const advance = (ms: number) => {
+    time += ms;
+  };
+  const timing: StructuredRetryTiming = {
+    budgetMs,
+    now: () => time,
+    random: () => 0,
+    async sleep(ms) {
+      waits.push(ms);
+      advance(ms);
+    },
+    scheduleExpiry(_ms, expire) {
+      onExpiry = expire;
+      return () => {
+        onExpiry = undefined;
+      };
+    },
+  };
+  return {
+    timing,
+    advance,
+    waits,
+    expire: () => onExpiry?.(),
+    scheduled: () => onExpiry !== undefined,
+  };
+}
+
+function expectBudget(attempts: number) {
+  return (error: unknown): boolean => {
+    assert.ok(error instanceof LlmError);
+    assert.equal(error.kind, "budget_exhausted");
+    assert.equal(error.attempts, attempts);
+    assert.equal(error.retryable, false);
+    assert.doesNotMatch(inspect(error), /private-retry-data/u);
+    return true;
+  };
+}
+
+for (const apiMode of ["responses", "chat"] as const) {
+  test(
+    apiMode +
+      " honors Retry-After propagated from fetch without exposing error data",
+    async () => {
+      const { timing, waits, scheduled } = fakeTiming();
+      const endpoint = resolveLlmEndpoint({ apiMode });
+      let calls = 0;
+      const transport = new FetchStructuredOutputTransport(
+        "private-retry-data",
+        {},
+        async () =>
+          ++calls === 1
+            ? new Response("private-retry-data", {
+                status: 429,
+                headers: { "retry-after": "2" },
+              })
+            : Response.json(
+                (apiMode === "chat" ? chatText : responsesText)(
+                  '{"summary":"recovered"}',
+                ).body,
+              ),
+      );
+      const adapter = new StructuredOutputAdapter(endpoint, transport, timing);
+      assert.deepEqual(
+        await adapter.parse(bucketSummaryContract, "fake", "system", "user", 2),
+        { summary: "recovered" },
+      );
+      assert.deepEqual(waits, [2000]);
+      assert.equal(calls, 2);
+      assert.equal(scheduled(), false);
+    },
+  );
+}
+
+for (const retryAfter of [1000, 2000, "too_long"] as const) {
+  test(
+    "retry exceeding the remaining budget never waits or sends: " + retryAfter,
+    async () => {
+      const { timing, waits, scheduled } = fakeTiming(1000);
+      const transport = new FakeTransport([
+        LlmTransportError.httpStatus(503, retryAfter),
+      ]);
+      const adapter = new StructuredOutputAdapter(
+        resolveLlmEndpoint({}),
+        transport,
+        timing,
+      );
+      await assert.rejects(
+        adapter.parse(
+          bucketSummaryContract,
+          "fake",
+          "system",
+          "private-retry-data",
+          2,
+        ),
+        (error: unknown) => {
+          expectBudget(1)(error);
+          assert.ok(error instanceof LlmError);
+          assert.equal(error.lastError?.retryAfterMs, retryAfter);
+          return true;
+        },
+      );
+      assert.deepEqual(waits, []);
+      assert.equal(transport.requests.length, 1);
+      assert.equal(scheduled(), false);
+    },
+  );
+}
+
+test("remaining budget is checked after a delayed wakeup before sending any retry", async () => {
+  const { timing, advance, scheduled } = fakeTiming(1000);
+  const transport = new FakeTransport([LlmTransportError.request()]);
+  const adapter = new StructuredOutputAdapter(
+    resolveLlmEndpoint({}),
+    transport,
+    {
+      ...timing,
+      async sleep() {
+        advance(1000);
+      },
+    },
+  );
+  await assert.rejects(
+    adapter.parse(bucketSummaryContract, "fake", "system", "user", 2),
+    expectBudget(1),
+  );
+  assert.equal(transport.requests.length, 1);
+  assert.equal(scheduled(), false);
+});
+
+for (const phase of [
+  "before sending",
+  "during transport",
+  "during parsing",
+] as const) {
+  test(
+    "monotonic deadline refuses results " +
+      phase +
+      " even before its timer fires",
+    async () => {
+      const { timing, advance, scheduled } = fakeTiming(1000);
+      let sends = 0;
+      let parses = 0;
+      const transport = {
+        get processSignal() {
+          return undefined;
+        },
+        async send() {
+          sends++;
+          if (phase === "during transport") advance(1000);
+          return responsesText('{"summary":"late"}');
+        },
+      };
+      const adapter = new StructuredOutputAdapter(
+        resolveLlmEndpoint({}),
+        transport,
+        {
+          ...timing,
+          scheduleExpiry(ms, callback) {
+            const cleanup = timing.scheduleExpiry(ms, callback);
+            if (phase === "before sending") advance(1000);
+            return cleanup;
+          },
+        },
+      );
+      const contract = {
+        ...bucketSummaryContract,
+        parse(value: unknown) {
+          parses++;
+          advance(1000);
+          return bucketSummaryContract.parse(value);
+        },
+      };
+      await assert.rejects(
+        adapter.parse(contract, "fake", "system", "user", 2),
+        expectBudget(phase === "before sending" ? 0 : 1),
+      );
+      assert.equal(sends, phase === "before sending" ? 0 : 1);
+      assert.equal(parses, phase === "during parsing" ? 1 : 0);
+      assert.equal(scheduled(), false);
+    },
+  );
+}
+
+for (const cause of [
+  "caller",
+  "process",
+  "budget",
+  "caller and budget",
+] as const) {
+  test(
+    cause + " stops a pending retry wait and cleans the deadline timer",
+    async () => {
+      const { timing, expire, scheduled } = fakeTiming();
+      const caller = new AbortController();
+      const process = new AbortController();
+      const started = Promise.withResolvers<void>();
+      let calls = 0;
+      const transport = new FetchStructuredOutputTransport(
+        "private-retry-data",
+        { signal: process.signal },
+        async () => {
+          calls++;
+          return new Response("private-retry-data", {
+            status: 503,
+            headers: { "retry-after": "10" },
+          });
+        },
+      );
+      const adapter = new StructuredOutputAdapter(
+        resolveLlmEndpoint({}),
+        transport,
+        {
+          ...timing,
+          sleep(ms, signal) {
+            const wait = defaultStructuredRetryTiming.sleep(ms, signal);
+            started.resolve();
+            return wait;
+          },
+        },
+      );
+      const promise = adapter.parse(
+        bucketSummaryContract,
+        "fake",
+        "system",
+        "user",
+        2,
+        caller.signal,
+      );
+      const checked = assert.rejects(
+        promise,
+        cause === "budget"
+          ? expectBudget(1)
+          : {
+              name: "AbortError",
+              message: "The operation was aborted",
+            },
+      );
+      await started.promise;
+      if (cause === "budget" || cause === "caller and budget") expire();
+      if (cause === "caller" || cause === "caller and budget")
+        caller.abort("private-retry-data");
+      if (cause === "process") process.abort("private-retry-data");
+      await checked;
+      assert.equal(calls, 1);
+      assert.equal(scheduled(), false);
+    },
+  );
+}
+
+test("total deadline aborts a stalled fetch body without retrying or leaking its reader", async () => {
+  const { timing, expire, scheduled } = fakeTiming();
+  const reading = Promise.withResolvers<void>();
+  let calls = 0;
+  let bodyCancelled = 0;
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull() {
+        reading.resolve();
+      },
+      cancel() {
+        bodyCancelled++;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const transport = new FetchStructuredOutputTransport(
+    "private-retry-data",
+    {},
+    async () => {
+      calls++;
+      return new Response(body);
+    },
+  );
+  const adapter = new StructuredOutputAdapter(
+    resolveLlmEndpoint({}),
+    transport,
+    timing,
+  );
+  const checked = assert.rejects(
+    adapter.parse(bucketSummaryContract, "fake", "system", "user", 2),
+    expectBudget(1),
+  );
+  await reading.promise;
+  expire();
+  await checked;
+  assert.equal(calls, 1);
+  assert.equal(bodyCancelled, 1);
+  assert.equal(body.locked, false);
+  assert.equal(scheduled(), false);
 });

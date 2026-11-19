@@ -3,6 +3,7 @@
 import { inspect } from "node:util";
 
 import { abortError, isAbortError, throwIfAborted } from "./cancellation.ts";
+import { parseRetryAfter, type RetryAfterDelay } from "./retry-policy.ts";
 
 export const DEFAULT_LLM_HTTP_TIMEOUT_MS = 30_000;
 export const MAX_LLM_HTTP_TIMEOUT_MS = 2_147_483_647;
@@ -24,27 +25,34 @@ export type LlmTransportErrorKind =
 export class LlmTransportError extends Error {
   readonly kind: LlmTransportErrorKind;
   readonly status: number | undefined;
+  readonly retryAfterMs: RetryAfterDelay | undefined;
 
   private constructor(
     kind: LlmTransportErrorKind,
     message: string,
     status?: number | undefined,
+    retryAfterMs?: RetryAfterDelay,
   ) {
     super(message);
     this.name = "LlmTransportError";
     this.kind = kind;
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 
   static request(): LlmTransportError {
     return new LlmTransportError("request", "LLM HTTP request failed");
   }
 
-  static httpStatus(status: number): LlmTransportError {
+  static httpStatus(
+    status: number,
+    retryAfterMs?: RetryAfterDelay,
+  ): LlmTransportError {
     return new LlmTransportError(
       "http_status",
       `HTTP ${status}: LLM endpoint returned an HTTP error`,
       status,
+      retryAfterMs,
     );
   }
 
@@ -68,6 +76,8 @@ export class LlmTransportError extends Error {
 }
 
 export interface StructuredOutputTransport {
+  /** Process cancellation must also stop any adapter wait between sends. */
+  readonly processSignal?: AbortSignal | undefined;
   send(request: LlmHttpRequest): Promise<LlmHttpResponse>;
 }
 
@@ -132,6 +142,10 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
     return this.#timeoutMs;
   }
 
+  get processSignal(): AbortSignal | undefined {
+    return this.#signal;
+  }
+
   static fromEnv(
     config: LlmHttpTransportConfig = {},
     environment: NodeJS.ProcessEnv = process.env,
@@ -179,7 +193,10 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
       });
       checkCancellation();
       if (!response.ok) {
-        throw LlmTransportError.httpStatus(response.status);
+        throw LlmTransportError.httpStatus(
+          response.status,
+          parseRetryAfter(response.headers.get("retry-after"), Date.now()),
+        );
       }
 
       const body = await readJsonBody(response, signal, checkCancellation);

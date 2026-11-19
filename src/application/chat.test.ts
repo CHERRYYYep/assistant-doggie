@@ -11,13 +11,18 @@ import { askUser, createNew } from "../domain/classification.ts";
 import { minimalExtraction } from "../domain/memory.ts";
 import { BucketType } from "../domain/types.ts";
 import { resolveLlmEndpoint } from "../llm/config.ts";
+import { StructuredOutputAdapter } from "../llm/structured-output.ts";
 import {
   FetchStructuredOutputTransport,
   MAX_LLM_RESPONSE_BYTES,
 } from "../llm/transport.ts";
 import { openDatabase } from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
-import { ArchiveRuntime, type MemoryModel } from "./archive-runtime.ts";
+import {
+  ArchiveRuntime,
+  StructuredMemoryModel,
+  type MemoryModel,
+} from "./archive-runtime.ts";
 import { ChatService } from "./chat.ts";
 import type { ChatResponder } from "./chat-types.ts";
 
@@ -293,3 +298,99 @@ for (const kind of ["tool", "answer"] as const) {
     );
   });
 }
+
+test("classification and extraction retry independently, then a failed answer preserves the single committed archive", async () => {
+  using db = openDatabase(":memory:");
+  const store = new Store(db);
+  const endpoint = resolveLlmEndpoint({});
+  const trace: string[] = [];
+  const classification = {
+    action: "create_new",
+    bucket_id: null,
+    bucket_type: "task",
+    title: "链路修复",
+    confidence: 0.99,
+    reason: "明确的新事实",
+    should_ask_user: false,
+    question: null,
+    candidate_bucket_ids: [],
+  };
+  const extraction = {
+    summary: "链路恢复并通过验证",
+    todos: [],
+    evidences: ["链路恢复并通过验证 100%"],
+    timeline_events: [],
+    decisions: [],
+    hypotheses: [],
+    entities: [],
+    tags: [],
+  };
+  const transport = new FetchStructuredOutputTransport(
+    "fixture-key",
+    {},
+    async () => {
+      switch (trace.filter((event) => event === "send").length) {
+        case 0:
+        case 2:
+          trace.push("send");
+          assert.equal(store.listBuckets().length, 0);
+          return new Response(null, { status: 429 });
+        case 1:
+        case 3: {
+          const output =
+            trace.filter((event) => event === "send").length === 1
+              ? classification
+              : extraction;
+          trace.push("send");
+          return Response.json({
+            status: "completed",
+            output: [
+              {
+                type: "message",
+                content: [
+                  { type: "output_text", text: JSON.stringify(output) },
+                ],
+              },
+            ],
+          });
+        }
+        default:
+          trace.push("answer");
+          assert.equal(store.listBuckets().length, 1);
+          return new Response(null, { status: 503 });
+      }
+    },
+  );
+  const model = new StructuredMemoryModel(
+    new StructuredOutputAdapter(endpoint, transport, {
+      random: () => 0,
+      async sleep(ms) {
+        trace.push("wait:" + ms);
+      },
+    }),
+    "fake-model",
+  );
+  const chat = new ChatService(
+    store,
+    new ArchiveRuntime(store, model),
+    createHarnessChatResponder(
+      new AgentHarness(endpoint, transport, "fake-model", []),
+    ),
+  );
+  const turn = await chat.chat({ text: "链路恢复并通过验证 100%" });
+  assert.deepEqual(trace, [
+    "send",
+    "wait:500",
+    "send",
+    "send",
+    "wait:500",
+    "send",
+    "answer",
+  ]);
+  assert.equal(turn.archive.archive_state, "archived");
+  assert.ok(store.getEntry(turn.archive.entry_id ?? ""));
+  assert.equal(store.listBuckets().length, 1);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM entries").get()?.["n"], 1);
+  assert.equal(turn.chatError, new HarnessError("model_failed").message);
+  assert.match(turn.assistantMessage.content, /已将这条内容归档/u);
+});
