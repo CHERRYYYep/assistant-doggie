@@ -1,9 +1,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 
+import {
+  AgentHarness,
+  createHarnessChatResponder,
+  HarnessError,
+} from "../agent/harness.ts";
 import { askUser, createNew } from "../domain/classification.ts";
 import { minimalExtraction } from "../domain/memory.ts";
 import { BucketType } from "../domain/types.ts";
+import { resolveLlmEndpoint } from "../llm/config.ts";
+import {
+  FetchStructuredOutputTransport,
+  MAX_LLM_RESPONSE_BYTES,
+} from "../llm/transport.ts";
 import { openDatabase } from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
 import { ArchiveRuntime, type MemoryModel } from "./archive-runtime.ts";
@@ -207,3 +218,78 @@ test("terminal reply failure rolls back tool records but not accepted input and 
   );
   assert.equal(store.listBuckets().length, 1);
 });
+
+for (const kind of ["tool", "answer"] as const) {
+  test(`oversized model ${kind} preserves the committed archive and saves only the fallback`, async () => {
+    using db = openDatabase(":memory:");
+    const store = new Store(db);
+    const calls: string[] = [];
+    let requests = 0;
+    const toolCall = (query: string) => ({
+      type: "function_call",
+      call_id: query,
+      name: "search_memory",
+      arguments: JSON.stringify({ query }),
+    });
+    const oversizedOutput =
+      kind === "tool"
+        ? toolCall("untrusted-oversized-content")
+        : {
+            type: "message",
+            content: [
+              { type: "output_text", text: "untrusted-oversized-content" },
+            ],
+          };
+    const transport = new FetchStructuredOutputTransport(
+      "fixture-key",
+      {},
+      async () => {
+        requests++;
+        const output = requests === 1 ? toolCall("initial") : oversizedOutput;
+        // The parsed object fits Harness's own limit; only the wire body is large.
+        const json = JSON.stringify({ status: "completed", output: [output] });
+        return new Response(
+          requests === 1 ? json : json + " ".repeat(MAX_LLM_RESPONSE_BYTES),
+        );
+      },
+    );
+    const harness = new AgentHarness(
+      resolveLlmEndpoint({}),
+      transport,
+      "fake-model",
+      [
+        {
+          name: "search_memory",
+          description: "Reads existing evidence",
+          readOnly: true,
+          input: z.object({ query: z.string() }).strict(),
+          execute(input) {
+            calls.push(z.object({ query: z.string() }).parse(input).query);
+            assert.equal(store.listBuckets().length, 1);
+            return { evidence: "read-only evidence" };
+          },
+        },
+      ],
+    );
+    const chat = setup(store, {}, createHarnessChatResponder(harness));
+    const turn = await chat.chat({ text: "已确认服务恢复并通过验证 100%" });
+
+    assert.equal(requests, 2);
+    assert.deepEqual(calls, ["initial"]);
+    assert.equal(turn.archive.archive_state, "archived");
+    assert.ok(store.getEntry(turn.archive.entry_id ?? ""));
+    assert.match(turn.assistantMessage.content, /已将这条内容归档/u);
+    assert.equal(turn.chatError, new HarnessError("model_failed").message);
+    assert.deepEqual(turn.toolMessages, []);
+    const rows = store.listChatMessages(10);
+    assert.deepEqual(
+      rows.map(({ role }) => role),
+      ["user", "assistant"],
+    );
+    assert.match(JSON.stringify(rows), /"chat_error":"/u);
+    assert.doesNotMatch(
+      JSON.stringify(rows),
+      /untrusted-oversized-content|read-only evidence/u,
+    );
+  });
+}

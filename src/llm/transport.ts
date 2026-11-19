@@ -6,6 +6,7 @@ import { abortError, isAbortError, throwIfAborted } from "./cancellation.ts";
 
 export const DEFAULT_LLM_HTTP_TIMEOUT_MS = 30_000;
 export const MAX_LLM_HTTP_TIMEOUT_MS = 2_147_483_647;
+export const MAX_LLM_RESPONSE_BYTES = 1_048_576;
 
 export type LlmHttpRequest = {
   readonly url: string;
@@ -17,7 +18,8 @@ export type LlmHttpResponse = {
   readonly body: unknown;
 };
 
-export type LlmTransportErrorKind = "request" | "http_status";
+export type LlmTransportErrorKind =
+  "request" | "http_status" | "response_too_large";
 
 export class LlmTransportError extends Error {
   readonly kind: LlmTransportErrorKind;
@@ -46,7 +48,15 @@ export class LlmTransportError extends Error {
     );
   }
 
+  static responseTooLarge(): LlmTransportError {
+    return new LlmTransportError(
+      "response_too_large",
+      "LLM response exceeded the configured size limit",
+    );
+  }
+
   get retryable(): boolean {
+    if (this.kind === "response_too_large") return false;
     if (this.status === undefined) return true;
     return (
       this.status === 408 ||
@@ -155,9 +165,10 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
       if (controller.signal.aborted) throw LlmTransportError.request();
     };
 
+    let response: Response | undefined;
     try {
       checkCancellation();
-      const response = await this.#fetch(request.url, {
+      response = await this.#fetch(request.url, {
         method: "POST",
         headers: {
           authorization: `Bearer ${this.#apiKey}`,
@@ -171,7 +182,7 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
         throw LlmTransportError.httpStatus(response.status);
       }
 
-      const body: unknown = await response.json();
+      const body = await readJsonBody(response, signal, checkCancellation);
       checkCancellation();
       return { body };
     } catch (error: unknown) {
@@ -181,6 +192,65 @@ export class FetchStructuredOutputTransport implements StructuredOutputTransport
       throw LlmTransportError.request();
     } finally {
       clearTimeout(timeout);
+      // Rejected headers, status errors and cancellation before reader ownership
+      // must also terminate the response without reading its error body.
+      const body = response?.body;
+      if (body != null && response?.bodyUsed === false && !body.locked)
+        void body.cancel().catch(() => undefined);
     }
+  }
+}
+
+async function readJsonBody(
+  response: Response,
+  signal: AbortSignal,
+  checkCancellation: () => void,
+): Promise<unknown> {
+  const declared = response.headers.get("content-length")?.trim();
+  if (
+    declared !== undefined &&
+    /^\d+$/u.test(declared) &&
+    Number(declared) > MAX_LLM_RESPONSE_BYTES
+  )
+    throw LlmTransportError.responseTooLarge();
+  const body = response.body;
+  if (body === null) throw LlmTransportError.request();
+
+  // Retained bytes never grow with the number of chunks. Check the remaining
+  // capacity before copying: the delivered chunk itself belongs to fetch.
+  const buffer = new Uint8Array(MAX_LLM_RESPONSE_BYTES);
+  const reader = body.getReader();
+  let received = 0;
+  let ended = false;
+  const cancelReader = (): void => {
+    // Do not let an upstream cancel hook that rejects or never settles replace
+    // the primary failure or delay caller/endpoint cancellation.
+    void reader.cancel().catch(() => undefined);
+  };
+  signal.addEventListener("abort", cancelReader, { once: true });
+  try {
+    for (;;) {
+      checkCancellation();
+      const next = await reader.read();
+      checkCancellation();
+      if (next.done) {
+        ended = true;
+        break;
+      }
+      if (next.value.byteLength > MAX_LLM_RESPONSE_BYTES - received)
+        throw LlmTransportError.responseTooLarge();
+      buffer.set(next.value, received);
+      received += next.value.byteLength;
+    }
+    checkCancellation();
+    const result: unknown = JSON.parse(
+      new TextDecoder().decode(buffer.subarray(0, received)),
+    );
+    checkCancellation();
+    return result;
+  } finally {
+    signal.removeEventListener("abort", cancelReader);
+    if (!ended) cancelReader();
+    reader.releaseLock();
   }
 }

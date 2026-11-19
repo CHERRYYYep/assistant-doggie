@@ -1,6 +1,6 @@
 # 后端后续修复与收敛实施计划
 
-2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：阶段 0/1 已验收，阶段 2/3/4 待完成**
+2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：阶段 1/2 已验收，阶段 3/4 待完成**
 
 本文把审查发现变成后续修改代码时的可执行合同。审查结论来自分支 `dev_ts`、基线 `cbf5597`；实施前先检查当前 HEAD 和工作树，若代码已变更，应重新核对问题及行号，不机械照抄旧补丁。
 
@@ -32,7 +32,7 @@ S1、S2、S3 相互独立，但按“状态正确性 → 外部资源上限 → 
 |---|---|---|---|
 | 0 | A1–A3 复现与基线 | 复现与修复在各阶段一同提交，不能把红色门禁留在交付分支 | 待实施 |
 | 1 | A1 状态投影 | `Keep goal attempt summaries consistent across scope changes` | 已完成 |
-| 2 | A2 响应读取上限 | `Bound model response bodies before parsing` | 待实施 |
+| 2 | A2 响应读取上限 | `Bound model response bodies before parsing` | 已完成 |
 | 3 | A3 归档查询 | `Read archive memory identifiers by entry` | 待实施 |
 | 4 | A6 文档漂移 | 本次已同步导航与历史图标签；完成代码后追加阶段验收记录 | 导航已同步，代码验收待追加 |
 | 5a | A4 检索与分页 | 先交独立规模化设计及合同，不自动修改旧 API | 待设计 |
@@ -220,7 +220,7 @@ ORDER BY m.created_at ASC, m.id ASC;
 # 阶段 1
 node --test src/storage/transactions.test.ts src/storage/work-items.test.ts src/storage/agents.test.ts src/agent/control.test.ts
 # 阶段 2
-node --test src/llm/transport.test.ts src/llm/structured-output.test.ts src/llm/cancellation.test.ts src/agent/harness.test.ts
+node --test src/llm/transport.test.ts src/llm/structured-output.test.ts src/llm/cancellation.test.ts src/agent/harness.test.ts src/application/chat.test.ts
 # 阶段 3
 node --test src/storage/store.test.ts src/application/chat.test.ts src/http/api.test.ts src/http/entry-revocation.test.ts src/mcp/tools.test.ts src/mcp/server.test.ts src/runtime/core-flow.test.ts
 # 每次阶段交付
@@ -261,4 +261,12 @@ git diff --check
 
 `src/storage/work-items.ts` 的同事务拒绝返回被拒 ID/状态，范围/终态提交只同步其中最新历史尝试，不额外增加 revision。`projectAttempt` 用 sequence 判断最新，隔离历史摘要与当前 scope 生命周期；旧 scope、终态和非最新 attempt 不能改动当前状态。启动/显式恢复查询不一致摘要（包含终态及旧 scope），记录 `attempt_summary_reconciled`，正确状态不重写。详情 DTO 未增加 scope 字段，旧摘要不能作为批准/恢复依据。
 
-定向命令按 §10.1 阶段 1：55 项通过；完整 `npm run check`：485 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。新增 14 项覆盖范围更新/完成/取消、摘要/事件写入失败的全事务回滚、临时文件库重开恢复、旧尝试晚投影、sequence 恢复和成功目标重开后拒绝旧 session。没有 schema/API 变化，也没有用户库或密钥访问。阶段 2/3 尚未实施。
+定向命令按 §10.1 阶段 1：55 项通过；完整 `npm run check`：485 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。新增 14 项覆盖范围更新/完成/取消、摘要/事件写入失败的全事务回滚、临时文件库重开恢复、旧尝试晚投影、sequence 恢复和成功目标重开后拒绝旧 session。没有 schema/API 变化，也没有用户库或密钥访问。提交：`0dcce2d`。
+
+### 阶段 2：模型响应字节上限
+
+在旧 transport 上，成功返回约 2 MiB 的 fake 响应没有被拒绝，复现测试失败。修复后按 fetch body 的实际字节逐块计数，超过 1 MiB 即取消且不解析；合法且超限的 Content-Length 可提前拒绝。超限为不可重试的 `response_too_large`，现有超时/取消优先级、HTTP 状态重试政策和外部错误格式不变。预算限制累计保留与解析的响应体，不是进程总内存、token 或可抢占的解析时限。过去可以消费的超大响应现在会失败。
+
+Responses 与 Chat Completions 均验证正常响应和超限只尝试一次。在 ChatService + Harness 联合回归中，超限工具调用不运行，超限答案不进入历史；已提交归档保留，之前完成的只读调用不回滚，失败回答仍沿用归档 fallback 与脱敏错误记录。两条旧取消测试的注入点从替换 `response.json()` 改为流 pull 阶段，保留取消优先与脱敏断言。
+
+定向命令按 §10.1 阶段 2：76 项通过；完整 `npm run check`：512 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。测试只用 fake fetch 和内存库。

@@ -119,13 +119,23 @@ for (const outcome of [
       {},
       async () => {
         if (outcome === "body_success" || outcome === "body_error") {
-          const result = Response.json(response.body);
-          result.json = async () => {
-            controller.abort(secret);
-            if (outcome === "body_error") throw new Error(secret);
-            return response.body;
-          };
-          return result;
+          return new Response(
+            new ReadableStream<Uint8Array>(
+              {
+                pull(stream) {
+                  if (outcome === "body_error") stream.error(new Error(secret));
+                  else {
+                    stream.enqueue(
+                      new TextEncoder().encode(JSON.stringify(response.body)),
+                    );
+                    stream.close();
+                  }
+                  controller.abort(secret);
+                },
+              },
+              { highWaterMark: 0 },
+            ),
+          );
         }
         controller.abort(secret);
         if (outcome === "network_error") throw new Error(secret);

@@ -14,7 +14,11 @@ import type {
   LlmHttpResponse,
   StructuredOutputTransport,
 } from "./transport.ts";
-import { LlmTransportError } from "./transport.ts";
+import {
+  FetchStructuredOutputTransport,
+  LlmTransportError,
+  MAX_LLM_RESPONSE_BYTES,
+} from "./transport.ts";
 
 class FakeTransport implements StructuredOutputTransport {
   readonly requests: LlmHttpRequest[] = [];
@@ -260,6 +264,38 @@ test("request failures and retryable HTTP statuses can recover", async () => {
   );
   assert.equal(transport.requests.length, 4);
 });
+
+for (const [apiMode, envelope] of [
+  [LlmApiMode.Responses, responsesText],
+  [LlmApiMode.ChatCompletions, chatText],
+] as const) {
+  test(`${apiMode} uses ordinary fetch output and never retries an oversized body`, async () => {
+    const json = JSON.stringify(envelope('{"summary":"bounded summary"}').body);
+    let requests = 0;
+    const transport = new FetchStructuredOutputTransport(
+      "fixture-key",
+      {},
+      async () =>
+        new Response(
+          ++requests === 2 ? json + " ".repeat(MAX_LLM_RESPONSE_BYTES) : json,
+        ),
+    );
+    const adapter = new StructuredOutputAdapter(
+      resolveLlmEndpoint({ apiMode }),
+      transport,
+    );
+    const parse = () =>
+      adapter.parse(bucketSummaryContract, "model", "system", "user", 3);
+
+    assert.deepEqual(await parse(), { summary: "bounded summary" });
+    await expectAttemptError(parse(), {
+      attempts: 1,
+      kind: "transport",
+      retryable: false,
+    });
+    assert.equal(requests, 2);
+  });
+}
 
 test("non-retryable HTTP refusal filtering and nonterminal statuses stop immediately", async () => {
   const cases: ReadonlyArray<{
