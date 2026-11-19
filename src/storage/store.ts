@@ -1409,6 +1409,9 @@ export class Store {
   searchEntryCandidates(terms: readonly string[]): QueryEntryCandidate[] {
     return this.memory.searchEntryCandidates(terms);
   }
+  listEffectiveMemoryIdsForEntry(entryId: string, bucketId: string): string[] {
+    return this.memory.listEffectiveMemoryIdsForEntry(entryId, bucketId);
+  }
   getBucketDetail(id: string): BucketDetail | undefined {
     return this.memory.getBucketDetail(id);
   }

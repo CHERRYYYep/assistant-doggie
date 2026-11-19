@@ -125,6 +125,85 @@ test("archive writes the whole graph in one transaction", () => {
   ]);
 });
 
+test("archive ID lookup uses the Entry index and follows effective source and Bucket bindings", (t) => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database, steppingClock());
+  const target = store.archive(
+    "关联资料",
+    createNew("目标 Bucket"),
+    createExtraction({
+      summary: "摘要",
+      evidences: ["证据 A", "证据 B"],
+      todos: ["后续验证"],
+    }),
+    AUDIT,
+  );
+  const other = store.archive(
+    "无结构化资料",
+    createNew("另一个 Bucket"),
+    minimalExtraction("空提取项"),
+    AUDIT,
+  );
+  assert.ok(
+    target.bucketId && target.entryId && other.bucketId && other.entryId,
+  );
+  const { entryId, bucketId } = target;
+  const expected = store
+    .getBucketDetail(bucketId)
+    ?.memories.map(({ id }) => id);
+  assert.equal(expected?.length, 3);
+  const prepare = t.mock.method(database, "prepare");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, bucketId),
+    expected,
+  );
+  assert.equal(prepare.mock.callCount(), 1);
+  const query = prepare.mock.calls[0]?.arguments[0];
+  assert.ok(query);
+  assert.match(query, /^SELECT m\.id\s+FROM/u);
+  const plan = database
+    .prepare(`EXPLAIN QUERY PLAN ${query}`)
+    .all(entryId, bucketId);
+  assert.ok(
+    plan.some(
+      ({ detail }) =>
+        typeof detail === "string" &&
+        /ix_memory_items_entry.*entry_id=\?/u.test(detail),
+    ),
+    JSON.stringify(plan),
+  );
+  prepare.mock.restore();
+
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry("missing", bucketId),
+    [],
+  );
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    [],
+  );
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(other.entryId, other.bucketId),
+    [],
+  );
+  store.moveEntry(entryId, other.bucketId, "移到另一主题");
+  assert.deepEqual(store.listEffectiveMemoryIdsForEntry(entryId, bucketId), []);
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    expected,
+  );
+  store.deleteEntry(entryId, "撤销来源");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    [],
+  );
+  store.deleteBucket(other.bucketId, "删除主题");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(other.entryId, other.bucketId),
+    [],
+  );
+});
+
 test("foreign keys are enforced", () => {
   const store = freshStore();
   const enforced = store.database.prepare("PRAGMA foreign_keys").get() as {

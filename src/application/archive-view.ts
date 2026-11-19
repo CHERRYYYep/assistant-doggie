@@ -92,19 +92,17 @@ export function projectArchive(
 }
 
 export function projectArchiveExecution(
-  store: Pick<Store, "getBucket" | "getBucketDetail">,
+  store: Pick<Store, "getBucket" | "listEffectiveMemoryIdsForEntry">,
   execution: ArchiveExecution,
 ) {
   const memoryItemIds =
     execution.result.bucketId === undefined ||
     execution.result.entryId === undefined
       ? []
-      : (store
-          .getBucketDetail(execution.result.bucketId)
-          ?.memories.filter(
-            (memory) => memory.entryId === execution.result.entryId,
-          )
-          .map((memory) => memory.id) ?? []);
+      : store.listEffectiveMemoryIdsForEntry(
+          execution.result.entryId,
+          execution.result.bucketId,
+        );
   return projectArchive(execution.result, {
     candidates: execution.candidates,
     bucket:

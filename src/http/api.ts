@@ -471,9 +471,9 @@ export class ConcreteDoggieHttpApi implements DoggieHttpApi {
     archive["entry_id"] = attempt.entryId;
     archive["pending_confirmation"] = false;
     if (attempt.archiveState === "archived" && attempt.bucketId !== null) {
-      const detail = this.#store.getBucketDetail(attempt.bucketId);
-      if (detail !== undefined) {
-        archive["bucket"] = projectBucket(detail.bucket);
+      const bucket = this.#store.getBucket(attempt.bucketId);
+      if (bucket !== undefined) {
+        archive["bucket"] = projectBucket(bucket);
         archive["available_actions"] = ["move_entry", "revoke_entry"];
       } else {
         delete archive["available_actions"];

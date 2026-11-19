@@ -292,6 +292,29 @@ export class MemoryReadStore {
     return candidates;
   }
 
+  listEffectiveMemoryIdsForEntry(entryId: string, bucketId: string): string[] {
+    // Avoid the Bucket/created-at index: it can satisfy part of ORDER BY but
+    // must visit unrelated rows in a large Bucket.
+    return this.#database
+      .prepare(
+        `SELECT m.id
+         FROM memory_items m INDEXED BY ix_memory_items_entry
+         JOIN entries e ON e.id = m.entry_id AND e.bucket_id = m.bucket_id
+         JOIN buckets b ON b.id = e.bucket_id
+         WHERE m.entry_id = ? AND m.bucket_id = ? AND e.revoked_at IS NULL
+         ORDER BY m.created_at ASC, m.id ASC`,
+      )
+      .all(entryId, bucketId)
+      .map(({ id }) => {
+        if (typeof id !== "string")
+          throw new StorageError(
+            "storage_unavailable",
+            "storage operation failed",
+          );
+        return id;
+      });
+  }
+
   getBucketDetail(bucketId: string): BucketDetail | undefined {
     const bucket = this.getBucket(bucketId);
     if (bucket === undefined) return undefined;

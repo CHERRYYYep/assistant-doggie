@@ -50,7 +50,7 @@ export class ChatService {
     Store,
     | "getBucket"
     | "getEntry"
-    | "getBucketDetail"
+    | "listEffectiveMemoryIdsForEntry"
     | "getEntryRevocation"
     | "requirePendingArchiveAttempt"
   >;

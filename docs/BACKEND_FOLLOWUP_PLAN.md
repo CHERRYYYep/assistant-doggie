@@ -1,6 +1,6 @@
 # 后端后续修复与收敛实施计划
 
-2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：阶段 1/2 已验收，阶段 3/4 待完成**
+2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：阶段 0–3 已验收，阶段 4 待完成**
 
 本文把审查发现变成后续修改代码时的可执行合同。审查结论来自分支 `dev_ts`、基线 `cbf5597`；实施前先检查当前 HEAD 和工作树，若代码已变更，应重新核对问题及行号，不机械照抄旧补丁。
 
@@ -30,10 +30,10 @@ S1、S2、S3 相互独立，但按“状态正确性 → 外部资源上限 → 
 
 | 阶段 | 对应审查项 | 建议提交单元 | 状态 |
 |---|---|---|---|
-| 0 | A1–A3 复现与基线 | 复现与修复在各阶段一同提交，不能把红色门禁留在交付分支 | 待实施 |
+| 0 | A1–A3 复现与基线 | 复现与修复在各阶段一同提交，不能把红色门禁留在交付分支 | 已完成 |
 | 1 | A1 状态投影 | `Keep goal attempt summaries consistent across scope changes` | 已完成 |
 | 2 | A2 响应读取上限 | `Bound model response bodies before parsing` | 已完成 |
-| 3 | A3 归档查询 | `Read archive memory identifiers by entry` | 待实施 |
+| 3 | A3 归档查询 | `Read archive memory identifiers by entry` | 已完成 |
 | 4 | A6 文档漂移 | 本次已同步导航与历史图标签；完成代码后追加阶段验收记录 | 导航已同步，代码验收待追加 |
 | 5a | A4 检索与分页 | 先交独立规模化设计及合同，不自动修改旧 API | 待设计 |
 | 5b | A5 职责与依赖 | 按 §8.2 的小批次各自验证、提交 | 待实施，不阻塞 C0 |
@@ -269,4 +269,12 @@ git diff --check
 
 Responses 与 Chat Completions 均验证正常响应和超限只尝试一次。在 ChatService + Harness 联合回归中，超限工具调用不运行，超限答案不进入历史；已提交归档保留，之前完成的只读调用不回滚，失败回答仍沿用归档 fallback 与脱敏错误记录。两条旧取消测试的注入点从替换 `response.json()` 改为流 pull 阶段，保留取消优先与脱敏断言。
 
-定向命令按 §10.1 阶段 2：76 项通过；完整 `npm run check`：512 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。测试只用 fake fetch 和内存库。
+定向命令按 §10.1 阶段 2：76 项通过；完整 `npm run check`：512 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。测试只用 fake fetch 和内存库。提交：`8652db8`。
+
+### 阶段 3：归档投影按 Entry 读取
+
+旧实现的计数回归记录到归档/聊天两次全桶读取，确认结果与确认后的历史卡片也共两次全桶读取。修复后这些路径均为零次全桶读取；大桶 fixture 的 246 条记忆中，每份归档快照只返回本次 Entry 的 3 个 ID，顺序与旧结果一致。
+
+`MemoryReadStore.listEffectiveMemoryIdsForEntry` 双绑定 Entry 和 Bucket 并排除已撤销来源，只选 ID；直接使用现有 `ix_memory_items_entry`。实测未指定索引时，SQLite 为部分满足排序选择按 Bucket 读；`EXPLAIN QUERY PLAN` 固化修复后的 `entry_id=?` 查找。已处理确认的历史卡只查 Bucket 元数据；普通 Bucket 详情与 MCP 详情仍返回原有完整数据，MCP proposal 仍只创建待批准记录。
+
+定向命令按 §10.1 阶段 3：69 项通过，覆盖空提取、多项顺序、旧绑定、移动、撤销、删除、确认和历史卡片；完整 `npm run check`：514 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。没有迁移、OpenAPI 或响应形状变化。该读取优化只覆盖投影，本次未评估整轮归档或搜索的延迟变化。

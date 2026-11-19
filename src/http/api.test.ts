@@ -134,7 +134,47 @@ test("concrete API archives a complete graph and projects query-compatible JSON"
   assert.equal(getQuery.results[0]?.entry.id, archive.entry_id);
 });
 
-test("chat confirmation card exposes all choices and hydrated history becomes non-actionable", async () => {
+test("archive and chat project only the current Entry's ordered memory IDs in a populated Bucket", async (t) => {
+  const { store, model, api } = setup();
+  t.after(() => store.database.close());
+  const { bucketId } = await createBucket(api, model, "接口 A");
+  model.classification = appendExisting(
+    bucketId,
+    BucketType.Task,
+    0.99,
+    "同一主题",
+  );
+  model.extraction = createExtraction({
+    summary: "测试摘要",
+    evidences: ["压测报告", "验证记录"],
+    todos: ["排查剩余问题"],
+  });
+  for (let i = 0; i < 80; i++) {
+    await api.archive({ text: `接口 A 第 ${i} 次测试达到 100%` });
+  }
+  const hydrate = t.mock.method(store.memory, "getBucketDetail");
+  const archive = await api.archive({ text: "接口 A 已完成安装验证 100%" });
+  const chat = await api.chat({ message: "接口 A 已完成恢复验证 100%" });
+  assert.equal(
+    hydrate.mock.callCount(),
+    0,
+    "projection must not hydrate the Bucket",
+  );
+
+  const detail = store.getBucketDetail(bucketId);
+  assert.ok(detail);
+  assert.equal(detail.memories.length, 246);
+  for (const snapshot of [archive, chat.archive]) {
+    assert.equal(snapshot.archive_state, "archived");
+    const ids: string[] = detail.memories
+      .filter((item) => item.entryId === snapshot.entry_id)
+      .map((item) => item.id);
+    assert.equal(ids.length, 3);
+    assert.deepEqual(snapshot.memory_item_ids, ids);
+  }
+});
+
+test("chat confirmation card exposes all choices and hydrated history becomes non-actionable", async (t) => {
   const { store, model, api } = setup();
   const target = await createBucket(api, model, "接口 A");
   const focus = await createBucket(api, model, "当前工作区");
@@ -178,6 +218,11 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
     "needs_confirmation",
   );
 
+  model.extraction = createExtraction({
+    summary: "确认摘要",
+    evidences: ["确认事实"],
+  });
+  const hydrate = t.mock.method(store.memory, "getBucketDetail");
   const confirmed = await api.confirmChat({
     confirmation_granted: true,
     action: "append",
@@ -187,6 +232,7 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
     focus_bucket_id: focus.bucketId,
   });
   assert.equal(confirmed.archive_state, "archived");
+  assert.equal(confirmed.archive.memory_item_ids.length, 1);
   assert.equal(confirmed.source_attempt_id, chat.archive.attempt_id);
   assert.equal(confirmed.result_attempt_id, confirmed.archive["attempt_id"]);
   assert.notEqual(confirmed.result_attempt_id, confirmed.source_attempt_id);
@@ -200,6 +246,11 @@ test("chat confirmation card exposes all choices and hydrated history becomes no
   );
 
   const history = api.chatHistory(40);
+  assert.equal(
+    hydrate.mock.callCount(),
+    0,
+    "confirmation and history must not hydrate the Bucket",
+  );
   const originalCard = history.messages.find(
     (message) =>
       message.role === "assistant" &&
@@ -251,6 +302,7 @@ test("create and discard confirmations have explicit result attempt semantics", 
     focus_bucket_id: focus.bucketId,
   });
   assert.equal(created.archive_state, "archived");
+  assert.deepEqual(created.archive.memory_item_ids, []);
   assert.equal(
     (created.archive["bucket"] as Record<string, unknown>)["title"],
     "新实验",
@@ -277,6 +329,7 @@ test("create and discard confirmations have explicit result attempt semantics", 
     text: "那个更新了",
   });
   assert.equal(discarded.archive_state, "discarded");
+  assert.deepEqual(discarded.archive.memory_item_ids, []);
   assert.equal(discarded.result_attempt_id, null);
   assert.equal(model.calls.length, callsBeforeDiscard);
 
