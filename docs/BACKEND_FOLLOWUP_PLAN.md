@@ -1,6 +1,6 @@
 # 后端后续修复与收敛实施计划
 
-2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：待实施**
+2026-11-19 · 依据 [更新后后端架构审查](BACKEND_ARCHITECTURE_REVIEW.md) 编写 · **计划状态：阶段 0/1 已验收，阶段 2/3/4 待完成**
 
 本文把审查发现变成后续修改代码时的可执行合同。审查结论来自分支 `dev_ts`、基线 `cbf5597`；实施前先检查当前 HEAD 和工作树，若代码已变更，应重新核对问题及行号，不机械照抄旧补丁。
 
@@ -31,7 +31,7 @@ S1、S2、S3 相互独立，但按“状态正确性 → 外部资源上限 → 
 | 阶段 | 对应审查项 | 建议提交单元 | 状态 |
 |---|---|---|---|
 | 0 | A1–A3 复现与基线 | 复现与修复在各阶段一同提交，不能把红色门禁留在交付分支 | 待实施 |
-| 1 | A1 状态投影 | `Keep goal attempt summaries consistent across scope changes` | 待实施 |
+| 1 | A1 状态投影 | `Keep goal attempt summaries consistent across scope changes` | 已完成 |
 | 2 | A2 响应读取上限 | `Bound model response bodies before parsing` | 待实施 |
 | 3 | A3 归档查询 | `Read archive memory identifiers by entry` | 待实施 |
 | 4 | A6 文档漂移 | 本次已同步导航与历史图标签；完成代码后追加阶段验收记录 | 导航已同步，代码验收待追加 |
@@ -251,3 +251,14 @@ git diff --check
 2026-11-19 本轮仅交付计划、导航同步和修缮前历史图标签；阶段 1–3、5a/5b 均未编码。定向测试命令已在当前代码上执行，151 项通过，说明引用命令有效，不表示拟议修复已被测试证明。文档链接与围栏已核对；完整门禁结果以本次交付总结为准。
 
 阶段 1–3 和对应验收记录完成后，下一步进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0；C1 直接复用已存在 ChatService，不重复 R2/R3 抽取。只有规模化设计门得到数据支撑时，才另行安排索引或分页的独立实现计划。
+
+
+## 12. 实施记录（2026-11-19）
+
+### 阶段 0/1：WorkItem 历史摘要与范围转换
+
+开工从 `dev_ts@b103b7e` 快进同步到专用分支 `codex/main-conversation-backend`；基线 `npm run check` 为 471 后端 + 60 前端通过。先添加编辑、完成、取消三个复现，旧实现均留下 `pending` 摘要而实际任务为 `rejected`，测试失败后再修复。
+
+`src/storage/work-items.ts` 的同事务拒绝返回被拒 ID/状态，范围/终态提交只同步其中最新历史尝试，不额外增加 revision。`projectAttempt` 用 sequence 判断最新，隔离历史摘要与当前 scope 生命周期；旧 scope、终态和非最新 attempt 不能改动当前状态。启动/显式恢复查询不一致摘要（包含终态及旧 scope），记录 `attempt_summary_reconciled`，正确状态不重写。详情 DTO 未增加 scope 字段，旧摘要不能作为批准/恢复依据。
+
+定向命令按 §10.1 阶段 1：55 项通过；完整 `npm run check`：485 后端 + 60 前端通过，0 失败/跳过；`git diff --check` 通过。新增 14 项覆盖范围更新/完成/取消、摘要/事件写入失败的全事务回滚、临时文件库重开恢复、旧尝试晚投影、sequence 恢复和成功目标重开后拒绝旧 session。没有 schema/API 变化，也没有用户库或密钥访问。阶段 2/3 尚未实施。

@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
-import { openDatabase } from "./database.ts";
+import { openDatabase, withTransaction } from "./database.ts";
 import { WorkItemStore } from "./work-items.ts";
 import { AgentStore } from "./agents.ts";
 import { TaskStore } from "./tasks.ts";
@@ -562,3 +562,250 @@ for (const outcome of ["failed", "cancelled"] as const) {
     );
   });
 }
+
+for (const change of ["edit", "complete", "cancel"] as const) {
+  test(`pending attempt summary follows rejection during goal ${change}`, () => {
+    using db = openDatabase(":memory:");
+    const goals = new WorkItemStore(db);
+    const agents = new AgentStore(db);
+    const item = goals.create(goal(), describeCreatedGoal);
+    const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
+    const before = goals.get(item.id);
+    const changed =
+      change === "edit"
+        ? goals.update(
+            item.id,
+            {
+              title: item.title,
+              goal: "Changed scope",
+              acceptance: item.acceptance,
+              expectedRevision: before.revision,
+            },
+            describeUpdatedGoal,
+          )
+        : goals.transition(item.id, {
+            action: change,
+            expectedRevision: before.revision,
+          });
+    assert.equal(agents.task(task.id).status, "rejected");
+    assert.equal(
+      new Store(db).getPendingAction(task.pendingActionId)?.status,
+      "rejected",
+    );
+    assert.equal(changed.lastAttemptId, task.id);
+    assert.equal(changed.lastAttemptStatus, "rejected");
+    assert.equal(changed.revision, before.revision + 1);
+    assert.equal(changed.scopeRevision, before.scopeRevision + 1);
+    const events = db
+      .prepare(
+        "SELECT * FROM work_item_events WHERE work_item_id=? ORDER BY revision",
+      )
+      .all(item.id);
+    assert.equal(events.length, changed.revision);
+    agents.reconcile();
+    agents.reconcile();
+    assert.deepEqual(goals.get(item.id), changed);
+    assert.deepEqual(
+      db
+        .prepare(
+          "SELECT * FROM work_item_events WHERE work_item_id=? ORDER BY revision",
+        )
+        .all(item.id),
+      events,
+    );
+    assert.throws(() => agents.approve(task.id, task.instruction));
+    if (change !== "edit") {
+      const reopened = goals.transition(item.id, {
+        action: "reopen",
+        expectedRevision: changed.revision,
+      });
+      assert.equal(reopened.lastAttemptStatus, "rejected");
+      assert.equal(reopened.status, "open");
+      assert.throws(
+        () =>
+          agents.proposeForWorkItem(item.id, {
+            ...attempt(reopened.revision),
+            sessionId: task.sessionId,
+          }),
+        /binding_mismatch/,
+      );
+    }
+  });
+}
+
+function goalAudit(db: DatabaseSync, goals: WorkItemStore, id: string) {
+  return {
+    goal: goals.get(id),
+    events: db
+      .prepare(
+        "SELECT * FROM work_item_events WHERE work_item_id=? ORDER BY revision",
+      )
+      .all(id),
+    tasks: db.prepare("SELECT * FROM agent_tasks ORDER BY id").all(),
+    actions: db.prepare("SELECT * FROM pending_actions ORDER BY id").all(),
+    messages: db
+      .prepare("SELECT * FROM conversation_messages ORDER BY sequence")
+      .all(),
+  };
+}
+
+for (const action of ["edit", "complete", "cancel"] as const) {
+  for (const fault of ["summary", "event"] as const) {
+    test(`goal ${action} rolls back rejection, summary and audit on ${fault} write failure`, () => {
+      using db = openDatabase(":memory:");
+      const goals = new WorkItemStore(db);
+      const agents = new AgentStore(db);
+      const item = goals.create(goal(), describeCreatedGoal);
+      agents.proposeForWorkItem(item.id, attempt(item.revision));
+      const before = goalAudit(db, goals, item.id);
+      db.exec(
+        fault === "summary"
+          ? "CREATE TRIGGER reject_summary BEFORE UPDATE OF last_attempt_status ON work_items BEGIN SELECT RAISE(ABORT,'injected'); END;"
+          : "CREATE TRIGGER reject_event BEFORE INSERT ON work_item_events BEGIN SELECT RAISE(ABORT,'injected'); END;",
+      );
+      assert.throws(
+        () =>
+          action === "edit"
+            ? goals.update(
+                item.id,
+                {
+                  title: item.title,
+                  goal: "Changed goal",
+                  acceptance: item.acceptance,
+                  expectedRevision: before.goal.revision,
+                },
+                describeUpdatedGoal,
+              )
+            : goals.transition(item.id, {
+                action,
+                expectedRevision: before.goal.revision,
+              }),
+        /injected/,
+      );
+      assert.deepEqual(goalAudit(db, goals, item.id), before);
+    });
+  }
+}
+
+for (const lifecycle of ["done", "cancelled", "open"] as const) {
+  test(`reopened database repairs legacy old-scope summary on ${lifecycle} without changing lifecycle`, () => {
+    const root = mkdtempSync(join(tmpdir(), "doggie-summary-recovery-"));
+    const path = join(root, "test.db");
+    let db = openDatabase(path);
+    try {
+      let goals = new WorkItemStore(db);
+      let agents = new AgentStore(db);
+      const item = goals.create(goal(), describeCreatedGoal);
+      const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
+      const terminal = goals.transition(item.id, {
+        action: lifecycle === "cancelled" ? "cancel" : "complete",
+        expectedRevision: goals.get(item.id).revision,
+      });
+      if (lifecycle === "open")
+        goals.transition(item.id, {
+          action: "reopen",
+          expectedRevision: terminal.revision,
+        });
+      db.prepare(
+        "UPDATE work_items SET last_attempt_status='pending' WHERE id=?",
+      ).run(item.id);
+      const before = goalAudit(db, goals, item.id);
+      db.close();
+      db = openDatabase(path);
+      goals = new WorkItemStore(db);
+      agents = new AgentStore(db);
+      // GET remains pure even for legacy drift. Explicit startup is the repair.
+      assert.deepEqual(goalAudit(db, goals, item.id), before);
+      const queues = new TaskStore(db);
+      const owner = randomUUID();
+      queues.acquireExecutor(owner);
+      const repaired = goalAudit(db, goals, item.id);
+      assert.equal(repaired.goal.status, lifecycle);
+      assert.equal(repaired.goal.lastAttemptId, task.id);
+      assert.equal(repaired.goal.lastAttemptStatus, "rejected");
+      assert.equal(repaired.goal.scopeRevision, before.goal.scopeRevision);
+      assert.equal(repaired.goal.cancelRequested, before.goal.cancelRequested);
+      assert.equal(repaired.goal.revision, before.goal.revision + 1);
+      assert.equal(
+        repaired.events.at(-1)?.["kind"],
+        "attempt_summary_reconciled",
+      );
+      assert.deepEqual(repaired.tasks, before.tasks);
+      assert.deepEqual(repaired.actions, before.actions);
+      assert.deepEqual(repaired.messages, before.messages);
+      agents.reconcile();
+      agents.reconcile();
+      assert.deepEqual(goalAudit(db, goals, item.id), repaired);
+      queues.releaseExecutor(owner);
+    } finally {
+      db.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("late projection of a non-latest attempt cannot replace summary or lifecycle, recovery uses sequence", () => {
+  using db = openDatabase(":memory:");
+  const goals = new WorkItemStore(db);
+  const agents = new AgentStore(db);
+  const item = goals.create(goal(), describeCreatedGoal);
+  const first = agents.proposeForWorkItem(item.id, attempt(item.revision));
+  agents.reject(first.id, first.instruction);
+  const second = agents.proposeForWorkItem(
+    item.id,
+    attempt(goals.get(item.id).revision),
+  );
+  const before = goalAudit(db, goals, item.id);
+  withTransaction(db, () => goals.projectAttempt(first.id));
+  withTransaction(db, () => goals.projectAttempt(second.id));
+  assert.deepEqual(goalAudit(db, goals, item.id), before);
+  // Legacy reference can point at an older attempt whose status is accurate.
+  // Recovery must detect the wrong identity, not just compare status values.
+  db.prepare(
+    "UPDATE work_items SET last_attempt_id=?,last_attempt_status='rejected' WHERE id=?",
+  ).run(first.id, item.id);
+  agents.reconcile();
+  assert.equal(goals.get(item.id).lastAttemptId, second.id);
+  assert.equal(goals.get(item.id).lastAttemptStatus, "pending");
+  assert.equal(goals.get(item.id).status, before.goal.status);
+  const recovered = goalAudit(db, goals, item.id);
+  agents.reconcile();
+  assert.deepEqual(goalAudit(db, goals, item.id), recovered);
+});
+
+test("a reopened successful goal retains historical success but cannot reuse the old session", () => {
+  using db = openDatabase(":memory:");
+  const goals = new WorkItemStore(db);
+  const agents = new AgentStore(db);
+  const queues = new TaskStore(db);
+  const item = goals.create(goal(), describeCreatedGoal);
+  const task = agents.proposeForWorkItem(item.id, attempt(item.revision));
+  const queued = agents.approve(task.id, task.instruction);
+  queues.claim();
+  agents.start(task.id);
+  agents.complete(task.id, {
+    status: "succeeded",
+    output: "Evidence",
+    failureCode: null,
+  });
+  queues.finish(queued.id, "succeeded");
+  const done = goals.transition(item.id, {
+    action: "complete",
+    expectedRevision: goals.get(item.id).revision,
+  });
+  const reopened = goals.transition(item.id, {
+    action: "reopen",
+    expectedRevision: done.revision,
+  });
+  assert.equal(reopened.lastAttemptStatus, "succeeded");
+  assert.throws(
+    () =>
+      agents.proposeForWorkItem(item.id, {
+        ...attempt(reopened.revision),
+        sessionId: task.sessionId,
+      }),
+    /binding_mismatch/,
+  );
+  withTransaction(db, () => goals.projectAttempt(task.id));
+  assert.deepEqual(goals.get(item.id), reopened);
+});

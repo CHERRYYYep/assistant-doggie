@@ -159,15 +159,18 @@ export class WorkItemStore {
       const item = this.#expected(id, request.expectedRevision);
       this.#assertOpen(item);
       if (this.inFlight(id).length > 0) throw new WorkItemError("conflict");
-      this.#rejectPending(id);
+      const rejected = this.#rejectPending(id);
+      const latestRejected = this.#latestRejected(id, rejected);
       this.#db
         .prepare(
-          "UPDATE work_items SET title=?,goal=?,acceptance=?,scope_revision=scope_revision+1,revision=revision+1,updated_at=? WHERE id=?",
+          "UPDATE work_items SET title=?,goal=?,acceptance=?,scope_revision=scope_revision+1,revision=revision+1,last_attempt_id=COALESCE(?, last_attempt_id),last_attempt_status=COALESCE(?, last_attempt_status),updated_at=? WHERE id=?",
         )
         .run(
           request.title,
           request.goal,
           request.acceptance,
+          latestRejected?.id ?? null,
+          latestRejected?.status ?? null,
           new Date().toISOString(),
           id,
         );
@@ -192,12 +195,27 @@ export class WorkItemStore {
       const active = this.inFlight(id);
       if (request.action === "complete" && active.length > 0)
         throw new WorkItemError("conflict");
-      this.#rejectPending(id);
+      const rejected = this.#rejectPending(id);
+      const latestRejected = this.#latestRejected(id, rejected);
       return request.action === "complete"
-        ? this.#change(item, "done", false, true, "completed")
+        ? this.#change(item, "done", false, true, "completed", latestRejected)
         : active.length === 0
-          ? this.#change(item, "cancelled", false, true, "cancelled")
-          : this.#change(item, item.status, true, false, "cancel_requested");
+          ? this.#change(
+              item,
+              "cancelled",
+              false,
+              true,
+              "cancelled",
+              latestRejected,
+            )
+          : this.#change(
+              item,
+              item.status,
+              true,
+              false,
+              "cancel_requested",
+              latestRejected,
+            );
     });
   }
   inFlight(id: string): readonly string[] {
@@ -264,6 +282,11 @@ export class WorkItemStore {
   }
 
   projectAttempt(taskId: string): void {
+    this.#projectAttempt(taskId, false);
+  }
+
+  #projectAttempt(taskId: string, recovering: boolean): void {
+    if (!this.#db.isTransaction) throw new WorkItemError("conflict");
     const row = this.#db
       .prepare(
         "SELECT a.work_item_id AS workItemId,a.scope_revision AS scopeRevision,t.status FROM work_item_attempts a JOIN agent_tasks t ON t.id=a.agent_task_id WHERE a.agent_task_id=?",
@@ -271,27 +294,37 @@ export class WorkItemStore {
       .get(taskId);
     if (row === undefined) return;
     const attempt = bindingSchema
-      .extend({ status: agentTaskSchema.shape.status })
+      .extend({
+        status: agentTaskSchema.shape.status,
+      })
       .parse(row);
     const item = this.get(attempt.workItemId);
-    if (
-      item.scopeRevision !== attempt.scopeRevision ||
-      (item.lastAttemptId === taskId &&
-        item.lastAttemptStatus === attempt.status)
-    )
-      return;
-    const status = item.cancelRequested
-      ? this.inFlight(item.id).length === 0
-        ? "cancelled"
-        : item.status
-      : attempt.status === "failed" || attempt.status === "cancelled"
-        ? "blocked"
-        : attempt.status === "queued" ||
-            attempt.status === "running" ||
-            attempt.status === "succeeded"
-          ? "in_progress"
-          : item.status;
-    const finishedCancel = item.cancelRequested && status === "cancelled";
+    const latest = this.#latestAttempt(attempt.workItemId);
+    const isLatest = latest?.id === taskId;
+    const summaryChanged =
+      isLatest &&
+      (item.lastAttemptId !== taskId ||
+        item.lastAttemptStatus !== attempt.status);
+    // Only the newest historical attempt can drive the summary or lifecycle.
+    if (!isLatest || !summaryChanged) return;
+    const currentScope = item.scopeRevision === attempt.scopeRevision;
+    const canDriveLifecycle =
+      currentScope && item.status !== "done" && item.status !== "cancelled";
+    const status = !canDriveLifecycle
+      ? item.status
+      : item.cancelRequested
+        ? this.inFlight(item.id).length === 0
+          ? "cancelled"
+          : item.status
+        : attempt.status === "failed" || attempt.status === "cancelled"
+          ? "blocked"
+          : attempt.status === "queued" ||
+              attempt.status === "running" ||
+              attempt.status === "succeeded"
+            ? "in_progress"
+            : item.status;
+    const finishedCancel =
+      canDriveLifecycle && item.cancelRequested && status === "cancelled";
     this.#db
       .prepare(
         "UPDATE work_items SET status=?,cancel_requested=?,scope_revision=scope_revision+?,revision=revision+1,last_attempt_id=?,last_attempt_status=?,updated_at=? WHERE id=?",
@@ -305,24 +338,52 @@ export class WorkItemStore {
         new Date().toISOString(),
         item.id,
       );
-    this.#event(this.get(item.id), "attempt_status", {
-      taskId,
-      status: attempt.status,
-    });
+    this.#event(
+      this.get(item.id),
+      recovering || !canDriveLifecycle
+        ? "attempt_summary_reconciled"
+        : "attempt_status",
+      { taskId, status: attempt.status },
+    );
+  }
+
+  #latestAttempt(
+    workItemId: string,
+  ): { readonly id: string; readonly sequence: number } | undefined {
+    const row = this.#db
+      .prepare(
+        "SELECT agent_task_id AS id,sequence FROM work_item_attempts WHERE work_item_id=? ORDER BY sequence DESC LIMIT 1",
+      )
+      .get(workItemId);
+    return row === undefined
+      ? undefined
+      : z
+          .strictObject({ id: z.string().uuid(), sequence: z.number().int() })
+          .parse(row);
   }
   reconcileWithinTransaction(): void {
     if (!this.#db.isTransaction) throw new WorkItemError("conflict");
     const rows = this.#db
       .prepare(
-        `SELECT w.last_attempt_id AS id FROM work_items w
-         JOIN agent_tasks t ON t.id=w.last_attempt_id
-         WHERE w.status NOT IN ('done','cancelled') AND w.last_attempt_status IS NOT t.status`,
+        `SELECT a.agent_task_id AS id FROM work_items w
+         JOIN work_item_attempts a ON a.work_item_id=w.id
+           AND a.sequence=(SELECT MAX(newest.sequence) FROM work_item_attempts newest WHERE newest.work_item_id=w.id)
+         JOIN agent_tasks t ON t.id=a.agent_task_id
+         WHERE w.last_attempt_id IS NOT a.agent_task_id OR w.last_attempt_status IS NOT t.status`,
       )
       .all();
     for (const row of rows)
-      this.projectAttempt(
+      this.#projectAttempt(
         z.strictObject({ id: z.string().uuid() }).parse(row).id,
+        true,
       );
+  }
+  #latestRejected(
+    id: string,
+    rejected: readonly { readonly id: string; readonly status: "rejected" }[],
+  ): { readonly id: string; readonly status: "rejected" } | undefined {
+    const latest = this.#latestAttempt(id);
+    return rejected.find((task) => task.id === latest?.id);
   }
   #expected(id: string, revision: number): WorkItem {
     const item = this.get(id);
@@ -343,15 +404,18 @@ export class WorkItemStore {
     cancel: boolean,
     scope: boolean,
     event: string,
+    latestRejected?: { readonly id: string; readonly status: "rejected" },
   ): WorkItem {
     this.#db
       .prepare(
-        "UPDATE work_items SET status=?,cancel_requested=?,scope_revision=scope_revision+?,revision=revision+1,updated_at=? WHERE id=?",
+        "UPDATE work_items SET status=?,cancel_requested=?,scope_revision=scope_revision+?,revision=revision+1,last_attempt_id=COALESCE(?,last_attempt_id),last_attempt_status=COALESCE(?,last_attempt_status),updated_at=? WHERE id=?",
       )
       .run(
         status,
         Number(cancel),
         Number(scope),
+        latestRejected?.id ?? null,
+        latestRejected?.status ?? null,
         new Date().toISOString(),
         item.id,
       );
@@ -387,12 +451,13 @@ export class WorkItemStore {
       .prepare("INSERT INTO work_item_sources VALUES (?,'message',?)")
       .run(id, message.id);
   }
-  #rejectPending(id: string): void {
+  #rejectPending(id: string): readonly { id: string; status: "rejected" }[] {
     const rows = this.#db
       .prepare(
-        "SELECT t.id,t.pending_action_id AS actionId,t.instruction FROM agent_tasks t JOIN work_item_attempts a ON a.agent_task_id=t.id WHERE a.work_item_id=? AND t.status='pending'",
+        "SELECT t.id,t.pending_action_id AS actionId,t.instruction FROM agent_tasks t JOIN work_item_attempts a ON a.agent_task_id=t.id WHERE a.work_item_id=? AND t.status='pending' ORDER BY a.sequence ASC",
       )
       .all(id);
+    const rejected: { id: string; status: "rejected" }[] = [];
     for (const row of rows) {
       const task = z
         .strictObject({
@@ -412,7 +477,9 @@ export class WorkItemStore {
           "UPDATE agent_tasks SET status='rejected',updated_at=? WHERE id=?",
         )
         .run(new Date().toISOString(), task.id);
+      rejected.push({ id: task.id, status: "rejected" });
     }
+    return rejected;
   }
   #sourceAvailable(ref: SourceReference): boolean {
     if (ref.kind === "entry")
