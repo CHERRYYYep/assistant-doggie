@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-19 · 基线集成分支 `dev_ts`；当前实施分支 `codex/main-conversation-backend` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；C0 前 B0–B3 已完成、C0 尚未开始；T15–T17 保留后续规划
+> 最后更新：2026-11-19 · 基线集成分支 `dev_ts`；当前实施分支 `codex/main-conversation-backend` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；C0 前 B0–B3 与 C0 基线已完成；T15–T17 保留后续规划
 
 ---
 
@@ -49,9 +49,9 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 后端修缮 R0–R5 与后续 A1–A3 的提交、行为合同和逐阶段验收见[后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)：跨范围 WorkItem 最近尝试摘要同步；传输层按实际响应体字节限制为 1 MiB；归档投影只查询当前 Entry 的有效 Memory ID，历史卡片只查 Bucket 元数据。A1/A2/A3 提交分别为 `0dcce2d`、`8652db8`、`8b7c2d6`。B1 Agent 终态合同、B2 结构化模型重试已独立提交并完成验收；最新前置门禁为 550 后端 + 60 前端通过，详见[C0 前计划](PRE_C0_BACKEND_PLAN.md#9-当前执行记录)。索引/分页 D1 与 Store 职责 D2 仍未实施，不自动阻塞 C0。
 
-### 下一产品阶段：主对话澄清与本地续做（规划，未实现）
+### 主对话澄清与本地续做（C0 完成，C1–C4 待实施）
 
-后端 R0–R5、A1–A3 与 B0–B3 已完成；下一步按[主对话、任务澄清与上下文实施计划](MAIN_CONVERSATION_PLAN.md)进入 C0。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。C0 固定新旧合同，C1 在 ChatService 增加用途判定，C2 交付可恢复的澄清卡，C3 接本地上下文和执行结果，C4 对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
+后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。C0 固定新旧合同，C1 在 ChatService 增加用途判定，C2 交付可恢复的澄清卡，C3 接本地上下文和执行结果，C4 对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
 
 ### 阶段冻结与未完成事项（2026-11-19）
 
@@ -59,14 +59,14 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步，尚未开始 | C0：冻结 `/api/chat` 现有自动归档、低信息、确认、取消和证据行为，并加入独立的产品场景基线 | [主对话实施计划 §5–§6](MAIN_CONVERSATION_PLAN.md) |
-| 待实施 | C1 用途判定；C2 可恢复澄清与最小 UI 链路；C3 本地证据与受批准执行；C4 对照验收和默认切换 | [主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
+| 下一步 | C1：在现有 ChatService 增加用途判定 | [主对话实施计划 §5](MAIN_CONVERSATION_PLAN.md) |
+| 待实施 | C2 可恢复澄清与最小 UI 链路；C3 本地证据与受批准执行；C4 对照验收和默认切换 | [主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
 | 明确延后 | 真实自用验收、全面视觉改版、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 | 尚无本阶段实施设计 | T15–T17 的后续功能 | 保留后续规划；开始前另行确定目标、范围和验收条件 |
 
-当前具备进入 C0 的条件。C0–C4 已有具体阶段、边界、样例和验收指标；详细设计见 [主对话实施计划](MAIN_CONVERSATION_PLAN.md)。
+C0 已固定旧入口的实际行为并整理 11 组后续样本；完整门禁 554 项后端和 60 项前端通过。详细设计见 [主对话实施计划](MAIN_CONVERSATION_PLAN.md)。
 
 ### 分支布局
 
@@ -75,8 +75,8 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 | `main` | 原始 Python 实现 | 冻结 |
 | `dev` | Python + Rust 并存 | **Python 参考**，`128 passed in 6.18s` |
 | `dev_rust` | 纯 Rust workspace | **Rust 参考**，124 测试 |
-| `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5 与后续计划提交起点 |
-| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 R0–R5、A1–A3、B0–B3；C0–C4 待实施 |
+| `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5、A1–A3、B0–B3 和 C0 开工前交接 |
+| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 C0 验收；C1–C4 待实施 |
 
 ---
 

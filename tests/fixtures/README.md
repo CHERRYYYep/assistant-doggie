@@ -1,4 +1,4 @@
-# 历史行为 fixture
+# 测试与评测 fixture
 
 这些文件是可审阅的冻结记录。当前 TS 普通测试不调用 Rust/Cargo，不修改期望值来掩盖回归。
 
@@ -27,3 +27,7 @@ node tests/storage-parity-snapshot.ts "$db" > tests/fixtures/storage-parity.json
 ```
 
 这些命令只适用于历史工作树。产品有意改变合同后，更新 TS 测试和 fixture，并在变更说明中记录原因，保留 JSON/TSV 的可读格式。
+
+## 主对话产品场景
+
+[main-conversation-cases.ts](main-conversation-cases.ts)由 C0 冻结，是合成输入和预期结果，不是历史 oracle。旧入口测试只共享计网实验用语，并以旧合同断言副作用；C1–C4 用同一组场景逐步检验新合同。参见 [C0 验收记录](../../docs/MAIN_CONVERSATION_C0_ACCEPTANCE.md)。

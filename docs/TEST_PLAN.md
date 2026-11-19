@@ -161,4 +161,8 @@ B2：134 项定向回归；550 后端 + 60 前端完整门禁通过。覆盖双 
 
 部分旧故障测试现在用临时库 SQL 注入遗留不同步状态，因为正常终态已当场同步/拒绝；没有删除、跳过或放宽原安全断言。MCP 脱敏故障注入移到实际 MemoryReadStore 读取边界，仍断言 Error 与字符串异常均不泄露。
 
-性能脚本 `node scripts/benchmark-memory-read.ts single` / `multiple` 独立于普通门禁，只创建合成内存库，无模型或真实数据。原始对照、结果指纹、RSS、事件循环阻塞及未完成的索引边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md) 和 [JSON](BACKEND_REPAIR_BENCHMARK.json)。C0–C4 的产品澄清样本尚未实施。
+性能脚本 `node scripts/benchmark-memory-read.ts single` / `multiple` 独立于普通门禁，只创建合成内存库，无模型或真实数据。原始对照、结果指纹、RSS、事件循环阻塞及未完成的索引边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md) 和 [JSON](BACKEND_REPAIR_BENCHMARK.json)。主对话产品基线与后续测试范围见下节。
+
+## C0：主对话行为基线（2026-11-19）
+
+新增 [HTTP 行为回归](../src/http/chat-baseline.test.ts)，覆盖归档优先与低信息门控、回答被归档提示覆盖、确认原文绑定/不保存/重放、提交前后取消、实际只读证据与历史的撤销边界。与 R0–R5、Q2、Q4 既有测试联合运行 59 项；完整门禁 554 项后端、60 项前端通过，无失败或跳过。[11 组独立场景](../tests/fixtures/main-conversation-cases.ts)用于 C1–C4，尚未作为新主对话的通过结果。详见 [C0 验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md)。
