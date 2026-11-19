@@ -1,26 +1,26 @@
 # C0 前后端修缮与设计计划
 
-2026-11-19 · 审查基线 `codex/main-conversation-backend@628256b` · **状态：设计已记录，B1/B2 尚未实施，C0 尚未开始**。
+2026-11-19 · 审查基线 `codex/main-conversation-backend@628256b` · **状态：B0–B3 已完成，C0 前置门禁已通过，C0 尚未开始**。
 
 本文替代三份已删除的旧后端计划/审查文档，作为当前修缮入口。删除旧文件是文档收敛，不代表所有问题解决。历史设计可从 `628256b` 的 Git 快照读取；R0–R5 与 A1–A3 的交付证据归入 [后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。产品主线仍以 [主对话计划](MAIN_CONVERSATION_PLAN.md) 为准。
 
-## 1. 目标、事实与范围
+## 1. 目标、基线事实与范围
 
 本轮目标是堵住终态写入合同的缺口，并为模型重试补上可执行的资源与失败策略，避免在 C0 基线冻结后继续混入底层行为变更。保留 TypeScript、Hono、schema v8、单机 SQLite、单个队列执行所有者、原归档/确认/撤销/只读执行授权合同。
 
-| 问题 | 当前证据与结论 | 本计划处理 |
+| 问题 | 实施前证据 | 处理结果 |
 |---|---|---|
 | A1：目标范围改变后最近尝试摘要错误 | `0dcce2d` 已修复；最新历史摘要与当前 scope 生命周期已分开，包含回滚/重开恢复测试 | 保留回归，不重新实现 |
 | A2：LLM 响应先完整读取再检查大小 | `8652db8` 已修复；transport 按实际 body 字节有界读取，超限不可重试 | 保留 1 MiB 限制、取消和资源清理 |
 | A3：归档结果投影读取全桶 | `8b7c2d6` 已修复；按 Entry/Bucket 双绑定查询有效 Memory ID | 保留窄查询及查询计划回归 |
-| Agent 完成输入能产生矛盾审计 | `AgentStore.complete()` 允许 failed/null；内存复现得到 Agent failureCode=null、PendingAction failureCode=cancelled。常规 AgentService 调用已给出合理值，未证明 UI 必然触发 | B1，C0 的必要前置 |
-| LLM 重试无退避/Retry-After/适配器总时限 | 有限重试次数已存在；429/5xx、网络错误等可能立即重发。HTTP 和队列已有 120 秒外层 deadline，不能误称全系统无时限 | B2，独立阶段；推荐在 C0 前完成，不与 B1 混合提交 |
+| Agent 完成输入能产生矛盾审计 | `AgentStore.complete()` 允许 failed/null；内存复现得到 Agent failureCode=null、PendingAction failureCode=cancelled。常规 AgentService 调用已给出合理值，未证明 UI 必然触发 | B1 已修复，见 §9 |
+| LLM 重试无退避/Retry-After/适配器总时限 | 有限重试次数已存在；429/5xx、网络错误等可能立即重发。HTTP 和队列已有 120 秒外层 deadline，不能误称全系统无时限 | B2 已在独立提交实施，见 §9 |
 | 检索全量读取、列表分页不足 | 已知规模限制，不是 A3 修复遗漏；当前没有本轮生产负载证明 | D1，独立设计门，不阻塞 C0 |
 | Store 集中、协议/类型反向依赖 | 已知维护债；文件长度本身不是错误证据 | D2，相关模块变化时逐批收敛，不阻塞 C0 |
 
-本计划只规划修改。签收时不得把文档状态、514 项后端和 60 项前端旧门禁，写成 B1/B2 已通过。普通测试不读取 `.env`、真实数据库和凭据，不调用真实模型。
+514 项后端和 60 项前端是旧门禁；本次各阶段实际验收见 §9。普通测试不读取 `.env`、真实数据库和凭据，不调用真实模型。
 
-不纳入：框架替换、微服务、通用 Repository/DI/事件总线、腾讯生产接入、向量/RAG、隐藏多会话、远程或多人服务、全面视觉改版、T15–T17。预计不需要数据库迁移或公开 API 变化；如实施时发现需要，先补兼容与迁移设计。
+不纳入：框架替换、微服务、通用 Repository/DI/事件总线、腾讯生产接入、向量/RAG、隐藏多会话、远程或多人服务、全面视觉改版、T15–T17。本轮未改数据库 schema、公开 API 或 OpenAPI。
 
 ## 2. 当前架构与修缮位置
 
@@ -92,7 +92,7 @@ flowchart LR
 
 ### 5.1 目标合同
 
-在领域边界定义拟议 `AgentCompletion` 判别联合和严格 schema，在 `AgentStore.complete()` 写入前做运行时校验；类型约束不能代替存储边界校验。保持 `AgentTask` 既有读取 DTO 兼容，不能仅收紧读 schema 导致历史库无法启动。
+在领域边界定义 `AgentCompletion` 判别联合和严格 schema，在 `AgentStore.complete()` 写入前做运行时校验；类型约束不能代替存储边界校验。保持 `AgentTask` 既有读取 DTO 兼容，不能仅收紧读 schema 导致历史库无法启动。
 
 | Agent 结果 | failureCode | output / remoteId | PendingAction 投影 |
 |---|---|---|---|
@@ -100,15 +100,15 @@ flowchart LR
 | failed | 必须为非空稳定错误码，不能为 cancelled；格式复用现有 PendingAction 错误码约束 | output 必须为空；不接受 remoteId | failed；保存完全相同的失败码 |
 | cancelled | 必须为 cancelled | output 必须为空；不接受 remoteId | failed；失败码 cancelled（PendingAction 没有 cancelled 状态） |
 
-上述规则是新写入合同，尚未实现。失败/取消禁止携带输出或恢复标识，避免将晚结果保留下来；目前生产 AgentService 的失败分支已使用空输出且不传 remoteId。拒绝未知字段、非法状态组合、无效 UUID 以及超额输出，不擅自将 null 推断为 cancelled。
+上述规则已用于验证新的完成写入。失败/取消禁止携带输出或恢复标识，避免将晚结果保留下来；目前生产 AgentService 的失败分支已使用空输出且不传 remoteId。拒绝未知字段、非法状态组合、无效 UUID 以及超额输出，不擅自将 null 推断为 cancelled。
 
 ### 5.2 修改边界与执行顺序
 
 - `src/domain/agent.ts`：新增纯类型/schema；复用错误码语法，不复制第二套互相漂移的正则。需要共享时使用最小中立定义，不依赖 HTTP/storage。
-- `src/storage/agents.ts`：入口验证 completion；所有身份、scope、记忆版本及任务状态检查继续保留。成功时才允许更新 remoteId。移除 `failureCode ?? "cancelled"` 兜底，以已校验结果同时更新 PendingAction、AgentTask 和 WorkItem 投影。
+- `src/storage/agents.ts`：入口验证 completion；所有身份、scope、记忆版本及任务状态检查继续保留。成功要求 Agent 与关联队列任务都处于 running，此时才允许更新 remoteId。移除 `failureCode ?? "cancelled"` 兜底，以已校验结果同时更新 PendingAction、AgentTask 和 WorkItem 投影。
 - `src/agent/service.ts`：以联合类型构造成功、失败、取消结果；保留持久化失败导致 worker fault、撤销/取消丢弃晚结果、成功不完成 WorkItem/TODO 的合同。
-- `src/storage/tasks.ts`：核对 queue finish、cancel、启动/pruning 恢复中相同状态映射。只有发现同类组合遗漏才作窄修复；不借此重写恢复机制或合并 Agent 完成与 queue finish 两个提交。
-- 无效完成输入使用稳定、脱敏的内部错误（拟复用 `AgentError("invalid_event")`）；从 AgentService 进入时保留现有 fault 处理，不能将服务端输出错误投影为 HTTP 用户参数错误。
+- `src/storage/tasks.ts`：核对 queue finish、cancel、启动/pruning 恢复中相同状态映射。取消队列的恢复投影始终写入 cancelled；队列错误码不再覆盖取消的 Agent/PendingAction 失败码。Agent 完成与 queue finish 仍分两次提交。
+- 无效完成输入使用稳定、脱敏的内部错误（`AgentError("invalid_event")`）；从 AgentService 进入时保留现有 fault 处理，不能将服务端输出错误投影为 HTTP 用户参数错误。
 
 事务 owner 仍在 storage。输入校验应在首次写入前完成；事务中重新读取状态、检查绑定并提交全部投影，任何一步失败整体回滚。旧 scope 不能驱动当前目标生命周期；重复完成继续按现有 conflict 语义拒绝，不新增隐式重放。
 
@@ -116,7 +116,7 @@ flowchart LR
 
 本轮没有证据证明真实用户库已经包含矛盾组合，因此不新增启动时全库重写或自动补码。用临时库模拟历史行，确保读取、重开及已有恢复仍兼容；不能声称既有 reconcile 会修复所有终态失败码。若日后实际发现这类遗留记录，单独设计带审计的修复，先确定可信来源，未知原因不能写成 cancelled。
 
-预计不迁移 schema；代码可按独立提交 revert，但已提交的真实事实/审计不回滚、不删除。真实库操作不在本计划执行权限内。
+本轮没有迁移 schema；代码可按独立提交 revert，但已提交的真实事实/审计不回滚、不删除。真实库操作不在本计划执行权限内。
 
 ### 5.4 必须通过的回归
 
@@ -133,13 +133,13 @@ flowchart LR
 
 这是结构化分类/提取的推理重试，不是归档数据库提交、CLI 执行或腾讯远端写操作的重放。Harness 当前直接使用 transport，不因 B2 获得额外自动重试；transport 每次 send 仍只发一个请求。
 
-保留生产默认最多两次重试（三次请求）；加入可取消退避、Retry-After 和一次 `StructuredOutputAdapter.generate()` 的总预算。拟议默认总预算 **90,000 ms**，包含请求、body 读取、解析前后检查和等待；现有 transport 单次 timeout 仍为上限，调用者 signal、HTTP/队列 120 秒外层 deadline 可更早结束。分类和提取是两个 generate 调用，该预算不是整轮聊天预算，也不提供同步 JSON.parse 可抢占的硬 CPU 保证。
+保留生产默认最多两次重试（三次请求）；加入可取消退避、Retry-After 和一次 `StructuredOutputAdapter.generate()` 的总预算。默认总预算 **90,000 ms**，包含请求、body 读取、解析前后检查和等待；现有 transport 单次 timeout 仍为上限，调用者 signal、HTTP/队列 120 秒外层 deadline 可更早结束。分类和提取是两个 generate 调用，该预算不是整轮聊天预算，也不提供同步 JSON.parse 可抢占的硬 CPU 保证。
 
 预算数值是本阶段工程默认值，不是上游 SLA。新增内部可注入策略/时钟/等待函数以测试，不新增环境变量或通用重试框架。所有路径清理计时器、监听器、reader；等待期间取消不能再发送下一次请求。已发往上游的推理不承诺因取消而停止计费。
 
 ### 6.2 决策与等待规则
 
-| 结果 | 拟议行为 |
+| 结果 | 行为 |
 |---|---|
 | caller/process abort、总预算耗尽 | 立即停止，不重试；调用者取消优先于内部失败 |
 | response_too_large、拒答、内容过滤、其他现有不可重试错误 | 保持只尝试一次 |
@@ -155,7 +155,7 @@ flowchart LR
 ### 6.3 修改与验收范围
 
 - `src/llm/transport.ts`：增加脱敏 HTTP 重试时间元数据，保留非 2xx 不读 error body、1 MiB 上限与取消优先级。一次 send 的资源约束不变。
-- `src/llm/structured-output.ts`：统一重试次数、等待与 generate 总 deadline；小型策略可抽到 `src/llm/retry-policy.ts`（拟议文件，目前不存在）。不在不同 caller 复制第二个循环。
+- `src/llm/structured-output.ts`：统一重试次数、等待与 generate 总 deadline；时钟、退避和 Retry-After 解析位于 `src/llm/retry-policy.ts`。不在不同 caller 复制第二个循环。
 - `src/application/archive-runtime.ts`：保持默认两次重试；核对分类/提取共享新规则，不重试已经提交的归档动作。
 - 测试：整数/日期/过去/无效/超长/溢出 Retry-After；两种 API mode；随机边界；次数耗尽；预算不足不发送；等待中取消；读 body 超时；晚结果拒绝；不可重试一次即停；密钥和响应体不泄露；归档已提交后回答失败不回滚事实。
 - 使用 fake 时钟/等待/transport 验证发送时序，禁止用真实 90 秒睡眠或公网。原先断言立即重试的测试改为验证新的有界调度，不能删除失败与次数断言。
@@ -183,13 +183,13 @@ flowchart LR
 
 ## 8. 检查命令、交付与回退
 
-以下是后续实施命令，不是本次文档更新已经完成的代码验证记录。
+复验命令如下；实际结果见 §9。
 
 ```bash
 # B1
 node --test src/storage/work-items.test.ts src/storage/agents.test.ts src/storage/pending-actions.test.ts src/agent/control.test.ts src/application/task-queue.test.ts
 # B2
-node --test src/llm/transport.test.ts src/llm/structured-output.test.ts src/llm/cancellation.test.ts src/application/archive-runtime.cancellation.test.ts src/application/chat.test.ts src/agent/harness.test.ts src/runtime/local-web.test.ts
+node --test src/llm/transport.test.ts src/llm/retry-policy.test.ts src/llm/structured-output.test.ts src/llm/cancellation.test.ts src/application/archive-runtime.cancellation.test.ts src/application/chat.test.ts src/agent/harness.test.ts src/runtime/local-web.test.ts
 # 每个代码阶段提交前
 npm run check
 git diff --check
@@ -206,8 +206,14 @@ B3 记录 B1/B2 的真实 commit、定向/全量结果、兼容变化、剩余�
 | 阶段 | 状态 | 证据 |
 |---|---|---|
 | 本次文档收敛 | 已编写，随文档提交交付 | 删除指定三份旧文档；迁移验收证据并更新引用；业务代码未变 |
-| B0 实施开工核验 | 待实施 | 本文使用 `628256b` 审查证据；代码开工需重新核验 |
-| B1 终态合同 | 待实施 | 内存复现已由本轮审查确认；尚无修复提交 |
-| B2 重试治理 | 待实施 | 设计默认值与验收要求见 §6 |
-| B3 交接 | 待实施 | B1 必须验收；B2 完成或明确记为延后 |
+| B0 实施开工核验 | 完成 | `c8340f0` 的内存库按 propose → approve → claim → start 复现两种异常终态；fake transport 证实两种 API mode 都会在同一时刻连续发送 |
+| B1 终态合同 | 已验收 | `99e5006`；97 项定向回归，530 后端 + 60 前端完整门禁 |
+| B2 重试治理 | 已验收 | `27c44ce`；134 项定向回归，550 后端 + 60 前端完整门禁 |
+| B3 交接 | 完成 | 当前分支满足 C0 进入条件；同步执行记录、阶段总览和测试计划 |
 | C0–C4 | 待实施 | 见主对话计划 |
+
+B0 的两个旧版结果分别是：Agent `failed/null`、审批 `failed/cancelled`；以及 Agent `succeeded/process_failed`、审批 `executed/null`。B1 在同一正式执行路径拒绝这些输入，并覆盖两类任务、各投影与审计事件的故障回滚、晚结果和重开兼容。旧终态记录不补码。
+
+两个代码阶段的 `npm run check` 与 `git diff --check` 均通过，零失败、零跳过。B2 对每次结构化调用独立计时；预算不足产生内部 `budget_exhausted`，`attempts` 只计发送次数，HTTP 错误结构不变。正常的 fetch/流读取与退避会被取消；忽略信号的替身返回后仍会拒绝晚结果，无法保证强制停止上游推理或计费。测试只使用假模型/transport 与内存或临时库。
+
+**下一步：C0**。先冻结现有 `/api/chat` 的归档、确认、取消及证据行为基线，再补产品歧义样本。C1 用途分流、D1 索引与分页、D2 模块收敛仍未实施。
