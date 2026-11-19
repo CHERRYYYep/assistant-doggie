@@ -18,13 +18,20 @@ export type ChatResponse = {
   readonly toolMessages?: readonly ChatToolMessage[];
 };
 
+export type ChatResponderInput = {
+  readonly sourceText: string;
+  readonly history: readonly ChatMessageRow[];
+  readonly signal?: AbortSignal;
+} & (
+  | {
+      readonly archive: Readonly<Record<string, unknown>>;
+      readonly purpose?: never;
+    }
+  | { readonly archive: null; readonly purpose: "answer" | "lookup" }
+);
+
 export type ChatResponder = {
-  readonly respond: (request: {
-    readonly sourceText: string;
-    readonly history: readonly ChatMessageRow[];
-    readonly archive: Readonly<Record<string, unknown>>;
-    readonly signal?: AbortSignal;
-  }) => Promise<ChatResponse>;
+  readonly respond: (request: ChatResponderInput) => Promise<ChatResponse>;
 };
 
 /** A failure after accepting a user message. Adapters project the saved rows. */

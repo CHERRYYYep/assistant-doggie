@@ -166,3 +166,7 @@ B2：134 项定向回归；550 后端 + 60 前端完整门禁通过。覆盖双 
 ## C0：主对话行为基线（2026-11-19）
 
 新增 [HTTP 行为回归](../src/http/chat-baseline.test.ts)，覆盖归档优先与低信息门控、回答被归档提示覆盖、确认原文绑定/不保存/重放、提交前后取消、实际只读证据与历史的撤销边界。与 R0–R5、Q2、Q4 既有测试联合运行 59 项；完整门禁 554 项后端、60 项前端通过，无失败或跳过。[11 组独立场景](../tests/fixtures/main-conversation-cases.ts)用于 C1–C4，尚未作为新主对话的通过结果。详见 [C0 验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md)。
+
+## C1：主对话用途分流（2026-11-19）
+
+[用途规则](../src/domain/chat-purpose.test.ts)、[应用层](../src/application/main-chat.test.ts)与 [Harness](../src/agent/harness.test.ts)覆盖直答不查工具、取证只读、归档继续使用原合同、文本确认不改变审批、取消/撤销后不发布迟到结果。含旧入口的定向回归 64 项，`npm run check` 561 项后端与 60 项前端全部通过。详见 [C1 验收](MAIN_CONVERSATION_C1_ACCEPTANCE.md)。

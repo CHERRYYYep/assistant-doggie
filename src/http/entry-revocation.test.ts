@@ -160,6 +160,7 @@ for (const operation of ["revoke", "delete-bucket"] as const) {
   test(`concurrent ${operation} discards late model/tool output and stale archive metadata`, async () => {
     const ctx = setup({
       respond: async (request) => {
+        assert.ok(request.archive);
         assert.equal(typeof request.archive["entry_id"], "string");
         if (operation === "revoke")
           ctx.store.deleteEntry(

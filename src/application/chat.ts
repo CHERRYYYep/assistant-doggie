@@ -1,7 +1,8 @@
-/** Legacy chat and confirmation orchestration, independent of its transport. */
+/** Shared turn orchestration. Legacy archive-first and routed main chat. */
 import { z } from "zod";
 import { BucketStatus } from "../domain/types.ts";
-import { DomainError } from "../domain/errors.ts";
+import { DomainError, requiredText } from "../domain/errors.ts";
+import { decideChatPurpose, type ChatPurpose } from "../domain/chat-purpose.ts";
 import { HarnessError, AgentError } from "../domain/agent.ts";
 import { TaskError } from "../domain/task.ts";
 import { WorkItemError } from "../domain/work-item.ts";
@@ -32,6 +33,8 @@ import {
   ChatFailure,
   type ChatInput,
   type ChatResponder,
+  type ChatResponderInput,
+  type ChatResponse,
   type ChatToolMessage,
 } from "./chat-types.ts";
 
@@ -43,6 +46,17 @@ type ChatArchive = Omit<ArchiveSnapshot, "archive_state"> & {
 };
 
 const CHAT_HISTORY_LIMIT = 40;
+const MEMORY_CHANGED = "记忆已更新，请重新提问。";
+
+type AcceptedTurn = {
+  readonly sourceText: string;
+  readonly userMessage: ChatMessageRow;
+  readonly contextRevision: number;
+};
+type AnswerAttempt = {
+  readonly response?: ChatResponse;
+  readonly error: string | null;
+};
 
 export class ChatService {
   readonly #turns = new ChatTurns();
@@ -73,7 +87,49 @@ export class ChatService {
     return this.#turns.run(() => this.#chat(request, signal), signal);
   }
 
-  async #chat(request: ChatInput, signal?: AbortSignal) {
+  /** Internal entry for the next main-chat transport. The legacy API stays archive-first. */
+  mainChat(input: Pick<ChatInput, "text">, signal?: AbortSignal) {
+    return this.#turns.run(() => this.#mainChat(input, signal), signal);
+  }
+
+  async #mainChat(input: Pick<ChatInput, "text">, signal?: AbortSignal) {
+    throwIfAborted(signal);
+    const text = requiredText(input.text, "text");
+    const purpose = decideChatPurpose(text);
+    if (purpose.kind === "archive")
+      return { ...(await this.#chat({ text }, signal)), purpose } as const;
+
+    const turn = this.#acceptInput({ text }, signal);
+    const answer =
+      purpose.kind === "answer" || purpose.kind === "lookup"
+        ? await this.#tryAnswer(
+            turn,
+            { archive: null, purpose: purpose.kind },
+            signal,
+          )
+        : undefined;
+    // No archive was committed on this path. Cancellation leaves the accepted
+    // input but publishes no answer, especially if the model ignored abort.
+    throwIfAborted(signal);
+    const fallback = mainChatFallback(purpose);
+    let chatError = answer?.error ?? null;
+    const result = this.#appendReplies(turn, (memoryChanged) => {
+      if (memoryChanged) chatError = MEMORY_CHANGED;
+      return {
+        assistantText: memoryChanged
+          ? MEMORY_CHANGED
+          : (answer?.response?.assistantText ?? fallback),
+        toolMessages:
+          !memoryChanged && purpose.kind === "lookup"
+            ? (answer?.response?.toolMessages ?? [])
+            : [],
+        details: { kind: "main_chat_result", purpose, chat_error: chatError },
+      };
+    });
+    return { ...result, purpose, chatError } as const;
+  }
+
+  #acceptInput(request: ChatInput, signal?: AbortSignal): AcceptedTurn {
     throwIfAborted(signal);
     const contextRevision = this.#conversation.getMemoryContextRevision();
     const userMessage = this.#conversation.appendChatMessage({
@@ -84,6 +140,12 @@ export class ChatService {
         requested_focus_bucket_id: request.focusBucketId ?? null,
       },
     });
+    return { sourceText: request.text, userMessage, contextRevision };
+  }
+
+  async #chat(request: ChatInput, signal?: AbortSignal) {
+    const turn = this.#acceptInput(request, signal);
+    const { userMessage } = turn;
 
     let execution: ArchiveExecution;
     try {
@@ -103,52 +165,95 @@ export class ChatService {
     let archive: ChatArchive = decorateChatArchive(
       projectArchiveExecution(this.#store, execution),
     );
+    // Archive is already committed, so an answer failure preserves its
+    // truthful fallback and does not roll back the archive.
+    const answer = await this.#tryAnswer(turn, { archive }, signal);
+    let chatError = answer.error;
+    const result = this.#appendReplies(turn, (memoryChanged) => {
+      if (memoryChanged) {
+        chatError = MEMORY_CHANGED;
+        archive = this.#currentArchive(archive);
+      }
+      const pending = archive.archive_state === "needs_confirmation";
+      return {
+        assistantText: memoryChanged
+          ? MEMORY_CHANGED
+          : ((!pending ? answer.response?.assistantText : undefined) ??
+            archiveAssistantText(archive)),
+        toolMessages: memoryChanged
+          ? []
+          : (answer.response?.toolMessages ?? []),
+        details: {
+          kind: "archive_result",
+          source_text: request.text,
+          archive,
+          pending_confirmation: pending,
+          chat_error: chatError,
+        },
+      };
+    });
+    return { ...result, archive, chatError } as const;
+  }
+
+  async #tryAnswer(
+    turn: AcceptedTurn,
+    mode:
+      | { readonly archive: ChatArchive }
+      | { readonly archive: null; readonly purpose: "answer" | "lookup" },
+    signal?: AbortSignal,
+  ): Promise<AnswerAttempt> {
+    const responder = this.#chatResponder;
+    // Fix history at this admitted user message; do not see later turns.
     const history = this.#conversation.listModelChatMessages(
       CHAT_HISTORY_LIMIT,
-      userMessage.sequence,
+      turn.userMessage.sequence,
     );
-    let assistantText = archiveAssistantText(archive);
-    let toolMessages: readonly ChatToolMessage[] = [];
-    let chatError: string | null = null;
     if (
-      this.#chatResponder !== undefined &&
-      contextRevision === this.#conversation.getMemoryContextRevision()
-    ) {
-      try {
-        const responder = this.#chatResponder;
-        const response = await withCancellation(signal, () =>
-          responder.respond({
-            sourceText: request.text,
-            history,
-            archive,
-            ...(signal === undefined ? {} : { signal }),
-          }),
-        );
-        toolMessages = response.toolMessages ?? [];
-        if (archive.archive_state !== "needs_confirmation") {
-          assistantText = response.assistantText;
-        }
-      } catch (error) {
-        // Archive is already committed. Persist its truthful fallback/audit,
-        // not late model tool messages; cancellation cannot undo the archive.
-        if (!signal?.aborted && !isAbortError(error))
-          chatError = chatFailureMessage(error);
-      }
+      responder === undefined ||
+      turn.contextRevision !== this.#conversation.getMemoryContextRevision()
+    )
+      return { error: null };
+    const input: ChatResponderInput = {
+      ...mode,
+      sourceText: turn.sourceText,
+      history,
+      ...(signal === undefined ? {} : { signal }),
+    };
+    try {
+      const response = await withCancellation(signal, () =>
+        responder.respond(input),
+      );
+      return { response, error: null };
+    } catch (error) {
+      return {
+        error:
+          signal?.aborted || isAbortError(error)
+            ? null
+            : chatFailureMessage(error),
+      };
     }
+  }
 
+  #appendReplies(
+    turn: AcceptedTurn,
+    build: (memoryChanged: boolean) => {
+      readonly assistantText: string;
+      readonly toolMessages: readonly ChatToolMessage[];
+      readonly details: Readonly<Record<string, unknown>>;
+    },
+  ) {
+    let publishedTools: readonly ChatToolMessage[] = [];
     const replies = this.#conversation.appendChatTurnResults(
-      userMessage.id,
+      turn.userMessage.id,
       () => {
-        // Read the version under the same short transaction as the replies so a
-        // different connection cannot invalidate it between the check and commit.
-        if (contextRevision !== this.#conversation.getMemoryContextRevision()) {
-          toolMessages = [];
-          chatError = "记忆已更新，请重新提问。";
-          assistantText = chatError;
-          archive = this.#currentArchive(archive);
-        }
+        // Check the fence inside the same transaction that publishes the replies.
+        const reply = build(
+          turn.contextRevision !==
+            this.#conversation.getMemoryContextRevision(),
+        );
+        publishedTools = reply.toolMessages;
         return [
-          ...toolMessages.map((tool) => ({
+          ...reply.toolMessages.map((tool) => ({
             role: "tool" as const,
             content: JSON.stringify(tool.output),
             toolName: tool.name,
@@ -161,30 +266,20 @@ export class ChatService {
           })),
           {
             role: "assistant",
-            content: assistantText,
-            details: {
-              kind: "archive_result",
-              source_text: request.text,
-              archive,
-              pending_confirmation:
-                archive.archive_state === "needs_confirmation",
-              chat_error: chatError,
-            },
+            content: reply.assistantText,
+            details: reply.details,
           },
         ];
       },
     );
-
     const assistantMessage = replies.at(-1);
     if (assistantMessage === undefined)
       throw new Error("missing conversation reply");
     return {
-      archive,
-      userMessage,
-      toolMessages,
+      userMessage: turn.userMessage,
+      toolMessages: publishedTools,
       assistantMessage,
-      messages: [userMessage, ...replies],
-      chatError,
+      messages: [turn.userMessage, ...replies],
     } as const;
   }
 
@@ -411,6 +506,24 @@ export class ChatService {
     }
     throw new ChatFailure(message, userMessage, assistantMessage);
   }
+}
+
+function mainChatFallback(purpose: ChatPurpose): string {
+  if (purpose.kind === "clarify") {
+    switch (purpose.reason) {
+      case "target":
+        return "你指的是哪个任务或文件？请给出名称或贴出要修改的段落。";
+      case "explicit_confirmation":
+        return "如果你要确认保存或批准执行，请使用对应的确认卡片。";
+      case "mixed":
+        return "这条消息里有多个要求。你想先处理哪一件？";
+      case "purpose":
+        return "你希望我回答问题、查找记录，还是把这段内容存下来？";
+    }
+  }
+  if (purpose.kind === "propose_execution")
+    return "这需要先指定工作目标并通过任务入口提交只读检查申请。";
+  return "我暂时无法回答这条消息，请稍后重试。";
 }
 
 function decorateChatArchive(

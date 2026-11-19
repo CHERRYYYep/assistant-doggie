@@ -211,13 +211,14 @@ B3 记录 B1/B2 的真实 commit、定向/全量结果、兼容变化、剩余�
 | B2 重试治理 | 已验收 | `27c44ce`；134 项定向回归，550 后端 + 60 前端完整门禁 |
 | B3 交接 | 完成 | 当前分支满足 C0 进入条件；同步执行记录、阶段总览和测试计划 |
 | C0 | 已完成 | 见 [C0 验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md) |
-| C1–C4 | 待实施 | 见[主对话计划](MAIN_CONVERSATION_PLAN.md) |
+| C1 | 已完成 | 见 [C1 分流验收](MAIN_CONVERSATION_C1_ACCEPTANCE.md) |
+| C2–C4 | 待实施 | 见[主对话计划](MAIN_CONVERSATION_PLAN.md) |
 
 B0 的两个旧版结果分别是：Agent `failed/null`、审批 `failed/cancelled`；以及 Agent `succeeded/process_failed`、审批 `executed/null`。B1 在同一正式执行路径拒绝这些输入，并覆盖两类任务、各投影与审计事件的故障回滚、晚结果和重开兼容。旧终态记录不补码。
 
 两个代码阶段的 `npm run check` 与 `git diff --check` 均通过，零失败、零跳过。B2 对每次结构化调用独立计时；预算不足产生内部 `budget_exhausted`，`attempts` 只计发送次数，HTTP 错误结构不变。正常的 fetch/流读取与退避会被取消；忽略信号的替身返回后仍会拒绝晚结果，无法保证强制停止上游推理或计费。测试只使用假模型/transport 与内存或临时库。
 
-**后续交付**：C0 已冻结旧入口行为与新产品样本，见 [验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md)。C1 用途分流、D1 索引与分页、D2 模块收敛仍未实施。
+**后续交付**：C0 已冻结旧入口行为与新产品样本，见 [验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md)。C1 用途分流已验收；D1 索引与分页、D2 模块收敛仍未实施。
 
 ## 10. 阶段冻结与遗留事项
 
@@ -226,9 +227,9 @@ B0 的两个旧版结果分别是：Agent `failed/null`、审批 `failed/cancell
 后续阶段按以下边界推进：
 
 1. **C0 已完成**：使用替身和临时数据库固定现有 `/api/chat` 行为，另行整理多轮歧义产品样本；生产行为和公开契约保持不变。
-2. **C1–C4 待实施**：依次完成用途判定、可恢复澄清链路、本地证据与批准执行集成、对照验收和默认切换；阶段目标和验收见 [MAIN_CONVERSATION_PLAN.md](MAIN_CONVERSATION_PLAN.md)。
+2. **C1 已完成，C2–C4 待实施**：依次完成可恢复澄清链路、本地证据与批准执行集成、对照验收和默认切换；阶段目标和验收见 [MAIN_CONVERSATION_PLAN.md](MAIN_CONVERSATION_PLAN.md)。
 3. **D1/D2 延后**：查询规模/分页应先测量再设计；模块职责按相关改动渐进收敛。二者不阻塞 C0，详细设计边界见 §7。
 4. **腾讯记忆 D3/D4b 未完成且不属于 C0–C4 前置**：D3 完整评测未验收，D4b 生产接入暂缓。
 5. **独立后续决定**：真实自用验收、全面视觉改版、远程多设备、多人协作及 T15–T17 不在冻结阶段内，也没有被本阶段承诺实现；分别立项并明确验收后再开始。
 
-`docs/MAIN_CONVERSATION_PLAN.md` 提供 C1–C4 后续实施所需的阶段拆分、数据/API 边界、产品样例、安全约束及验收指标。工作区未跟踪的用户 PDF 和 SQLite sidecar 不属于阶段交付物，保持未修改、未暂存。
+`docs/MAIN_CONVERSATION_PLAN.md` 提供 C2–C4 后续实施所需的阶段拆分、数据/API 边界、产品样例、安全约束及验收指标。工作区未跟踪的用户 PDF 和 SQLite sidecar 不属于阶段交付物，保持未修改、未暂存。

@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   AgentHarness,
   HarnessError,
+  createHarnessChatResponder,
   createMemoryHarnessTools,
   READ_ONLY_TOOL_NAMES,
   MAX_CONTEXT_BYTES,
@@ -95,6 +96,58 @@ function setup(mode: LlmApiMode = "responses", tools?: readonly HarnessTool[]) {
   return { harness, requests, replies, executions: () => executions };
 }
 for (const mode of ["responses", "chat_completions"] as const) {
+  test(`C1 ${mode}: straight answers advertise no tools and refuse unexpected tool calls; lookup stays read-only`, async () => {
+    const answer = setup(mode);
+    const resolve = createHarnessChatResponder(answer.harness);
+    const ordinary = {
+      sourceText: "SYN-ACK 是什么？",
+      history: [],
+      archive: null,
+    } as const;
+    const search = {
+      name: "search_memory",
+      callId: "lookup",
+      arguments: '{"query":"报告"}',
+    };
+    answer.replies.push(text(mode, "合成术语答复"), toolCalls(mode, [search]));
+    assert.equal(
+      (await resolve.respond({ ...ordinary, purpose: "answer" })).assistantText,
+      "合成术语答复",
+    );
+    await assert.rejects(
+      resolve.respond({ ...ordinary, purpose: "answer" }),
+      (error) =>
+        error instanceof HarnessError && error.code === "invalid_response",
+    );
+    assert.equal(answer.requests.length, 2);
+    for (const { body } of answer.requests)
+      assert.deepEqual(
+        z.object({ tools: z.array(z.unknown()) }).parse(body).tools,
+        [],
+      );
+    assert.equal(answer.executions(), 0);
+
+    const lookup = setup(mode);
+    lookup.replies.push(
+      toolCalls(mode, [
+        search,
+        { name: "archive", arguments: "{}", callId: "write" },
+      ]),
+      text(mode, "合成取证答复"),
+    );
+    const result = await createHarnessChatResponder(lookup.harness).respond({
+      ...ordinary,
+      sourceText: "查一下上次的报告",
+      purpose: "lookup",
+    });
+    assert.equal(lookup.executions(), 1);
+    assert.equal(result.toolMessages?.length, 2);
+    assert.deepEqual(result.toolMessages?.[1]?.output, {
+      ok: false,
+      error: "tool_not_allowed",
+    });
+  });
+
   test(`§7.1–3 / §7.5 / §7.8 ${mode}: unknown/hidden write tools and invalid args are data, never executed`, async () => {
     const s = setup(mode);
     s.replies.push(

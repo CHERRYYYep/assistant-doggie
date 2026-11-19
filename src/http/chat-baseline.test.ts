@@ -108,6 +108,7 @@ test("C0 legacy chat commits actionable records before answering, but confirmati
     },
     {
       async respond({ sourceText, archive }) {
+        assert.ok(archive);
         calls.push(`answer:${sourceText}`);
         if (archive["archive_state"] === "archived") {
           assert.equal(typeof archive["entry_id"], "string");
@@ -310,6 +311,7 @@ test(
       ],
     };
     try {
+      assert.ok(archive);
       const entryId = archive["entry_id"];
       assert.equal(typeof entryId, "string");
       assert.ok(store.getEntry(String(entryId)));
