@@ -53,7 +53,7 @@
 | C3 本地取证与受控委派（已完成） | 抽出上下文组装函数；接入现有 WorkItem 来源、查询服务、Harness 与提案服务。前端复用现有卡片/任务状态，主时间线关联提案和结果。 | 已给材料直接答；缺材料能说明缺口；需要工作区时先提案、批准后才执行；重开、取消、撤销及晚结果有回归。详见 [C3 验收](MAIN_CONVERSATION_C3_ACCEPTANCE.md)。 |
 | C4 对照与默认切换 | 在完全相同的 fixtures 上比较旧聊天、主对话＋本地检索；记录每一步错在意图、候选、绑定、证据还是执行。满足 §6 后再把新主输入设为默认。 | 提交结果、适用范围和失败样例，运行 `npm run check`；达不到要求保留旧入口，优先修出现频率最高的具体失败。 |
 
-**C2 的 API 和数据演进。** 保持现有 `POST /api/chat`、`/api/chat/confirm` 和 `/api/work-items/...` 不变，给新界面增设 `POST /api/conversation/turns`，用判别字段区分新发言、回复某条澄清、选择候选或取消。响应以回执区分回答、澄清和原归档结果，均有可重读的消息引用；执行提案留待 C3；该接口不接受批准字段。请求含 `requestId`；回复含 `clarificationId` 和 `expectedRevision`。按 [API 契约规范](API_CONTRACT.md) 从 schemas 生成 DTO/OpenAPI，添加历史恢复投影、浏览器校验、资源上限与漂移测试；不悄悄改旧客户端返回形状。
+**C2 的 API 和数据演进。** 保持现有 `POST /api/chat`、`/api/chat/confirm` 和 `/api/work-items/...` 不变，给新界面增设 `POST /api/conversation/turns`，用判别字段区分新发言、回复某条澄清、选择候选或取消。响应以回执区分回答、澄清、原归档结果和 C3 执行提案，均有可重读的消息引用；批准仍走既有 Agent 入口，该接口不接受批准字段。请求含 `requestId`；回复含 `clarificationId` 和 `expectedRevision`。按 [API 契约规范](API_CONTRACT.md) 从 schemas 生成 DTO/OpenAPI，添加历史恢复投影、浏览器校验、资源上限与漂移测试；不悄悄改旧客户端返回形状。
 
 C2 使用正式 schema v9 迁移；C3 追加正式 schema v10 的执行绑定表，为澄清保存原消息 ID、候选 ID/范围版本、缺少的描述、状态 `pending/resolved/cancelled/stale`、选定目标及 revision；明确 reply-to 关联和请求幂等记录。只存引用，展示/消费时重新检查目标与来源；失效就提示重选。用同一事务绑定选择、写回复与更新状态；双击同请求返回同一结果，同键不同载荷或另一页陈旧选择返回冲突。模型与 CLI 调用都在事务外。仅用临时旧库验证迁移、重开和回滚。发布开关关闭后回旧界面与旧请求路径，已发起提案仍可查；不承诺旧程序可读新 schema。真实库升级前另做一致性备份和恢复演练。
 
