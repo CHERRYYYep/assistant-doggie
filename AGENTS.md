@@ -8,9 +8,9 @@
 
 ### 当前阶段与产品边界
 
-截至 2026-11-19，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 及后续计划阶段 **0–3（A1–A3）均已交付**；阶段证据见 [后端后续修复计划](docs/BACKEND_FOLLOWUP_PLAN.md)。阶段 5a 索引/分页和 5b 职责收敛仍按设计门/渐进批次处理。下一步进入 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**；产品阶段仍待实施。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
+截至 2026-11-19，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 与后续修复 **A1–A3** 已交付；历史验收见 [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)。新发现的 Agent 完成合同问题 **B1 尚未修复，是 C0 的硬前置**；模型重试治理 B2 尚未实施，推荐在 C0 前完成，若延后必须记录当前风险。索引/分页 D1 和模块收敛 D2 仍按设计门/渐进批次处理，不自动阻塞 C0。下一步按 [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md) 完成 B1，再进入 [主对话、任务澄清与上下文计划](docs/MAIN_CONVERSATION_PLAN.md) 的 **C0–C4**。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
 
-- R0–R5 已修复事务、聊天并发、目标/历史查询并抽出 ChatService 与只读记忆能力。Follow-up 阶段 1–3 已收敛 WorkItem 历史摘要、LLM wire-body 上限和按 Entry 的归档 ID 投影；后续 C0 固定新旧行为基线，C1 直接在已有 ChatService 上增加用途判定，不重复抽取。产品阶段顺序为 C0 → C1 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。
+- R0–R5 修复、A1–A3 后续修复的提交与测试证据见 `docs/BACKEND_REPAIR_ACCEPTANCE.md`。B1 终态合同修复是 C0 前置；B2 重试治理按 `docs/PRE_C0_BACKEND_PLAN.md` 独立实施。完成后 C0 固定新旧行为基线，C1 直接在已有 ChatService 上增加意图分流，不重复抽取；产品阶段顺序为 C0 → C1 → C2 可恢复的任务澄清 → C3 本地上下文与受批准执行 → C4 对照验收与默认切换。
 - 保留统一主对话入口、多个工作目标、按需隔离的执行会话与 Bucket；普通聊天不自动拆成隐藏会话。
 - 腾讯记忆仍是 D3 隔离实验，完整 D3 未验收，D4b 生产接入暂缓。C0–C4 不引入自动历史捕获、向量库、全历史检索或自动摘要。
 - 保持 Hono、单机 SQLite 和单个队列执行所有者。更换框架、拆分布式服务、远程接入、多人协作、全面视觉改版及 T15–T17 均需各自需求与验收依据，不自动纳入本阶段。
@@ -47,9 +47,8 @@
 阅读和实施前优先查看：
 
 - `docs/PLAN.md`：当前阶段、已完成任务和后续边界；
-- [后端修缮设计](docs/BACKEND_REPAIR_PLAN.md)：现状/目标架构图、R0–R5 与前置验收；
-- [后端后续修复计划](docs/BACKEND_FOLLOWUP_PLAN.md)：当前审查问题、分阶段实现边界、回归矩阵和规模化设计门；
-- [更新后后端架构审查](docs/BACKEND_ARCHITECTURE_REVIEW.md)：基线代码关系、证据与已复现问题；
+- [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)：当前未修问题、B1/B2 实施边界、验收合同及 D1/D2 后续设计门；
+- [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)：R0–R5 与 A1–A3 的历史提交、实现边界和测试证据；
 - [主对话实施计划](docs/MAIN_CONVERSATION_PLAN.md)：C0–C4、拟议接口、澄清规则与验收样例；
 - [本地任务实施记录](docs/LOCAL_TASK_IMPLEMENTATION.md)：已交付的目标、来源与执行关联；
 - [架构决策](docs/ARCHITECTURE_DECISIONS.md) 与 [API 契约](docs/API_CONTRACT.md)：分层、部署边界和 OpenAPI；

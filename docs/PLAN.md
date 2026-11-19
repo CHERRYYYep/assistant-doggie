@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-19 · 基线集成分支 `dev_ts`；当前实施分支 `codex/main-conversation-backend` · T13、T14、本地任务、后端修缮 R0–R5 和后端后续修复阶段 0–3 已交付；下一步为主对话 C0–C4；T15–T17 保留后续规划
+> 最后更新：2026-11-19 · 基线集成分支 `dev_ts`；当前实施分支 `codex/main-conversation-backend` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；C0 前 B1 Agent 终态合同、B2 模型重试治理待实施；T15–T17 保留后续规划
 
 ---
 
@@ -43,15 +43,15 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 ### 后端修缮 R0–R5（已完成）
 
-[后端修缮设计与架构图](BACKEND_REPAIR_PLAN.md)的八项问题已完成本轮修缮。R1 修复事务、标题完整性与历史窗口；R2 统一聊天轮次；R3 拆出对话存储和中立只读记忆能力；R4 减少检索重复关联、将恢复移出正常 GET。R0 回归、合成对照和 R5 交接见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md)，完整门禁为 471 后端 + 60 前端通过。检索仍同步线性扫描且峰值内存增加，旧 Store 仍保留兼容门面；这些限制已列明。
+后端修缮 R0–R5 的实施与架构边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。R1 修复事务、标题完整性与历史窗口；R2 统一聊天轮次；R3 拆出对话存储和中立只读记忆能力；R4 减少检索重复关联、将恢复移出正常 GET。完整门禁为 471 后端 + 60 前端通过。检索仍同步线性扫描且峰值内存增加，旧 Store 仍保留兼容门面；这些限制已列明。
 
 ### 后端后续修复阶段 0–3（已完成）
 
-按 [后端后续修复实施计划](BACKEND_FOLLOWUP_PLAN.md) 完成三个独立阶段：跨范围 WorkItem 最近尝试摘要同步；传输层按实际响应体字节限制为 1 MiB；归档投影只查询当前 Entry 的有效 Memory ID，且不再为历史卡片读取完整 Bucket 详情。阶段 1/2/3 提交为 `0dcce2d`、`8652db8`、`8b7c2d6`。全量门禁为 514 后端 + 60 前端通过。索引/分页/worker 规模设计与 Store 职责收敛仍未实施，不作为 C0 自动前置。
+后端修缮 R0–R5 与后续 A1–A3 的提交、行为合同和逐阶段验收见[后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)：跨范围 WorkItem 最近尝试摘要同步；传输层按实际响应体字节限制为 1 MiB；归档投影只查询当前 Entry 的有效 Memory ID，历史卡片只查 Bucket 元数据。A1/A2/A3 提交分别为 `0dcce2d`、`8652db8`、`8b7c2d6`。当前 `628256b` 后 `npm run check` 基线为 514 后端 + 60 前端通过。新审查发现的 Agent 终态合同缺口为 B1，作为 C0 硬前置；重试治理 B2 推荐在 C0 前完成，详细设计与验收见[C0 前计划](PRE_C0_BACKEND_PLAN.md)。索引/分页 D1 与 Store 职责 D2 仍未实施，不自动阻塞 C0。
 
 ### 下一产品阶段：主对话澄清与本地续做（规划，未实现）
 
-后端 R0–R5 与 Follow-up 阶段 1–3 已验收，接下来按[主对话、任务澄清与上下文实施计划](MAIN_CONVERSATION_PLAN.md)：用原请求绑定补充，复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。C0 固定新旧合同，C1 在 ChatService 增加用途判定，C2 交付可恢复的澄清卡，C3 接本地上下文和执行结果，C4 对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
+后端 R0–R5 与 A1–A3 已验收；按[C0 前计划](PRE_C0_BACKEND_PLAN.md)先完成 B1，建议同时完成 B2，再按[主对话、任务澄清与上下文实施计划](MAIN_CONVERSATION_PLAN.md)进入 C0。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。C0 固定新旧合同，C1 在 ChatService 增加用途判定，C2 交付可恢复的澄清卡，C3 接本地上下文和执行结果，C4 对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
 
 ### 分支布局
 
@@ -61,7 +61,7 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 | `dev` | Python + Rust 并存 | **Python 参考**，`128 passed in 6.18s` |
 | `dev_rust` | 纯 Rust workspace | **Rust 参考**，124 测试 |
 | `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5 与后续计划提交起点 |
-| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 R0–R5 及 Follow-up 阶段 1–3；C0–C4 待实施 |
+| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 R0–R5、A1–A3；B1/B2 与 C0–C4 待实施 |
 
 ---
 
