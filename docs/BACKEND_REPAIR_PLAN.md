@@ -2,11 +2,11 @@
 
 2026-11-18 · 基线 `codex/main-conversation-backend@e319dc2` · **R0–R5 已完成，验收记录见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。**
 
-本文修缮与验收已完成；下一步进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
+本文修缮与验收已完成；2026-11-19 的后续审查与实际当前架构见 [架构审查](BACKEND_ARCHITECTURE_REVIEW.md)。接下来先按 [后端后续修复计划](BACKEND_FOLLOWUP_PLAN.md) 处理新增确认的问题，再进入 [主对话计划](MAIN_CONVERSATION_PLAN.md) C0–C4。继续使用 TypeScript、Hono、SQLite、原有队列与批准规则；修缮不引入腾讯生产适配、向量库、远程设备或通用子 Agent 平台。
 
-## 1. 当前关系：调用职责跨过了目录边界
+## 1. 修缮前基线关系：调用职责跨过了目录边界
 
-实线为调用/数据访问，虚线为类型或结果投影依赖。省略无关方法；这不是完整 import 图，也不表示每条箭头都需要接口抽象。
+本节保留 R0–R5 实施前的历史问题图，不能当作当前代码图。实线为调用/数据访问，虚线为类型或结果投影依赖。省略无关方法；这不是完整 import 图，也不表示每条箭头都需要接口抽象。
 
 ```mermaid
 flowchart TD
