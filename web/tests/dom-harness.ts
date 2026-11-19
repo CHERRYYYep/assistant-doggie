@@ -66,6 +66,7 @@ export class StubElement {
   closest(selector: string): StubElement | null {
     if (selector === "button[data-action]" && this.dataset["action"]) return this;
     if (selector === ".archive-card") return this.parent;
+    if (selector === ".clarification-delegate") return this.parent;
     return null;
   }
   querySelector(selector: string): StubElement | null {
@@ -115,6 +116,7 @@ export function installDom(): {
     "chat-send",
     "clarification-reply-clear",
     "conversation-retry",
+    "conversation-refresh",
     "memory-query-button",
     "new-chat",
     "refresh-buckets",
@@ -142,6 +144,7 @@ export function installDom(): {
     HTMLSelectElement: StubSelect,
     document: {
       querySelector: (selector: string) => elements.get(selector.slice(1)) ?? null,
+      getElementById: (id: string) => elements.get(id) ?? null,
       querySelectorAll: () => [],
       createElement: () => new StubElement(),
     },

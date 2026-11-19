@@ -31,6 +31,7 @@ export const chatInput = requireElement("#chat-input", isHtmlTextAreaElement);
 export const chatSend = requireElement("#chat-send", isHtmlButtonElement);
 export const conversationPreview = requireElement("#conversation-preview", isHtmlInputElement);
 export const conversationRetry = requireElement("#conversation-retry", isHtmlButtonElement);
+export const conversationRefresh = requireElement("#conversation-refresh", isHtmlButtonElement);
 export const replyContext = requireElement("#clarification-reply-context", isHtmlElement);
 export const replyLabel = requireElement("#clarification-reply-label", isHtmlElement);
 export const replyClear = requireElement("#clarification-reply-clear", isHtmlButtonElement);

@@ -10,6 +10,11 @@ import { z } from "zod";
 import { networkLab } from "../../tests/fixtures/main-conversation-cases.ts";
 import { ArchiveRuntime } from "../application/archive-runtime.ts";
 import { ChatService } from "../application/chat.ts";
+import {
+  ConversationContextService,
+  type GroundedInput,
+  type GroundedResponder,
+} from "../application/conversation-context.ts";
 import { MainConversationService } from "../application/main-conversation.ts";
 import {
   describeCreatedGoal,
@@ -21,6 +26,7 @@ import { minimalExtraction } from "../domain/memory.ts";
 import { BucketType } from "../domain/types.ts";
 import type { SourceReference } from "../domain/work-item.ts";
 import { ClarificationStore } from "../storage/clarifications.ts";
+import { STALE_CONTEXT_MESSAGE } from "../storage/conversation.ts";
 import { openDatabase, readSchemaVersion } from "../storage/database.ts";
 import { MIGRATIONS, SCHEMA_KIND } from "../storage/schema.ts";
 import { Store } from "../storage/store.ts";
@@ -40,7 +46,7 @@ const message = (text: string = networkLab.request): ConversationTurn => ({
   requestId: randomUUID(),
 });
 const confirmationText = "记一下：发布前还有一项测试要确认";
-function fixture(db: DatabaseSync) {
+function fixture(db: DatabaseSync, grounded?: GroundedResponder) {
   const store = new Store(db);
   const items = new WorkItemStore(db);
   const responderHistory: string[][] = [];
@@ -74,6 +80,9 @@ function fixture(db: DatabaseSync) {
     new ClarificationStore(db, store.conversation),
     items,
     chatService,
+    grounded === undefined
+      ? undefined
+      : new ConversationContextService(store, grounded),
   );
   const api = new ConcreteDoggieHttpApi(store, archive, { chatService });
   const app = createDoggieApp(
@@ -546,7 +555,7 @@ test("C2 transaction failure rolls back card, messages and request reservation; 
   assert.equal(f.count("agent_tasks"), 0);
 });
 
-test("v8 → v9 migration is atomic and reopens with old WorkItems and chat history intact", async () => {
+test("v8 migration is atomic and upgrades through C3 and reopens with old WorkItems and chat history intact", async () => {
   using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-c2-v9-"));
   const path = join(dir.path, "test.db");
   let oldId: string;
@@ -588,7 +597,7 @@ test("v8 → v9 migration is atomic and reopens with old WorkItems and chat hist
   }
   {
     using db = openDatabase(path);
-    assert.equal(readSchemaVersion(db), 9);
+    assert.equal(readSchemaVersion(db), 10);
     const f = fixture(db);
     assert.equal(f.store.conversation.listChatMessages(40).length, 1);
     const card = await firstCard(f);
@@ -655,4 +664,305 @@ test("C2 bounds pending cards and rejects ambiguous fragments outside the displa
     expectedRevision: 2,
   });
   assert.equal((await f.turn(overflow)).kind, "clarification");
+});
+
+function c3Source(f: ReturnType<typeof fixture>, text: string, title: string) {
+  const { entryId } = f.store.archive(
+    text,
+    createNew(BucketType.Experiment, title, 1, "测试"),
+    minimalExtraction(text),
+    { modelName: "fake", promptVersion: "test", candidateBucketIds: [] },
+  );
+  assert.ok(entryId);
+  return entryId;
+}
+
+test("C3 resumes a selection after reopening SQLite with the original request, all supplements and only the selected goal evidence", async () => {
+  using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-c3-"));
+  const path = join(dir.path, "test.db");
+  const tcpText = "抓包报告：SYN 后收到 SYN-ACK。";
+  const supplements = ["只改报告中的握手段落", "保留原有术语，不增加测量值"];
+  let next: ConversationTurn;
+  let tcpId: string;
+  let tcpEntry: string;
+  {
+    using db = openDatabase(path);
+    const f = fixture(db);
+    tcpEntry = c3Source(f, tcpText, networkLab.tcp);
+    const udpEntry = c3Source(f, "UDP 报告不涉及握手。", networkLab.udp);
+    const tcp = f.goal(
+      networkLab.tcp,
+      [{ kind: "entry", id: tcpEntry }],
+      "解释握手报文来往",
+    );
+    tcpId = tcp.id;
+    f.goal(networkLab.udp, [{ kind: "entry", id: udpEntry }]);
+    const card = await firstCard(f);
+    await f.turn({
+      action: "select",
+      requestId: randomUUID(),
+      clarificationId: card.id,
+      expectedRevision: 1,
+      workItemId: tcp.id,
+    });
+    await f.turn(message(networkLab.question));
+    for (const [index, text] of supplements.entries()) {
+      await f.turn({
+        action: "reply",
+        requestId: randomUUID(),
+        clarificationId: card.id,
+        expectedRevision: index + 2,
+        text,
+      });
+    }
+    next = {
+      action: "continue",
+      requestId: randomUUID(),
+      clarificationId: card.id,
+      expectedRevision: 4,
+    };
+  }
+  {
+    using db = openDatabase(path);
+    const seen: GroundedInput[] = [];
+    const f = fixture(db, async (input) => {
+      seen.push(input);
+      return {
+        kind: "answer",
+        text: "发送 SYN 后，接收方返回 SYN-ACK。",
+        quotes: [{ entryId: tcpEntry, quote: tcpText }],
+      };
+    });
+    const result = await f.turn(next);
+    assert.equal(result.kind, "clarification");
+    assert.deepEqual(await f.turn(next), result);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]?.original, networkLab.request);
+    assert.deepEqual(seen[0]?.supplements, supplements);
+    assert.equal(seen[0]?.target?.id, tcpId);
+    assert.equal(seen[0]?.target?.acceptance, "解释握手报文来往");
+    assert.deepEqual(
+      seen[0]?.evidence.map(({ entryId }) => entryId),
+      [tcpEntry],
+    );
+    assert.equal(f.count("entries"), 2);
+    assert.equal(f.count("agent_tasks"), 0);
+    const rendered = f.store.conversation
+      .listChatMessages(40)
+      .find(({ id }) => id === result.assistantMessageId);
+    assert.equal(rendered?.content, "发送 SYN 后，接收方返回 SYN-ACK。");
+    assert.deepEqual(
+      z
+        .looseObject({
+          citations: z.array(z.looseObject({ entryId: z.string() })),
+        })
+        .parse(rendered?.details)
+        .citations.map(({ entryId }) => entryId),
+      [tcpEntry],
+    );
+    f.store.deleteEntry(tcpEntry, "撤销抓包报告");
+    const expired = f.store.conversation
+      .listChatMessages(40)
+      .find(({ id }) => id === result.assistantMessageId);
+    assert.doesNotMatch(expired?.content ?? "", /SYN/);
+    assert.deepEqual(expired?.details, {
+      kind: "conversation_context_expired",
+    });
+    assert.equal(
+      (await f.post({ ...next, requestId: randomUUID() })).status,
+      409,
+    );
+  }
+});
+
+test("C3 publishes only verified lookup excerpts, abstains when evidence is missing and removes revoked results from history", async () => {
+  using db = openDatabase(":memory:");
+  let calls = 0;
+  let entryId = "";
+  const quote = "发布审批日期为 11 月 18 日。";
+  const f = fixture(db, async ({ original, evidence }) => {
+    calls++;
+    assert.deepEqual(
+      evidence.map((source) => source.entryId),
+      [entryId],
+    );
+    return original.includes("号码")
+      ? {
+          kind: "answer",
+          text: "号码为 123456",
+          quotes: [{ entryId, quote: "号码为 123456" }],
+        }
+      : {
+          kind: "answer",
+          text: "并未保存的额外细节",
+          quotes: [{ entryId, quote }],
+        };
+  });
+  entryId = c3Source(f, quote, "发布审批");
+  const lookup = "上次发布审批是什么时候？";
+  const found = await f.turn(message(lookup));
+  const row = (id: string) =>
+    f.store.conversation
+      .listChatMessages(40)
+      .find((message) => message.id === id);
+  assert.equal(found.kind, "lookup");
+  assert.equal(row(found.assistantMessageId)?.content, quote);
+  const gap = await f.turn(message("上次发布审批的联系人号码是多少？"));
+  assert.match(row(gap.assistantMessageId)?.content ?? "", /校验|依据/);
+  assert.doesNotMatch(row(gap.assistantMessageId)?.content ?? "", /123456/);
+  assert.equal(calls, 2);
+  const movedBucket = c3Source(f, "另一条无关记录", "新归属");
+  const bucketId = f.store.getEntry(movedBucket)?.bucketId;
+  assert.ok(bucketId);
+  f.store.moveEntry(entryId, bucketId, "移动发布记录");
+  const citationDetails = z.looseObject({
+    citations: z.array(
+      z.strictObject({ entryId: z.string(), bucketId: z.string() }),
+    ),
+  });
+  assert.deepEqual(
+    citationDetails.parse(row(found.assistantMessageId)?.details).citations,
+    [{ entryId, bucketId }],
+  );
+  f.store.deleteEntry(entryId, "撤销发布记录");
+  assert.deepEqual(row(found.assistantMessageId)?.details, {
+    kind: "conversation_context_expired",
+  });
+  const empty = await f.turn(message(lookup));
+  assert.match(
+    row(empty.assistantMessageId)?.content ?? "",
+    /没有提供足够依据/,
+  );
+  assert.equal(calls, 2);
+  assert.equal(f.count("agent_tasks"), 0);
+  assert.equal(f.classified(), 0);
+});
+
+for (const invalidation of ["source", "scope"] as const) {
+  test(`C3 invalidates in-flight grounded answers after a ${invalidation} change`, async () => {
+    using db = openDatabase(":memory:");
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const passage = "TCP 报告正文：等待确认。";
+    let entryId = "";
+    const f = fixture(db, async () => {
+      started.resolve();
+      await release.promise;
+      return {
+        kind: "answer",
+        text: "已经失效的改写结果",
+        quotes: [{ entryId, quote: passage }],
+      };
+    });
+    entryId = c3Source(f, passage, "任务材料");
+    const tcp = f.goal(networkLab.tcp, [{ kind: "entry", id: entryId }]);
+    const card = await firstCard(f, `修改「${tcp.title}」`);
+    const pending = f.turn({
+      action: "continue",
+      requestId: randomUUID(),
+      clarificationId: card.id,
+      expectedRevision: card.revision,
+    });
+    await started.promise;
+    if (invalidation === "source") f.store.deleteEntry(entryId, "测试撤销");
+    else
+      f.items.update(
+        tcp.id,
+        {
+          expectedRevision: tcp.revision,
+          title: tcp.title,
+          goal: "新范围",
+          acceptance: tcp.acceptance,
+        },
+        describeUpdatedGoal,
+      );
+    release.resolve();
+    const result = await pending;
+    const view = f.store.conversation
+      .listChatMessages(40)
+      .find(({ id }) => id === result.assistantMessageId);
+    assert.equal(view?.content, STALE_CONTEXT_MESSAGE);
+    assert.doesNotMatch(view?.content ?? "", /改写结果/);
+    assert.deepEqual(view?.details, { kind: "conversation_context_expired" });
+    assert.equal(
+      db
+        .prepare("SELECT 1 FROM conversation_messages WHERE content=?")
+        .get("已经失效的改写结果"),
+      undefined,
+    );
+  });
+}
+
+test("C3 v9 → v10 migration rolls back on failure and preserves existing cards on reopen", async () => {
+  using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-c3-v10-"));
+  const path = join(dir.path, "test.db");
+  let cardId: string;
+  {
+    using db = new DatabaseSync(path);
+    for (const migration of MIGRATIONS.filter(({ version }) => version <= 9)) {
+      db.exec(migration.sql);
+      db.prepare("INSERT INTO schema_migrations VALUES (?,?,?)").run(
+        migration.version,
+        migration.name,
+        "2026-11-19",
+      );
+    }
+    db.prepare(
+      "INSERT INTO schema_meta VALUES ('schema_kind',?),('schema_version','9')",
+    ).run(SCHEMA_KIND);
+    const f = fixture(db);
+    f.goal(networkLab.tcp);
+    cardId = (await firstCard(f)).id;
+    db.exec(
+      "CREATE INDEX ix_conversation_supplements ON conversation_messages(role)",
+    );
+  }
+  assert.throws(() => openDatabase(path), /already exists/);
+  {
+    using db = new DatabaseSync(path);
+    assert.equal(readSchemaVersion(db), 9);
+    assert.equal(
+      db.prepare("SELECT 1 FROM schema_migrations WHERE version=10").get(),
+      undefined,
+    );
+    assert.equal(
+      db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE name='conversation_executions'",
+        )
+        .get(),
+      undefined,
+    );
+    db.exec("DROP INDEX ix_conversation_supplements");
+  }
+  for (let i = 0; i < 2; i++) {
+    using db = openDatabase(path);
+    assert.equal(readSchemaVersion(db), 10);
+    assert.equal((await fixture(db).getCards())[0]?.id, cardId);
+    assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+  }
+});
+
+test("C3 reviews a uniquely named completed goal without reopening it or calling the model", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db, async () =>
+    assert.fail("goal review must not call the model"),
+  );
+  const tcp = f.goal(networkLab.tcp, [], "核对 SYN 与 SYN-ACK 顺序");
+  f.items.transition(tcp.id, {
+    action: "complete",
+    expectedRevision: tcp.revision,
+  });
+  const result = await f.turn(message(`回顾「${networkLab.tcp}」的验收要求。`));
+  assert.equal(result.kind, "lookup");
+  assert.equal(f.items.get(tcp.id).status, "done");
+  assert.equal((await f.getCards()).length, 0);
+  const row = f.store.conversation
+    .listChatMessages(40)
+    .find(({ id }) => id === result.assistantMessageId);
+  assert.match(row?.content ?? "", /核对 SYN 与 SYN-ACK 顺序/);
+  assert.equal(
+    z.looseObject({ workItemId: z.uuid() }).parse(row?.details).workItemId,
+    tcp.id,
+  );
 });

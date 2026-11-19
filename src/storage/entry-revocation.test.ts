@@ -11,7 +11,7 @@ import { BucketType } from "../domain/types.ts";
 import { MemoryQueryService } from "../application/query.ts";
 import { DoggieMcpTools } from "../mcp/tools.ts";
 import { openDatabase, StorageError } from "./database.ts";
-import { MIGRATIONS, SCHEMA_KIND } from "./schema.ts";
+import { MIGRATIONS, SCHEMA_KIND, SCHEMA_VERSION } from "./schema.ts";
 import { Store, type ArchiveAudit } from "./store.ts";
 
 const AUDIT: ArchiveAudit = {
@@ -421,7 +421,7 @@ test("v5 migration and database reopen preserve records and legacy orphans with 
       database
         .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
         .get()?.["value"],
-      "9",
+      String(SCHEMA_VERSION),
     );
     const revocation = store.deleteEntry(
       record.entryId,

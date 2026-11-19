@@ -31,15 +31,26 @@ import { WorkItemStore, type WorkItemBinding } from "./work-items.ts";
 import {
   workItemAttemptSchema,
   workItemInstruction,
+  type WorkItemAttempt,
 } from "../domain/work-item.ts";
+import {
+  ConversationExecutionStore,
+  type ConversationExecutionProjection,
+  type ConversationExecutionReference,
+} from "./conversation-execution.ts";
 
 const taskSelect = `SELECT id, session_id AS sessionId, workspace_id AS workspaceId, backend, instruction, pending_action_id AS pendingActionId, queue_id AS queueId, status, output, failure_code AS failureCode, created_at AS createdAt, updated_at AS updatedAt FROM agent_tasks`;
 const sessionSelect = `SELECT id, workspace_id AS workspaceId, backend, remote_id AS remoteId, memory_revision AS memoryRevision, created_at AS createdAt FROM agent_sessions`;
 const workspaceSelect = `SELECT id,path,base_commit AS baseCommit,git_status AS gitStatus,created_at AS createdAt FROM agent_workspaces`;
 export class AgentStore {
   readonly #db: DatabaseSync;
+  readonly #conversation: ConversationExecutionStore;
   constructor(db: DatabaseSync) {
     this.#db = db;
+    this.#conversation = new ConversationExecutionStore(
+      db,
+      new WorkItemStore(db),
+    );
   }
   registerWorkspace(
     snapshot: WorkspaceSnapshot,
@@ -100,6 +111,18 @@ export class AgentStore {
     )
       throw new AgentError("memory_changed");
   }
+  assertExecutionContextCurrent(task: AgentTask): void {
+    this.assertMemoryContextCurrent(task.sessionId);
+    this.#conversation.assertCurrent(task.id);
+  }
+  conversationExecution(
+    cardId: string,
+  ): ConversationExecutionProjection | null {
+    return this.#conversation.latest(cardId);
+  }
+  publicProjection(task: AgentTask): AgentTask {
+    return this.#conversation.maskStaleOutput(task);
+  }
   task(id: string): AgentTask {
     const row = this.#db.prepare(taskSelect + " WHERE id=?").get(id);
     if (row === undefined) throw new AgentError("missing");
@@ -116,27 +139,47 @@ export class AgentStore {
   }
   proposeForWorkItem(id: string, input: unknown): AgentTask {
     const request = workItemAttemptSchema.parse(input);
-    return withTransaction(this.#db, () => {
-      const goals = new WorkItemStore(this.#db);
-      const payload = JSON.stringify({ workItemId: id, ...request });
-      const replay = goals.replay(request.requestId, "attempt", payload);
-      if (replay !== undefined) return this.task(replay);
-      const item = goals.expectedForProposal(id, request.expectedRevision);
-      const task = this.#proposeWithinTransaction(
-        agentProposalSchema.parse({
-          backend: request.backend,
-          workspaceId: request.workspaceId,
-          instruction: workItemInstruction(item, request.instruction),
-          ...(request.sessionId === undefined
-            ? {}
-            : { sessionId: request.sessionId }),
-        }),
-        { workItemId: id, scopeRevision: item.scopeRevision },
-      );
-      goals.bindAttempt(item, task);
-      goals.remember(request.requestId, "attempt", payload, task.id);
-      return task;
-    });
+    return withTransaction(this.#db, () =>
+      this.#proposeForWorkItemWithinTransaction(id, request),
+    );
+  }
+  proposeForConversationWithinTransaction(
+    id: string,
+    input: WorkItemAttempt,
+    card: ConversationExecutionReference,
+  ): AgentTask {
+    const request = workItemAttemptSchema.parse(input);
+    if (request.workspaceId === null || request.sessionId !== undefined)
+      throw new AgentError("binding_mismatch");
+    return this.#proposeForWorkItemWithinTransaction(id, request, card);
+  }
+  #proposeForWorkItemWithinTransaction(
+    id: string,
+    request: WorkItemAttempt,
+    card?: ConversationExecutionReference,
+  ): AgentTask {
+    if (!this.#db.isTransaction) throw new AgentError("conflict");
+    const goals = new WorkItemStore(this.#db);
+    const kind = card === undefined ? "attempt" : "conversation_attempt";
+    const payload = JSON.stringify({ workItemId: id, ...request, card });
+    const replay = goals.replay(request.requestId, kind, payload);
+    if (replay !== undefined) return this.task(replay);
+    const item = goals.expectedForProposal(id, request.expectedRevision);
+    const task = this.#proposeWithinTransaction(
+      agentProposalSchema.parse({
+        backend: request.backend,
+        workspaceId: request.workspaceId,
+        instruction: workItemInstruction(item, request.instruction),
+        ...(request.sessionId === undefined
+          ? {}
+          : { sessionId: request.sessionId }),
+      }),
+      { workItemId: id, scopeRevision: item.scopeRevision },
+    );
+    goals.bindAttempt(item, task);
+    if (card !== undefined) this.#conversation.bind(task.id, card);
+    goals.remember(request.requestId, kind, payload, task.id);
+    return task;
   }
   propose(input: unknown): AgentTask {
     const proposal = agentProposalSchema.parse(input);
@@ -164,6 +207,7 @@ export class AgentStore {
     let session: AgentSession;
     if (proposal.sessionId !== undefined) {
       session = this.session(proposal.sessionId);
+      this.#conversation.excludeLinkedSession(session.id);
       const owner = new WorkItemStore(this.#db).sessionBinding(session.id);
       if (
         (binding === undefined) !== (owner === undefined) ||
@@ -233,6 +277,7 @@ export class AgentStore {
       this.#bound(task, instruction, "pending");
       if (task.status !== "pending") throw new AgentError("conflict");
       new WorkItemStore(this.#db).assertExecutable(id);
+      this.#conversation.assertCurrent(id);
       // A proposal can predate another task's failure. Recheck at admission,
       // inside the same transaction that records approval and queues the work.
       this.#assertSessionReusable(task.sessionId);
@@ -264,24 +309,29 @@ export class AgentStore {
     });
   }
   reject(id: string, instruction: string): AgentTask {
-    return withTransaction(this.#db, () => {
+    return withTransaction(this.#db, () =>
+      this.#rejectWithinTransaction(this.task(id), instruction),
+    );
+  }
+  rejectPendingForConversationWithinTransaction(cardId: string): void {
+    if (!this.#db.isTransaction) throw new AgentError("conflict");
+    for (const id of this.#conversation.expiredPendingTaskIds(cardId)) {
       const task = this.task(id);
-      this.#bound(task, instruction, "pending");
-      if (task.status !== "pending") throw new AgentError("conflict");
-      rejectPendingAction(
-        this.#db,
-        task.pendingActionId,
-        instruction,
-        new Date().toISOString(),
-      );
-      this.#db
-        .prepare(
-          "UPDATE agent_tasks SET status='rejected',updated_at=? WHERE id=?",
-        )
-        .run(new Date().toISOString(), id);
-      new WorkItemStore(this.#db).projectAttempt(id);
-      return this.task(id);
-    });
+      this.#rejectWithinTransaction(task, task.instruction);
+    }
+  }
+  #rejectWithinTransaction(task: AgentTask, instruction: string): AgentTask {
+    this.#bound(task, instruction, "pending");
+    if (task.status !== "pending") throw new AgentError("conflict");
+    const now = new Date().toISOString();
+    rejectPendingAction(this.#db, task.pendingActionId, instruction, now);
+    this.#db
+      .prepare(
+        "UPDATE agent_tasks SET status='rejected',updated_at=? WHERE id=?",
+      )
+      .run(now, task.id);
+    new WorkItemStore(this.#db).projectAttempt(task.id);
+    return this.task(task.id);
   }
   start(id: string): AgentTask {
     return withTransaction(this.#db, () => {
@@ -291,6 +341,7 @@ export class AgentStore {
         throw new AgentError("conflict");
       this.#assertSessionReusable(task.sessionId);
       new WorkItemStore(this.#db).assertExecutable(id);
+      this.#conversation.assertCurrent(id);
       const queue = new TaskStore(this.#db).get(task.queueId);
       if (queue.status !== "running") throw new AgentError("conflict");
       this.#db
@@ -320,7 +371,7 @@ export class AgentStore {
           new TaskStore(this.#db).get(task.queueId).status !== "running"
         )
           throw new AgentError("conflict");
-        this.assertMemoryContextCurrent(task.sessionId);
+        this.assertExecutionContextCurrent(task);
         new WorkItemStore(this.#db).assertExecutable(id);
         if (outcome.remoteId !== undefined) {
           const session = this.session(task.sessionId);

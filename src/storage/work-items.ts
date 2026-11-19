@@ -16,6 +16,7 @@ import {
 import { withTransaction } from "./database.ts";
 import { rejectPendingAction } from "./pending-actions.ts";
 import { ConversationStore } from "./conversation.ts";
+import { ConversationExecutionStore } from "./conversation-execution.ts";
 
 const select = `SELECT id,title,goal,acceptance,status,revision,scope_revision AS scopeRevision,
  cancel_requested AS cancelRequested,last_attempt_id AS lastAttemptId,last_attempt_status AS lastAttemptStatus,
@@ -92,6 +93,14 @@ export class WorkItemStore {
         .get(id) === undefined
     );
   }
+  entrySourceIds(id: string, limit: number): readonly string[] {
+    return this.#db
+      .prepare(
+        "SELECT source_id AS id FROM work_item_sources WHERE work_item_id=? AND kind='entry' ORDER BY source_id LIMIT ?",
+      )
+      .all(id, limit)
+      .map((row) => z.strictObject({ id: z.string() }).parse(row).id);
+  }
   findExactTitle(
     title: string,
   ): readonly Pick<WorkItem, "id" | "title" | "status">[] {
@@ -104,6 +113,10 @@ export class WorkItemStore {
   }
   detail(id: string) {
     const workItem = this.get(id);
+    const conversationExecutions = new ConversationExecutionStore(
+      this.#db,
+      this,
+    );
     const sources = this.#db
       .prepare(
         "SELECT kind,source_id AS id FROM work_item_sources WHERE work_item_id=? ORDER BY kind,source_id LIMIT 200",
@@ -117,7 +130,9 @@ export class WorkItemStore {
           " JOIN work_item_attempts a ON a.agent_task_id=t.id WHERE a.work_item_id=? ORDER BY a.sequence DESC LIMIT 20",
       )
       .all(id)
-      .map((row) => agentTaskSchema.parse(row));
+      .map((row) =>
+        conversationExecutions.maskStaleOutput(agentTaskSchema.parse(row)),
+      );
     return { workItem, sources, attempts };
   }
 

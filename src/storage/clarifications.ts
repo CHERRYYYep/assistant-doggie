@@ -13,7 +13,11 @@ import {
   type ConversationReceipt,
   type ConversationTurn,
 } from "../domain/main-conversation.ts";
-import { ConversationStore, type ChatMessageInput } from "./conversation.ts";
+import {
+  ConversationStore,
+  type ChatMessageInput,
+  type GroundedFence,
+} from "./conversation.ts";
 import { withTransaction } from "./database.ts";
 
 const cardRowSchema = z.strictObject({
@@ -63,37 +67,67 @@ export class ClarificationStore {
     this.#db = db;
     this.#conversation = conversation;
   }
-  transaction(
-    run: () => ConversationReceipt | null,
-  ): ConversationReceipt | null {
-    return withTransaction(this.#db, run);
+  transaction<T>(
+    run: () => T &
+      (Extract<T, PromiseLike<unknown>> extends never ? unknown : never),
+  ): T {
+    return withTransaction<T>(this.#db, run);
+  }
+  memoryRevision(): number {
+    return this.#conversation.getMemoryContextRevision();
+  }
+  contextCurrent(fence: GroundedFence): boolean {
+    return this.#conversation.groundedResultCurrent(
+      fence.memoryRevision,
+      fence.card,
+      fence.work,
+    );
+  }
+  supplements(card: StoredClarification, limit: number) {
+    return this.#db
+      .prepare(
+        `
+      SELECT content AS text FROM conversation_messages
+      WHERE role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
+        AND json_extract(details_json,'$.action')='reply'
+        AND json_extract(details_json,'$.clarification_id')=?
+        AND json_extract(details_json,'$.reply_to_message_id')=?
+      ORDER BY sequence LIMIT ?
+    `,
+      )
+      .all(card.id, card.originalMessageId, limit)
+      .map((row) => z.strictObject({ text: z.string() }).parse(row).text);
   }
   #requireTransaction() {
     if (!this.#db.isTransaction)
       throw new Error("clarification transaction required");
   }
-  begin(input: ConversationTurn): ConversationReceipt | null {
-    this.#requireTransaction();
-    // The parsed schema fixes key order; whitespace trimming is part of the request contract.
-    const hash = createHash("sha256")
-      .update(JSON.stringify(input))
-      .digest("hex");
+  #hash(input: ConversationTurn): string {
+    // The parsed schema fixes key order; trimming is part of the request contract.
+    return createHash("sha256").update(JSON.stringify(input)).digest("hex");
+  }
+  replay(input: ConversationTurn): ConversationReceipt | null {
     const row = this.#db
       .prepare(
         "SELECT payload_hash,result_json FROM conversation_requests WHERE request_id=?",
       )
       .get(input.requestId);
-    if (row !== undefined) {
-      if (row["payload_hash"] !== hash) throw new ConversationError("conflict");
-      if (typeof row["result_json"] !== "string")
-        throw new ConversationError("in_progress");
-      return conversationReceiptSchema.parse(JSON.parse(row["result_json"]));
-    }
+    if (row === undefined) return null;
+    if (row["payload_hash"] !== this.#hash(input))
+      throw new ConversationError("conflict");
+    if (typeof row["result_json"] !== "string")
+      throw new ConversationError("in_progress");
+    return conversationReceiptSchema.parse(JSON.parse(row["result_json"]));
+  }
+  begin(input: ConversationTurn): ConversationReceipt | null {
+    this.#requireTransaction();
+    const replay = this.replay(input);
+    if (replay !== null) return replay;
     this.#db
       .prepare(
         "INSERT INTO conversation_requests(request_id,payload_hash) VALUES (?,?)",
       )
-      .run(input.requestId, hash);
+      .run(input.requestId, this.#hash(input));
     return null;
   }
   finish(requestId: string, result: ConversationReceipt) {

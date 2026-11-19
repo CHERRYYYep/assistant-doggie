@@ -19,6 +19,8 @@ import {
   fetchBucketDetail,
   fetchChatHistory,
   fetchClarifications,
+  fetchAgentCapabilities,
+  fetchAgentWorkspaces,
   postConversationTurn,
   ApiRequestError,
   fetchMemoryQuery,
@@ -44,6 +46,7 @@ import {
   chatMessages,
   chatSend,
   conversationPreview,
+  conversationRefresh,
   conversationRetry,
   replyClear,
   replyContext,
@@ -61,6 +64,7 @@ import { bucketLabel, renderBucketSummary } from "./render-bucket.ts";
 import { renderTranscript } from "./render-chat.ts";
 import { renderMemoryQuery } from "./render-query.ts";
 import { bucketById, state } from "./state.ts";
+import { showAgentTask } from "./agents.ts";
 
 import { activateWorkspace } from "./workspace.ts";
 
@@ -312,7 +316,11 @@ export async function reopenAgendaTodo(button: HTMLButtonElement): Promise<void>
   }
 }
 
-export async function showBucket(bucketId: string | undefined, reveal = true): Promise<void> {
+export async function showBucket(
+  bucketId: string | undefined,
+  reveal = true,
+  citedEntryId?: string,
+): Promise<void> {
   if (!bucketId) throw new Error("Bucket ID 不能为空");
   if (reveal) activateWorkspace("memory", true);
   const revision = ++state.detailRequestRevision;
@@ -327,15 +335,21 @@ export async function showBucket(bucketId: string | undefined, reveal = true): P
     if (revision !== state.detailRequestRevision || state.selectedBucketId !== bucketId) return;
     const bucket = data.detail.bucket;
     const entries = data.detail.entries;
+    const citedIndex =
+      citedEntryId === undefined ? -1 : entries.findIndex(({ id }) => id === citedEntryId);
     detail.innerHTML =
       renderBucketSummary(bucket) +
       `<div class="detail-actions"><button data-action="delete-bucket" data-bucket-id="${escapeHtml(bucket.id)}">删除 Bucket</button></div><div class="muted detail-count">${entries.length} 条 Entry</div>` +
+      (citedEntryId !== undefined && citedIndex === -1
+        ? '<p class="warning">引用来源不在当前 Bucket 的有效记录中，可能已撤销或移动。</p>'
+        : "") +
       entries
         .map(
-          (entry) =>
-            `<div class="detail-entry"><b>Entry</b><br>${renderMarkdown(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary || "")}</span><br><button data-action="revoke-entry" data-entry-id="${escapeHtml(entry.id)}">撤销记录</button></div>`,
+          (entry, index) =>
+            `<div ${index === citedIndex ? 'class="detail-entry cited-entry" id="cited-entry" tabindex="-1"' : 'class="detail-entry"'}><b>${index === citedIndex ? "引用来源" : "Entry"}</b><br>${renderMarkdown(entry.raw_text)}<br><span class="muted">${escapeHtml(entry.summary || "")}</span><br><button data-action="revoke-entry" data-entry-id="${escapeHtml(entry.id)}">撤销记录</button></div>`,
         )
         .join("");
+    if (citedIndex !== -1) detail.querySelector<HTMLElement>("#cited-entry")?.focus();
   } catch (error) {
     if (revision !== state.detailRequestRevision || state.selectedBucketId !== bucketId) return;
     detail.innerHTML = `<span class="warning">${escapeHtml(errorMessage(error))}</span>`;
@@ -343,7 +357,7 @@ export async function showBucket(bucketId: string | undefined, reveal = true): P
 }
 
 export function renderHistory(): void {
-  renderTranscript(state.history, state.preview ? state.clarifications : []);
+  renderTranscript(state.history, state.preview ? state.clarifications : [], state.delegateOptions);
 }
 
 export async function loadHistory(): Promise<void> {
@@ -392,8 +406,10 @@ export async function setConversationPreview(enabled: boolean): Promise<void> {
     return;
   }
   state.preview = enabled;
+  conversationRefresh.hidden = !enabled;
   if (!enabled) {
     state.clarifications = [];
+    state.delegateOptions = null;
     clearClarificationReply();
     renderHistory();
   }
@@ -414,10 +430,15 @@ export function clearClarificationReply(): void {
 }
 
 export async function actOnClarification(button: HTMLButtonElement): Promise<void> {
-  if (!state.preview || chatSend.disabled || state.retryTurn !== null) return;
+  if (!state.preview) return;
+  const action = button.dataset["action"];
+  if (action === "clarification-agent") {
+    await showAgentTask(button.dataset["taskId"]);
+    return;
+  }
+  if (chatSend.disabled || state.retryTurn !== null || button.disabled) return;
   const clarificationId = requireDataset(button, "clarificationId");
   const expectedRevision = Number(requireDataset(button, "revision"));
-  const action = button.dataset["action"];
   if (action === "clarification-reply") {
     const card = state.clarifications.find(({ id }) => id === clarificationId);
     if (!card || card.revision !== expectedRevision) return;
@@ -431,8 +452,61 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
     chatInput.focus();
     return;
   }
+  if (
+    (action === "clarification-continue" || action === "clarification-delegate") &&
+    state.reply?.clarificationId === clarificationId &&
+    chatInput.value.trim()
+  ) {
+    setStatus("请先发送或丢弃这张卡的回复草稿。", "warning");
+    chatInput.focus();
+    return;
+  }
   const base = { clarificationId, expectedRevision, requestId: crypto.randomUUID() };
-  if (action === "clarification-select") {
+  if (action === "clarification-prepare") {
+    const options = state.delegateOptions;
+    if (options?.clarificationId === clarificationId && options.revision === expectedRevision) {
+      state.delegateOptions = null;
+      renderHistory();
+      return;
+    }
+    button.disabled = true;
+    try {
+      const [{ backends }, { workspaces }] = await Promise.all([
+        fetchAgentCapabilities(),
+        fetchAgentWorkspaces(),
+      ]);
+      if (
+        !state.preview ||
+        !state.clarifications.some(
+          (card) => card.id === clarificationId && card.revision === expectedRevision,
+        )
+      )
+        return;
+      state.delegateOptions = { clarificationId, revision: expectedRevision, backends, workspaces };
+      renderHistory();
+    } finally {
+      button.disabled = false;
+    }
+  } else if (action === "clarification-continue") {
+    await submitPreviewTurn({ ...base, action: "continue" });
+  } else if (action === "clarification-delegate") {
+    const options = state.delegateOptions;
+    if (options?.clarificationId !== clarificationId || options.revision !== expectedRevision)
+      return;
+    const group = button.closest(".clarification-delegate");
+    const backend = group?.querySelector<HTMLSelectElement>("[data-delegate-backend]")?.value;
+    const workspaceId = group?.querySelector<HTMLSelectElement>("[data-delegate-workspace]")?.value;
+    if (
+      (backend !== "codex" && backend !== "claude") ||
+      !options.backends.includes(backend) ||
+      workspaceId === undefined ||
+      !options.workspaces.some(({ id }) => id === workspaceId)
+    ) {
+      setStatus("请选择已登记的工作区和可用的 CLI。", "warning");
+      return;
+    }
+    await submitPreviewTurn({ ...base, action: "delegate", backend, workspaceId });
+  } else if (action === "clarification-select") {
     await submitPreviewTurn({
       ...base,
       action: "select",
@@ -466,8 +540,15 @@ async function submitPreviewTurn(request: ConversationTurnRequest): Promise<void
       if (request.action === "reply") clearClarificationReply();
     }
     if (result.kind === "archive") await Promise.all([refreshBuckets(), refreshAgenda()]);
+    if (request.action === "delegate" && result.kind === "clarification") {
+      state.delegateOptions = null;
+    }
     setStatus(
-      "chatError" in result ? result.chatError : "",
+      "chatError" in result
+        ? result.chatError
+        : request.action === "delegate" && result.kind === "clarification"
+          ? "已提交只读检查提案。请在 Agent 面板核对后审批。"
+          : "",
       "chatError" in result && result.chatError ? "warning" : "",
     );
     await loadHistory();

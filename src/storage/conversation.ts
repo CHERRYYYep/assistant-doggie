@@ -1,4 +1,26 @@
 import type { DatabaseSync } from "node:sqlite";
+import { z } from "zod";
+
+const groundedCitation = z.strictObject({
+  entryId: z.string(),
+  bucketId: z.string(),
+});
+const groundedFence = z.strictObject({
+  memoryRevision: z.number().int().nonnegative(),
+  card: z
+    .strictObject({ id: z.uuid(), revision: z.number().int().positive() })
+    .nullable(),
+  work: z
+    .strictObject({
+      id: z.uuid(),
+      scopeRevision: z.number().int().positive(),
+      status: z.string().optional(),
+    })
+    .nullable(),
+});
+export type GroundedFence = z.infer<typeof groundedFence>;
+export const STALE_CONTEXT_MESSAGE = "目标或记忆已更新，这轮结果不再适用。";
+
 import {
   StorageError,
   formatTimestamp,
@@ -166,7 +188,7 @@ export class ConversationStore {
          WHERE sequence > ? AND sequence <= ?
            AND role IN ('user', 'assistant')
            AND json_type(details_json, '$.work_item_id') IS NULL
-           AND COALESCE(json_extract(details_json, '$.kind') NOT IN ('task_clarification_input','task_clarification_result','task_clarification_reply'), 1)
+           AND COALESCE(json_extract(details_json, '$.kind') NOT IN ('task_clarification_input','task_clarification_result','task_clarification_reply','conversation_context_result','conversation_context_input'), 1)
          ORDER BY sequence DESC LIMIT ?`,
       )
       .all(fence, throughSequence ?? Number.MAX_SAFE_INTEGER, limit);
@@ -207,6 +229,45 @@ export class ConversationStore {
     });
   }
 
+  groundedResultCurrent(
+    memoryRevision: number,
+    card: { readonly id: string; readonly revision: number } | null,
+    work: {
+      readonly id: string;
+      readonly scopeRevision: number;
+      readonly status?: string | undefined;
+    } | null,
+  ): boolean {
+    if (this.getMemoryContextRevision() !== memoryRevision) return false;
+    if (
+      card !== null &&
+      this.#database
+        .prepare(
+          "SELECT 1 FROM conversation_clarifications WHERE id=? AND revision=? AND status='resolved' AND selected_id=? AND selected_scope_revision=?",
+        )
+        .get(
+          card.id,
+          card.revision,
+          work?.id ?? null,
+          work?.scopeRevision ?? null,
+        ) === undefined
+    )
+      return false;
+    return (
+      work === null ||
+      this.#database
+        .prepare(
+          "SELECT 1 FROM work_items WHERE id=? AND scope_revision=? AND cancel_requested=0 AND (? IS NULL OR status=?) AND (? = 0 OR status IN ('open','blocked','in_progress'))",
+        )
+        .get(
+          work.id,
+          work.scopeRevision,
+          work.status ?? null,
+          work.status ?? null,
+          card === null ? 0 : 1,
+        ) !== undefined
+    );
+  }
   /** Most recent `limit` messages, returned oldest-first for rendering. */
   listChatMessages(limit: number): ChatMessageRow[] {
     const rows = this.#database
@@ -224,16 +285,62 @@ export class ConversationStore {
       details_json: string | null;
       created_at: string;
     }[];
-    return rows.reverse().map((row) => ({
-      id: row.id,
-      sequence: row.sequence,
-      role: row.role,
-      content: row.content,
-      toolName: row.tool_name,
-      toolCallId: row.tool_call_id,
-      details:
-        row.details_json === null ? undefined : JSON.parse(row.details_json),
-      createdAt: row.created_at,
-    }));
+    return rows.reverse().map((row) => {
+      const details: unknown =
+        row.details_json === null ? undefined : JSON.parse(row.details_json);
+      let content = row.content;
+      let projectedDetails = details;
+      if (
+        details !== null &&
+        typeof details === "object" &&
+        Reflect.get(details, "kind") === "conversation_context_result"
+      ) {
+        const fence = groundedFence.safeParse(Reflect.get(details, "fence"));
+        if (
+          !fence.success ||
+          !this.groundedResultCurrent(
+            fence.data.memoryRevision,
+            fence.data.card,
+            fence.data.work,
+          )
+        ) {
+          content = STALE_CONTEXT_MESSAGE;
+          projectedDetails = { kind: "conversation_context_expired" };
+        } else {
+          const citations = z
+            .array(groundedCitation)
+            .max(6)
+            .safeParse(Reflect.get(details, "citations"));
+          if (citations.success && citations.data.length > 0) {
+            // A move changes only where to open the Entry, not the quoted text.
+            const locations = this.#database.prepare(
+              "SELECT bucket_id FROM entries WHERE id=? AND revoked_at IS NULL",
+            );
+            const refreshed = citations.data.flatMap(({ entryId }) => {
+              const bucketId = locations.get(entryId)?.["bucket_id"];
+              return typeof bucketId === "string"
+                ? [{ entryId, bucketId }]
+                : [];
+            });
+            if (refreshed.length !== citations.data.length) {
+              content = STALE_CONTEXT_MESSAGE;
+              projectedDetails = { kind: "conversation_context_expired" };
+            } else {
+              projectedDetails = { ...details, citations: refreshed };
+            }
+          }
+        }
+      }
+      return {
+        id: row.id,
+        sequence: row.sequence,
+        role: row.role,
+        content,
+        toolName: row.tool_name,
+        toolCallId: row.tool_call_id,
+        details: projectedDetails,
+        createdAt: row.created_at,
+      };
+    });
   }
 }

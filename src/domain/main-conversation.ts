@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { agentBackendSchema, agentTaskSchema } from "./agent.ts";
 
 const id = z.uuid();
 const revision = z.number().int().positive();
@@ -15,6 +16,13 @@ export const conversationTurnSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("select"), ...change, workItemId: id }),
   z.strictObject({ action: z.literal("none"), ...change }),
   z.strictObject({ action: z.literal("cancel"), ...change }),
+  z.strictObject({ action: z.literal("continue"), ...change }),
+  z.strictObject({
+    action: z.literal("delegate"),
+    ...change,
+    backend: agentBackendSchema,
+    workspaceId: id,
+  }),
 ]);
 
 export const clarificationReferenceSchema = z.strictObject({
@@ -35,6 +43,12 @@ export const clarificationCandidateSchema = clarificationReferenceSchema.extend(
     hint: z.string().max(240),
   },
 );
+export const conversationExecutionSchema = z.strictObject({
+  taskId: id,
+  status: z.union([agentTaskSchema.shape.status, z.literal("stale")]),
+  output: z.string().nullable(),
+  failureCode: z.string().nullable(),
+});
 export const clarificationCardSchema = z.strictObject({
   id,
   originalMessageId: id,
@@ -48,6 +62,7 @@ export const clarificationCardSchema = z.strictObject({
     .max(MAX_CLARIFICATION_CANDIDATES),
   selected: clarificationCandidateSchema.nullable(),
   question: z.string().min(1).max(240),
+  execution: conversationExecutionSchema.optional(),
 });
 const receipt = { userMessageId: id, assistantMessageId: id };
 export const conversationReceiptSchema = z.union([
@@ -81,7 +96,13 @@ export type ClarificationCard = Readonly<
 export type ClarificationStatus = ClarificationCard["status"];
 
 export class ConversationError extends Error {
-  readonly code: "missing" | "stale" | "conflict" | "in_progress" | "capacity";
+  readonly code:
+    | "missing"
+    | "stale"
+    | "conflict"
+    | "in_progress"
+    | "capacity"
+    | "context_limit";
   constructor(code: ConversationError["code"]) {
     const messages = {
       missing: "找不到这张澄清卡。",
@@ -89,6 +110,7 @@ export class ConversationError extends Error {
       conflict: "请求编号已用于另一项操作，或选择不属于这张卡。",
       in_progress: "该请求已接收，结果尚未确认。请刷新历史，避免重复发送。",
       capacity: "待澄清任务过多，请先处理或取消一张卡。",
+      context_limit: "原请求及补充超出提案上限。请用更聚焦的新请求继续。",
     };
     super(messages[code]);
     this.name = "ConversationError";

@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -345,6 +345,22 @@ CREATE TABLE conversation_requests (
 );
 `;
 
+const ADD_CONVERSATION_EXECUTION_V10 = `
+CREATE TABLE conversation_executions (
+ task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ clarification_id TEXT NOT NULL REFERENCES conversation_clarifications(id),
+ card_revision INTEGER NOT NULL CHECK(card_revision > 0)
+);
+CREATE INDEX ix_conversation_executions_card
+ ON conversation_executions(clarification_id,card_revision);
+CREATE TRIGGER conversation_execution_immutable BEFORE UPDATE ON conversation_executions
+BEGIN SELECT RAISE(ABORT,'conversation execution binding is immutable'); END;
+CREATE INDEX ix_conversation_supplements
+ ON conversation_messages(json_extract(details_json,'$.clarification_id'),sequence)
+ WHERE role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
+   AND json_extract(details_json,'$.action')='reply';
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -362,6 +378,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: 9,
     name: "add_main_clarifications_v9",
     sql: ADD_MAIN_CLARIFICATIONS_V9,
+  },
+  {
+    version: 10,
+    name: "link_conversation_execution_v10",
+    sql: ADD_CONVERSATION_EXECUTION_V10,
   },
 ];
 
@@ -390,4 +411,5 @@ export const OWNED_TABLES: readonly string[] = [
   "conversation_messages",
   "conversation_clarifications",
   "conversation_requests",
+  "conversation_executions",
 ];

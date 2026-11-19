@@ -1,7 +1,22 @@
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import {
+  agentApprovalResponseSchema,
+  agentWorkspaceResponseSchema,
+  clarificationListResponseSchema,
+  conversationTurnResponseSchema,
+  workItemResponseSchema,
+} from "../http/response-schemas.ts";
 import { DatabaseSync } from "node:sqlite";
 import { TaskQueue } from "../application/task-queue.ts";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempDisposableSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
@@ -660,3 +675,191 @@ test(
     }
   },
 );
+
+test("C3 composed preview delegates once to a registered workspace and returns the result only after explicit approval", async () => {
+  using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-c3-runtime-"));
+  const repo = join(dir.path, "repo");
+  mkdirSync(repo);
+  const git = (...args: string[]) =>
+    execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+      cwd: repo,
+      stdio: "pipe",
+    });
+  git("init", "-q");
+  writeFileSync(join(repo, "report.txt"), "Captured TCP handshakes\n");
+  git("add", "report.txt");
+  git(
+    "-c",
+    "user.name=Fixture",
+    "-c",
+    "user.email=fixture@example.invalid",
+    "commit",
+    "-qm",
+    "fixture",
+  );
+  const config = resolveRuntimeConfig(
+    {
+      OPENAI_API_KEY: "fixture-key",
+      OPENAI_MODEL: "fixture-model",
+      DOGGIE_DATABASE_PATH: join(dir.path, "test.db"),
+      DOGGIE_SERVER_ADDRESS: "127.0.0.1:0",
+      DOGGIE_AGENT_CODEX_COMMAND: process.execPath,
+      DOGGIE_AGENT_WORKSPACE_ROOTS: JSON.stringify([repo]),
+    },
+    {},
+    dir.path,
+  );
+  let runs = 0;
+  const runtime = await startDoggieLocalWeb(config, {
+    model: new FakeModel(),
+    agentRunner: {
+      async run({ cwd, task }) {
+        runs++;
+        assert.equal(cwd, repo);
+        assert.match(task.instruction, /只检查握手正文/);
+        assert.doesNotMatch(task.instruction, /UDP/);
+        return { output: "报告缺少 SYN-ACK 的解释", remoteId: randomUUID() };
+      },
+    },
+  });
+  try {
+    const post = (path: string, value: unknown) =>
+      fetch(new URL(path, runtime.url), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(value),
+      });
+    const getCards = async () =>
+      clarificationListResponseSchema.parse(
+        await (
+          await fetch(new URL("api/conversation/clarifications", runtime.url))
+        ).json(),
+      ).clarifications;
+    const send = async (value: unknown) => {
+      const response = await post("api/conversation/turns", value);
+      assert.equal(response.status, 200);
+      return conversationTurnResponseSchema.parse(await response.json()).result;
+    };
+    const workspace = agentWorkspaceResponseSchema.parse(
+      await (await post("api/agent/workspaces", { path: repo })).json(),
+    ).workspace;
+    const createGoal = async (title: string) =>
+      workItemResponseSchema.parse(
+        await (
+          await post("api/work-items", {
+            requestId: randomUUID(),
+            title,
+            goal: title,
+            acceptance: "列出描述中的遗漏，不改文件",
+          })
+        ).json(),
+      ).workItem;
+    const tcp = await createGoal("计网实验 TCP");
+    await createGoal("计网实验 UDP");
+    const openCard = async (title: string) => {
+      const result = await send({
+        action: "message",
+        requestId: randomUUID(),
+        text: `只读检查「${title}」的报告`,
+      });
+      assert.equal(result.kind, "clarification");
+      return result.clarificationId;
+    };
+    const first = await openCard(tcp.title);
+    const second = await openCard("计网实验 UDP");
+    let card = (await getCards()).find(({ id }) => id === first);
+    assert.ok(card);
+    assert.equal(card.selected, null);
+    assert.ok(card.candidates.some(({ id }) => id === tcp.id));
+    await send({
+      action: "select",
+      requestId: randomUUID(),
+      clarificationId: first,
+      expectedRevision: card.revision,
+      workItemId: tcp.id,
+    });
+    await send({
+      action: "reply",
+      requestId: randomUUID(),
+      clarificationId: first,
+      expectedRevision: card.revision + 1,
+      text: "只检查握手正文",
+    });
+    card = (await getCards()).find(({ id }) => id === first);
+    assert.ok(card);
+    const input = {
+      action: "delegate",
+      requestId: randomUUID(),
+      clarificationId: first,
+      expectedRevision: card.revision,
+      workspaceId: workspace.id,
+      backend: "codex",
+    };
+    const receipt = await send(input);
+    assert.deepEqual(await send(input), receipt);
+    const pending = runtime.agents.list();
+    assert.equal(pending.length, 1);
+    const [task] = pending;
+    assert.ok(task);
+    assert.equal(task.status, "pending");
+    assert.equal(runs, 0);
+    const resultCard = (await getCards()).find(({ id }) => id === first);
+    assert.equal(resultCard?.execution?.taskId, task.id);
+    assert.equal(
+      (await getCards()).find(({ id }) => id === second)?.execution,
+      undefined,
+    );
+    assert.equal(
+      (
+        await post("api/conversation/turns", {
+          ...input,
+          confirmation_granted: true,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await post("api/conversation/turns", {
+          ...input,
+          requestId: randomUUID(),
+        })
+      ).status,
+      409,
+    );
+    const response = await post(`api/agent/tasks/${task.id}/approve`, {
+      instruction: task.instruction,
+      confirmation_granted: true,
+    });
+    assert.equal(response.status, 202);
+    const approved = agentApprovalResponseSchema.parse(await response.json());
+    const events = await fetch(
+      new URL(`api/tasks/${approved.queueTask.id}/events`, runtime.url),
+      { signal: AbortSignal.timeout(5000) },
+    );
+    assert.match(await events.text(), /succeeded/);
+    assert.equal(runs, 1);
+    assert.equal(
+      (await getCards()).find(({ id }) => id === first)?.execution?.output,
+      "报告缺少 SYN-ACK 的解释",
+    );
+    assert.equal(
+      (await getCards()).find(({ id }) => id === second)?.execution,
+      undefined,
+    );
+    await send({
+      action: "cancel",
+      requestId: randomUUID(),
+      clarificationId: first,
+      expectedRevision: card.revision,
+    });
+    assert.equal(
+      (await getCards()).find(({ id }) => id === first)?.execution?.status,
+      "stale",
+    );
+    assert.equal(runtime.agents.get(task.id).output, "");
+    assert.equal(runtime.store.listBuckets().length, 0);
+  } finally {
+    await runtime.close();
+  }
+});

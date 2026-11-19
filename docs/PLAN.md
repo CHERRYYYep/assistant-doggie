@@ -49,9 +49,9 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 后端修缮 R0–R5 与后续 A1–A3 的提交、行为合同和逐阶段验收见[后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)：跨范围 WorkItem 最近尝试摘要同步；传输层按实际响应体字节限制为 1 MiB；归档投影只查询当前 Entry 的有效 Memory ID，历史卡片只查 Bucket 元数据。A1/A2/A3 提交分别为 `0dcce2d`、`8652db8`、`8b7c2d6`。B1 Agent 终态合同、B2 结构化模型重试已独立提交并完成验收；最新前置门禁为 550 后端 + 60 前端通过，详见[C0 前计划](PRE_C0_BACKEND_PLAN.md#9-当前执行记录)。索引/分页 D1 与 Store 职责 D2 仍未实施，不自动阻塞 C0。
 
-### 主对话澄清与本地续做（C0–C2 完成，C3–C4 待实施）
+### 主对话澄清与本地续做（C0–C3 完成，C4 待实施）
 
-后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。[C1 用途分流](MAIN_CONVERSATION_C1_ACCEPTANCE.md)已在 ChatService 中完成，旧 API 与默认网页保持兼容。[C2](MAIN_CONVERSATION_C2_ACCEPTANCE.md) 已交付可恢复的澄清卡和可选预览，C3 接本地上下文和执行结果，C4 对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
+后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。[C1 用途分流](MAIN_CONVERSATION_C1_ACCEPTANCE.md)已在 ChatService 中完成，旧 API 与默认网页保持兼容。[C2](MAIN_CONVERSATION_C2_ACCEPTANCE.md) 已交付可恢复的澄清卡；[C3](MAIN_CONVERSATION_C3_ACCEPTANCE.md) 已接入本地上下文、证据引用和受批准只读执行，C4 仍负责对照验收。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
 
 ### 阶段冻结与未完成事项（2026-11-19）
 
@@ -59,8 +59,8 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步 | C3：本地取证、受批准执行与结果回传 | [主对话实施计划 §5](MAIN_CONVERSATION_PLAN.md) |
-| 待实施 | C3 本地证据与受批准执行；C4 对照验收和默认切换 | [主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
+| 下一步 | C4：旧入口与主对话预览对照验收 | [主对话实施计划 §5](MAIN_CONVERSATION_PLAN.md) |
+| 待实施 | C4 对照验收和默认切换；真实自用验收仍另行安排 | [主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
 | 明确延后 | 真实自用验收、全面视觉改版、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
@@ -76,7 +76,7 @@ C0 已固定旧入口行为并整理 11 组样本。C1 验收后的完整门禁�
 | `dev` | Python + Rust 并存 | **Python 参考**，`128 passed in 6.18s` |
 | `dev_rust` | 纯 Rust workspace | **Rust 参考**，124 测试 |
 | `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5、A1–A3、B0–B3 和 C0 开工前交接 |
-| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 C0–C2 自动化验收；C3–C4 待实施 |
+| `codex/main-conversation-backend` | ← **当前实施分支** | 包含 C0–C3 自动化验收；C4 待实施 |
 
 ---
 

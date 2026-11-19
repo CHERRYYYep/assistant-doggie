@@ -22,13 +22,29 @@ import {
   fetchTask,
   watchTask,
 } from "./api.ts";
+import { activateWorkspace } from "./workspace.ts";
 
 let tasks = new Map<string, AgentTask>();
 const observers = new Map<string, AbortController>();
 let refreshPromise: Promise<void> | undefined;
 let refreshAgain = false;
+let refreshConversation: ((taskId: string) => void) | undefined;
 const message = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+export function bindAgentConversationRefresh(refresh: (taskId: string) => void): void {
+  refreshConversation = refresh;
+}
+
+export async function showAgentTask(taskId?: string): Promise<void> {
+  activateWorkspace("tools", true);
+  await refreshAgents();
+  if (taskId === undefined) return;
+  const task = document.getElementById(`agent-task-${taskId}`);
+  if (task) task.focus();
+  else agentStatus.textContent = `当前列表未显示任务 ${taskId}。请刷新确认。`;
+}
+
 export function renderAgentTasks(values: readonly AgentTask[]): string {
   return (
     values
@@ -40,7 +56,7 @@ export function renderAgentTasks(values: readonly AgentTask[]): string {
             : task.status === "queued" || task.status === "running"
               ? `<button data-action="agent-cancel" data-task-id="${id}">取消</button>`
               : "";
-        return `<article class="agent-card"><strong>${escapeHtml(task.backend)} · ${escapeHtml(task.status)}</strong><pre>${escapeHtml(task.instruction)}</pre><small>任务 ${id}<br>会话 ${escapeHtml(task.sessionId)}<br>工作区 ${escapeHtml(task.workspaceId ?? "无目录")}</small><div>${buttons}</div>${task.output ? `<pre>${escapeHtml(task.output)}</pre>` : ""}${task.failureCode ? `<p>${escapeHtml(task.failureCode)}</p>` : ""}</article>`;
+        return `<article class="agent-card" id="agent-task-${id}" tabindex="-1"><strong>${escapeHtml(task.backend)} · ${escapeHtml(task.status)}</strong><pre>${escapeHtml(task.instruction)}</pre><small>任务 ${id}<br>会话 ${escapeHtml(task.sessionId)}<br>工作区 ${escapeHtml(task.workspaceId ?? "无目录")}</small><div>${buttons}</div>${task.output ? `<pre>${escapeHtml(task.output)}</pre>` : ""}${task.failureCode ? `<p>${escapeHtml(task.failureCode)}</p>` : ""}</article>`;
       })
       .join("") || '<p class="muted">暂无 Agent 任务。创建提案后需再次批准。</p>'
   );
@@ -54,8 +70,9 @@ function observe(task: AgentTask): void {
   void (async () => {
     try {
       const initial = (await fetchTask(queueId, controller.signal)).task;
-      await watchTask(initial, () => {}, { signal: controller.signal });
+      await watchTask(initial, () => refreshConversation?.(task.id), { signal: controller.signal });
       await refreshAgents();
+      refreshConversation?.(task.id);
     } catch (error) {
       agentStatus.textContent = `状态跟踪暂停：${message(error)}；可刷新查看，勿重复批准。`;
     } finally {
@@ -149,6 +166,7 @@ export async function actOnAgent(
   try {
     await postAgentAction(task, action);
     await refreshAgents();
+    refreshConversation?.(id);
   } catch (error) {
     agentStatus.textContent = `${message(error)}；请刷新检查状态，不要重复批准。`;
   }

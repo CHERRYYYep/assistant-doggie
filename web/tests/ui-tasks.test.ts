@@ -9,7 +9,8 @@ import { installDom, StubElement } from "./dom-harness.ts";
 const dom = installDom();
 const { state } = await import("../assets/state.ts");
 const views = await import("../assets/views.ts");
-const { renderTranscript, renderClarification } = await import("../assets/render-chat.ts");
+const { renderTranscript, renderClarification, renderMessage } =
+  await import("../assets/render-chat.ts");
 const originalFetch = globalThis.fetch;
 after(() => dom.restore());
 afterEach(async () => {
@@ -22,6 +23,7 @@ afterEach(async () => {
   state.history = [];
   state.preview = false;
   state.clarifications = [];
+  state.delegateOptions = null;
   state.retryTurn = null;
   views.clearClarificationReply();
   state.activeBuckets = [];
@@ -590,6 +592,7 @@ test("real entry point binds task controls and bootstraps recovery", async () =>
   assert.ok(calls.includes("GET /api/tasks"));
   assert.ok(element("task-list").listeners.has("click"));
   assert.ok(element("task-refresh").listeners.has("click"));
+  assert.ok(element("conversation-refresh").listeners.has("click"));
   element("task-refresh").trigger("click", {});
   await setImmediate();
   assert.equal(calls.filter((call) => call === "GET /api/tasks").length, 2);
@@ -918,4 +921,279 @@ test("preview restores cards, keeps interludes independent, retries the same pay
   assert.equal(state.clarifications[0]?.status, "stale");
   assert.equal(state.retryTurn, null);
   assert.match(element("chat-status").textContent ?? "", /版本已变化/);
+});
+
+const resolvedCard: ClarificationCardDto = {
+  ...card,
+  status: "resolved",
+  revision: 2,
+  candidates: [],
+  selected: tcp,
+};
+
+test("C3 renders escaped sources and results, and removes stale output", () => {
+  const evil = '"><img src=x onerror="alert(1)">';
+  const taskId = randomUUID();
+  const html = renderClarification({
+    ...resolvedCard,
+    execution: { taskId, status: "succeeded", output: evil, failureCode: null },
+  });
+  assert.match(html, /工具输出（未归档）/);
+  assert.match(html, /&lt;img/);
+  assert.doesNotMatch(html, /<img/);
+  const stale = renderClarification({
+    ...resolvedCard,
+    status: "stale",
+    execution: { taskId, status: "succeeded", output: "旧结果不应显示", failureCode: null },
+  });
+  assert.match(stale, /已失效/);
+  assert.doesNotMatch(stale, /旧结果不应显示|clarification-(continue|prepare)/);
+
+  const sourced = renderMessage({
+    ...message("reply", "由本地资料支持。"),
+    role: "assistant",
+    details: { citations: [{ entryId: evil, bucketId: evil }, { entryId: "invalid" }] },
+  });
+  assert.match(sourced, /data-bucket-id="&quot;&gt;&lt;img/);
+  assert.match(sourced, /data-entry-id="&quot;&gt;&lt;img/);
+  assert.doesNotMatch(sourced, /<img|来源 2/);
+});
+
+test("C3 continuing a selected target uses its exact card revision and loads the evidence links", async () => {
+  let response: ChatMessageDto | undefined;
+  const writes: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    switch (String(input)) {
+      case "/api/chat/history?limit=40":
+        return json({ ok: true, messages: response ? [response] : [] });
+      case "/api/conversation/clarifications":
+        return json({ ok: true, clarifications: [resolvedCard] });
+      case "/api/conversation/turns":
+        assert.equal(init?.method, "POST");
+        writes.push(JSON.parse(String(init.body)) as unknown);
+        response = {
+          ...message(randomUUID(), "从实验报告中确认 SYN-ACK 在第二步。"),
+          role: "assistant",
+          details: { citations: [{ entryId: "entry-syn", bucketId: "bucket-net" }] },
+        };
+        return json({
+          ok: true,
+          result: {
+            kind: "clarification",
+            clarificationId: resolvedCard.id,
+            userMessageId: randomUUID(),
+            assistantMessageId: response.id,
+          },
+        });
+      default:
+        throw new Error(`Unexpected route ${String(input)}`);
+    }
+  };
+  await views.setConversationPreview(true);
+  const button = new StubElement();
+  Object.assign(button.dataset, {
+    action: "clarification-continue",
+    clarificationId: resolvedCard.id,
+    revision: String(resolvedCard.revision),
+  });
+  await views.actOnClarification(button as unknown as HTMLButtonElement);
+  assert.deepEqual(writes, [
+    {
+      action: "continue",
+      clarificationId: resolvedCard.id,
+      expectedRevision: resolvedCard.revision,
+      requestId: Reflect.get(Object(writes[0]), "requestId"),
+    },
+  ]);
+  assert.match(String(Reflect.get(Object(writes[0]), "requestId")), /^[a-f\d-]{36}$/);
+  const transcript = element("chat-messages")
+    .nodes.map((node) => node.innerHTML)
+    .join("");
+  assert.match(transcript, /SYN-ACK 在第二步/);
+  assert.match(transcript, /data-bucket-id="bucket-net" data-entry-id="entry-syn"/);
+});
+
+test("C3 requires explicit workspace and CLI and retries only the same read-only proposal", async () => {
+  let current = resolvedCard;
+  let drop = true;
+  const requests: unknown[] = [];
+  const routes: string[] = [];
+  const taskId = randomUUID();
+  const workspaceId = randomUUID();
+  globalThis.fetch = async (input, options) => {
+    const path = String(input);
+    routes.push(path);
+    if (path === "/api/chat/history?limit=40") return json({ ok: true, messages: [] });
+    if (path === "/api/conversation/clarifications")
+      return json({ ok: true, clarifications: [current] });
+    if (path === "/api/agent/capabilities")
+      return json({ ok: true, backends: ["codex"], permission: "read_only" });
+    if (path === "/api/agent/workspaces")
+      return json({
+        ok: true,
+        workspaces: [
+          {
+            id: workspaceId,
+            path: "/repo/<script>alert(1)</script>",
+            baseCommit: "1".repeat(40),
+            gitStatus: "",
+            createdAt: "2026-11-19T00:00:00.000Z",
+          },
+        ],
+      });
+    if (path === "/api/agent/tasks") return json({ ok: true, tasks: [] });
+    if (path === "/api/conversation/turns") {
+      assert.equal(options?.method, "POST");
+      const body: unknown = JSON.parse(String(options.body));
+      requests.push(body);
+      if (drop) throw new Error("connection lost");
+      current = {
+        ...current,
+        revision: 3,
+        execution: { taskId, status: "pending", output: null, failureCode: null },
+      };
+      return json({
+        ok: true,
+        result: {
+          kind: "clarification",
+          clarificationId: current.id,
+          userMessageId: randomUUID(),
+          assistantMessageId: randomUUID(),
+        },
+      });
+    }
+    throw new Error(`Unexpected route ${path}`);
+  };
+
+  const button = (action: string, fields: Record<string, string> = {}): StubElement => {
+    const node = new StubElement();
+    Object.assign(node.dataset, {
+      action,
+      clarificationId: current.id,
+      revision: String(current.revision),
+      ...fields,
+    });
+    return node;
+  };
+  const act = (node: StubElement) => views.actOnClarification(node as unknown as HTMLButtonElement);
+  const composer = element("chat-input");
+  await views.setConversationPreview(true);
+  assert.equal(element("conversation-refresh").hidden, false);
+  await act(button("clarification-reply"));
+  composer.value = "只允许检查报告";
+  await act(button("clarification-continue"));
+  assert.match(element("chat-status").textContent ?? "", /请先发送或丢弃这张卡/);
+  assert.equal(requests.length, 0);
+  views.discardClarificationReply();
+
+  await act(button("clarification-prepare"));
+  const pendingForm = element("chat-messages").nodes[0]?.innerHTML ?? "";
+  assert.match(pendingForm, /data-delegate-workspace.*请选择工作区/);
+  assert.match(pendingForm, /data-delegate-backend.*请选择 CLI/);
+  assert.match(pendingForm, /&lt;script&gt;/);
+  assert.doesNotMatch(pendingForm, /<script>/);
+
+  const form = new StubElement();
+  const workspace = new StubElement();
+  const backend = new StubElement();
+  form.controls.set("[data-delegate-workspace]", workspace);
+  form.controls.set("[data-delegate-backend]", backend);
+  const submit = button("clarification-delegate");
+  form.insertBefore(submit, null);
+  await act(submit);
+  assert.deepEqual(requests, []);
+  workspace.value = workspaceId;
+  backend.value = "codex";
+  composer.value = "无关的主对话草稿";
+  await act(submit);
+  assert.equal(composer.value, "无关的主对话草稿");
+  assert.equal(requests.length, 1);
+  assert.equal(element("conversation-retry").hidden, false);
+  const requestId = state.retryTurn?.requestId;
+  assert.ok(requestId);
+  assert.deepEqual(requests[0], {
+    requestId,
+    action: "delegate",
+    clarificationId: current.id,
+    expectedRevision: 2,
+    backend: "codex",
+    workspaceId,
+  });
+  drop = false;
+  await views.retryConversationTurn();
+  assert.deepEqual(requests, [requests[0], requests[0]]);
+  assert.equal(element("conversation-retry").hidden, true);
+  const submitted = element("chat-messages").nodes[0]?.innerHTML ?? "";
+  assert.match(submitted, /等待批准/);
+  assert.doesNotMatch(submitted, /clarification-(prepare|delegate)|agent-approve/);
+  assert.equal(
+    routes.some((path) => path.includes("/approve")),
+    false,
+  );
+
+  const taskFocus = new StubElement();
+  const focusId = `agent-task-${taskId}`;
+  dom.elements.set(focusId, taskFocus);
+  try {
+    await act(button("clarification-agent", { taskId }));
+    assert.equal(element("view-tools").hidden, false);
+    assert.equal(taskFocus.focused, true);
+    assert.equal(routes.at(-1), "/api/agent/tasks");
+  } finally {
+    dom.elements.delete(focusId);
+  }
+});
+
+test("C3 citations identify the particular active Entry or report that it is unavailable", async () => {
+  const bucketId = "bucket-1";
+  const timestamp = "2026-11-19T00:00:00.000Z";
+  const bucket = {
+    id: bucketId,
+    title: "计网实验",
+    type: "task",
+    status: "active",
+    summary: "",
+    tags: [],
+    created_at: timestamp,
+    updated_at: timestamp,
+    last_active_at: timestamp,
+    archived_at: null,
+  };
+  const entry = {
+    id: "observed",
+    bucket_id: bucketId,
+    raw_text: "抓包结果",
+    summary: null,
+    content_type: "text",
+    classification_confidence: null,
+    classification_reason: null,
+    created_at: timestamp,
+    moved_from_bucket_id: null,
+    archive_state: "archived",
+    archived_at: timestamp,
+  };
+  globalThis.fetch = async () =>
+    json({
+      ok: true,
+      detail: {
+        bucket,
+        entries: [{ ...entry, id: "other", raw_text: "其他记录" }, entry],
+        memories: [],
+      },
+    });
+  const detail = element("detail");
+  const citation = new StubElement();
+  detail.controls.set("#cited-entry", citation);
+  try {
+    await views.showBucket(bucketId, true, "observed");
+    assert.equal(element("view-memory").hidden, false);
+    assert.equal(citation.focused, true);
+    assert.match(detail.innerHTML, /id="cited-entry"[\s\S]*?引用来源[\s\S]*?抓包结果/);
+    assert.doesNotMatch(detail.innerHTML, /不在当前 Bucket/);
+    await views.showBucket(bucketId, true, "revoked");
+    assert.match(detail.innerHTML, /不在当前 Bucket 的有效记录中/);
+    assert.doesNotMatch(detail.innerHTML, /id="cited-entry"/);
+  } finally {
+    detail.controls.delete("#cited-entry");
+  }
 });

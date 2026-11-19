@@ -6,6 +6,7 @@
  */
 
 import type { TaskSnapshot } from "../../src/domain/task.ts";
+import type { AgentBackend, AgentWorkspace } from "../../src/domain/agent.ts";
 import type { ConversationTurnRequest } from "../../src/http/contracts.ts";
 import type {
   ClarificationCardDto,
@@ -13,6 +14,13 @@ import type {
   TodoDto,
   UiChatMessageDto,
 } from "../../src/http/dto.ts";
+
+export type ConversationDelegateOptions = {
+  readonly clarificationId: string;
+  readonly revision: number;
+  readonly backends: readonly AgentBackend[];
+  readonly workspaces: readonly Pick<AgentWorkspace, "id" | "path" | "baseCommit">[];
+};
 
 export type FrontendState = {
   /** Active buckets as last returned by the server. */
@@ -24,6 +32,7 @@ export type FrontendState = {
   history: UiChatMessageDto[];
   preview: boolean;
   clarifications: readonly ClarificationCardDto[];
+  delegateOptions: ConversationDelegateOptions | null;
   reply: { readonly clarificationId: string; readonly expectedRevision: number } | null;
   retryTurn: ConversationTurnRequest | null;
   tasks: Map<string, TaskSnapshot>;
@@ -46,6 +55,7 @@ export const state: FrontendState = {
   history: [],
   preview: false,
   clarifications: [],
+  delegateOptions: null,
   reply: null,
   retryTurn: null,
   tasks: new Map(),

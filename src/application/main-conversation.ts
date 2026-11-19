@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import type { AgentService } from "../agent/service.ts";
 import {
   clarificationCardSchema,
   conversationTurnSchema,
@@ -14,10 +16,14 @@ import {
   type ConversationReceipt,
   type ConversationTurn,
 } from "../domain/main-conversation.ts";
+import { AgentError, HarnessError } from "../domain/agent.ts";
+import { LlmError } from "../llm/structured-output.ts";
 import { decideChatPurpose } from "../domain/chat-purpose.ts";
 import {
   resolveWorkItem,
   WorkItemError,
+  workItemAttemptSchema,
+  workItemInstruction,
   type WorkItem,
 } from "../domain/work-item.ts";
 import { throwIfAborted } from "../llm/cancellation.ts";
@@ -26,9 +32,35 @@ import type {
   StoredClarification,
 } from "../storage/clarifications.ts";
 import type { WorkItemStore } from "../storage/work-items.ts";
+import {
+  STALE_CONTEXT_MESSAGE,
+  type GroundedFence,
+} from "../storage/conversation.ts";
+import {
+  type ConversationContext,
+  type ConversationContextService,
+  type GroundedResult,
+  explicitGoalReview,
+  MAX_SUPPLEMENTS,
+} from "./conversation-context.ts";
 import type { ChatService } from "./chat.ts";
 
-type Mutation = Exclude<ConversationTurn, { action: "message" }>;
+type Mutation = Exclude<
+  ConversationTurn,
+  { action: "message" | "continue" | "delegate" }
+>;
+type Continue = Extract<ConversationTurn, { action: "continue" }>;
+type Delegate = Extract<ConversationTurn, { action: "delegate" }>;
+type Lookup = Extract<ConversationTurn, { action: "message" }>;
+type GroundedTurn = Continue | Lookup;
+type GroundedAdmission = {
+  readonly userMessageId: string;
+  readonly fence: GroundedFence;
+  readonly context: ConversationContext;
+  readonly entryIds: readonly string[];
+  readonly allowTitleSearch: boolean;
+  readonly immediate?: GroundedResult;
+};
 const ref = (item: WorkItem): ClarificationReference => ({
   id: item.id,
   scopeRevision: item.scopeRevision,
@@ -49,14 +81,34 @@ export class MainConversationService {
   readonly #cards: ClarificationStore;
   readonly #items: WorkItemStore;
   readonly #chat: ChatService;
+  readonly #grounding: ConversationContextService | undefined;
+  readonly #agent:
+    | Pick<
+        AgentService,
+        | "verifyWorkItemWorkspace"
+        | "proposeForConversationWithinTransaction"
+        | "conversationExecution"
+        | "rejectPendingForConversationWithinTransaction"
+      >
+    | undefined;
   constructor(
     cards: ClarificationStore,
     items: WorkItemStore,
     chat: ChatService,
+    grounding?: ConversationContextService,
+    agent?: Pick<
+      AgentService,
+      | "verifyWorkItemWorkspace"
+      | "proposeForConversationWithinTransaction"
+      | "conversationExecution"
+      | "rejectPendingForConversationWithinTransaction"
+    >,
   ) {
     this.#cards = cards;
     this.#items = items;
     this.#chat = chat;
+    this.#grounding = grounding;
+    this.#agent = agent;
   }
   list(): readonly ClarificationCard[] {
     return this.#cards.list().map((card) => this.#project(card));
@@ -65,6 +117,14 @@ export class MainConversationService {
     const input = conversationTurnSchema.parse(raw);
     return this.#chat.coordinateMain(async (dispatch) => {
       throwIfAborted(signal);
+      if (input.action === "delegate") return this.#delegate(input, signal);
+      if (
+        input.action === "continue" ||
+        (input.action === "message" &&
+          this.#grounding !== undefined &&
+          decideChatPurpose(input.text).kind === "lookup")
+      )
+        return this.#grounded(input, signal);
       const entered = this.#cards.transaction(() => {
         const replay = this.#cards.begin(input);
         if (replay !== null) return replay;
@@ -94,6 +154,273 @@ export class MainConversationService {
       if (result === undefined) throw new Error("missing published turn");
       return result;
     }, signal);
+  }
+
+  #resolved(input: Continue | Delegate) {
+    const card = this.#cards.get(input.clarificationId);
+    const item = card.selected === null ? undefined : this.#live(card.selected);
+    if (
+      card.status !== "resolved" ||
+      card.revision !== input.expectedRevision ||
+      item === undefined
+    )
+      throw new ConversationError("stale");
+    return { card, item };
+  }
+
+  async #delegate(
+    input: Delegate,
+    signal?: AbortSignal,
+  ): Promise<ConversationReceipt> {
+    const replay = this.#cards.replay(input);
+    if (replay !== null) return replay;
+    const agent = this.#agent;
+    if (agent === undefined) throw new AgentError("disabled");
+    this.#resolved(input);
+    const memoryRevision = this.#cards.memoryRevision();
+    await agent.verifyWorkItemWorkspace(
+      input.backend,
+      input.workspaceId,
+      signal,
+    );
+    throwIfAborted(signal);
+    return this.#cards.transaction<ConversationReceipt>(() => {
+      const replay = this.#cards.begin(input);
+      if (replay !== null) return replay;
+      const { card, item } = this.#resolved(input);
+      if (this.#cards.memoryRevision() !== memoryRevision)
+        throw new ConversationError("stale");
+      const supplements = this.#cards.supplements(card, MAX_SUPPLEMENTS + 1);
+      const entryIds = this.#items.entrySourceIds(item.id, 17);
+      const instruction = [
+        "只读检查明确登记的工作区。只输出发现与建议，不写文件。",
+        `目标 ID：${item.id}；范围版本：${item.scopeRevision}`,
+        "原请求：",
+        card.originalText,
+        ...supplements.flatMap((text) => ["补充要求：", text]),
+        ...(entryIds.length === 0
+          ? []
+          : [`关联 Entry（仅作材料引用）：${entryIds.join("、")}`]),
+      ].join("\n");
+      const attempt = workItemAttemptSchema.safeParse({
+        requestId: randomUUID(),
+        expectedRevision: item.revision,
+        backend: input.backend,
+        workspaceId: input.workspaceId,
+        instruction,
+      });
+      const fullInstruction = workItemInstruction(item, instruction);
+      if (
+        !attempt.success ||
+        supplements.length > MAX_SUPPLEMENTS ||
+        entryIds.length > 16 ||
+        fullInstruction.length > 12000 ||
+        Buffer.byteLength(fullInstruction) * 2 + 512 > 32 * 1024
+      )
+        throw new ConversationError("context_limit");
+      const task = agent.proposeForConversationWithinTransaction(
+        item.id,
+        attempt.data,
+        card,
+      );
+      const user = this.#cards.append({
+        role: "user",
+        content: "创建工作区只读检查提案",
+        details: {
+          kind: "conversation_context_input",
+          clarification_id: card.id,
+        },
+      });
+      return this.#publish(
+        input.requestId,
+        user.id,
+        {
+          kind: "clarification",
+          clarificationId: card.id,
+        },
+        "已创建只读检查提案，批准后才会运行。",
+        {
+          kind: "task_clarification_result",
+          clarification_id: card.id,
+          task_id: task.id,
+        },
+      );
+    });
+  }
+
+  #admitGrounded(input: GroundedTurn): GroundedAdmission {
+    let cardRef: GroundedFence["card"] = null;
+    let work: GroundedFence["work"] = null;
+    let target: ConversationContext["target"] = null;
+    let supplements: readonly string[] = [];
+    let entryIds: readonly string[] = [];
+    let allowTitleSearch = false;
+    let immediate: GroundedResult | undefined;
+    let original: string;
+    if (input.action === "continue") {
+      const { card, item } = this.#resolved(input);
+      cardRef = { id: card.id, revision: card.revision };
+      work = { id: item.id, scopeRevision: item.scopeRevision };
+      const {
+        id,
+        title,
+        goal,
+        acceptance,
+        status,
+        lastAttemptId,
+        lastAttemptStatus,
+      } = item;
+      target = {
+        id,
+        title,
+        goal,
+        acceptance,
+        status,
+        lastAttemptId,
+        lastAttemptStatus,
+      };
+      supplements = this.#cards.supplements(card, MAX_SUPPLEMENTS + 1);
+      entryIds = this.#items.entrySourceIds(item.id, 16);
+      allowTitleSearch = this.#items.findExactTitle(item.title).length === 1;
+      original = card.originalText;
+    } else {
+      original = input.text;
+      const title = explicitGoalReview(original);
+      if (title !== undefined) {
+        const candidates = this.#items.findExactTitle(title);
+        const identity = candidates.length === 1 ? candidates[0] : undefined;
+        if (identity === undefined) {
+          immediate = {
+            text:
+              candidates.length === 0
+                ? "没有找到这个完整名称的工作目标。"
+                : "有多个同名目标，请在工作目标列表中核对。",
+            citations: [],
+          };
+        } else {
+          const item = this.#items.get(identity.id);
+          if (item.cancelRequested) {
+            immediate = {
+              text: "这个工作目标正在取消，请稍后查看。",
+              citations: [],
+            };
+          } else {
+            work = {
+              id: item.id,
+              scopeRevision: item.scopeRevision,
+              status: item.status,
+            };
+            immediate = {
+              text: `「${item.title}」
+状态：${item.status}
+验收要求：${item.acceptance}`,
+              citations: [],
+            };
+          }
+        }
+      }
+    }
+    const user = this.#cards.append({
+      role: "user",
+      content: cardRef === null ? original : "按原请求和补充继续处理",
+      details: {
+        kind: "conversation_context_input",
+        clarification_id: cardRef?.id ?? null,
+      },
+    });
+    return {
+      userMessageId: user.id,
+      fence: {
+        memoryRevision: this.#cards.memoryRevision(),
+        card: cardRef,
+        work,
+      },
+      context: { original, supplements, target },
+      entryIds,
+      allowTitleSearch,
+      ...(immediate === undefined ? {} : { immediate }),
+    };
+  }
+
+  async #grounded(
+    input: GroundedTurn,
+    signal?: AbortSignal,
+  ): Promise<ConversationReceipt> {
+    const entry = this.#cards.transaction<
+      GroundedAdmission | ConversationReceipt
+    >(() => {
+      const replay = this.#cards.begin(input);
+      return replay ?? this.#admitGrounded(input);
+    });
+    if ("kind" in entry) return entry;
+    const current = () =>
+      this.#cards.contextCurrent(entry.fence) &&
+      (entry.fence.card === null ||
+        (entry.fence.work !== null &&
+          this.#items.hasAvailableScopeSources(entry.fence.work.id)));
+    let result: GroundedResult;
+    try {
+      result = entry.immediate ??
+        (await this.#grounding?.answer(
+          entry.context,
+          entry.entryIds,
+          entry.allowTitleSearch,
+          current,
+          signal,
+        )) ?? {
+          text: "当前无法处理材料，可补充原文或创建只读检查提案。",
+          citations: [],
+        };
+    } catch (error) {
+      if (signal?.aborted) throwIfAborted(signal);
+      if (!(error instanceof HarnessError) && !(error instanceof LlmError))
+        throw error;
+      result = { text: "暂时无法从资料生成答案，请稍后重试。", citations: [] };
+    }
+    throwIfAborted(signal);
+    return this.#cards.transaction<ConversationReceipt>(() => {
+      const valid = current();
+      return this.#publish(
+        input.requestId,
+        entry.userMessageId,
+        input.action === "continue"
+          ? { kind: "clarification", clarificationId: input.clarificationId }
+          : { kind: "lookup", chatError: valid ? null : STALE_CONTEXT_MESSAGE },
+        valid ? result.text : STALE_CONTEXT_MESSAGE,
+        valid
+          ? {
+              kind: "conversation_context_result",
+              fence: entry.fence,
+              citations: result.citations,
+              workItemId: entry.fence.work?.id,
+              clarification_id: entry.fence.card?.id,
+            }
+          : { kind: "conversation_context_result", fence: entry.fence },
+      );
+    });
+  }
+
+  #publish(
+    requestId: string,
+    userMessageId: string,
+    payload:
+      | { kind: "clarification"; clarificationId: string }
+      | { kind: "lookup"; chatError: string | null },
+    content: string,
+    details: Readonly<Record<string, unknown>>,
+  ): ConversationReceipt {
+    const assistant = this.#cards.append({
+      role: "assistant",
+      content,
+      details: { ...details, source_message_id: userMessageId },
+    });
+    const result = {
+      ...payload,
+      userMessageId,
+      assistantMessageId: assistant.id,
+    };
+    this.#cards.finish(requestId, result);
+    return result;
   }
 
   #live(reference: ClarificationReference): WorkItem | undefined {
@@ -132,12 +459,14 @@ export class MainConversationService {
       (card.status === "pending" &&
         candidates.length !== card.candidates.length);
     const status = invalid ? "stale" : card.status;
+    const execution = this.#agent?.conversationExecution(card.id);
     const projected = clarificationCardSchema.safeParse({
       id: card.id,
       originalMessageId: card.originalMessageId,
       assistantMessageId: card.assistantMessageId,
       originalText: card.originalText,
       latestReply: card.latestReply,
+      ...(execution == null ? {} : { execution }),
       status,
       revision: card.revision,
       candidates: status === "pending" ? candidates : [],
@@ -384,6 +713,7 @@ export class MainConversationService {
           ? null
           : { id: selected.id, scopeRevision: selected.scopeRevision },
     });
+    this.#agent?.rejectPendingForConversationWithinTransaction(card.id);
     const result = {
       kind: "clarification",
       clarificationId: card.id,

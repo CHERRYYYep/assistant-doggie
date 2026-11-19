@@ -334,6 +334,10 @@ function assertSchemaShape(database: DatabaseSync): void {
       ],
     ],
     ["conversation_requests", ["request_id", "payload_hash", "result_json"]],
+    [
+      "conversation_executions",
+      ["task_id", "clarification_id", "card_revision"],
+    ],
     ["buckets", ["workspace_id"]],
     ["entries", ["revoked_at"]],
     ["agent_sessions", ["memory_revision"]],

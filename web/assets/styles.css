@@ -1667,3 +1667,26 @@ button:disabled {
 .clarification-card button {
   margin: 0.25rem 0.4rem 0.25rem 0;
 }
+
+.clarification-delegate {
+  padding: 0.5rem 0;
+}
+
+.clarification-delegate label {
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.clarification-delegate select {
+  max-width: 100%;
+}
+
+.clarification-execution pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cited-entry:focus {
+  outline: 2px solid currentColor;
+  outline-offset: 0.25rem;
+}

@@ -6,11 +6,19 @@ import {
   type AgentCompletion,
   type AgentTask,
 } from "../domain/agent.ts";
-import { WorkItemError, workItemAttemptSchema } from "../domain/work-item.ts";
+import {
+  WorkItemError,
+  workItemAttemptSchema,
+  type WorkItemAttempt,
+} from "../domain/work-item.ts";
 import { TaskError } from "../domain/task.ts";
 import type { TaskQueue } from "../application/task-queue.ts";
 import { throwIfAborted } from "../llm/cancellation.ts";
 import { AgentStore } from "../storage/agents.ts";
+import type {
+  ConversationExecutionProjection,
+  ConversationExecutionReference,
+} from "../storage/conversation-execution.ts";
 import { WorkspacePolicy, assertWorkspaceUnchanged } from "./workspace.ts";
 import { withAgentCwd, type AgentProcessRunner } from "./process.ts";
 export class AgentService {
@@ -41,10 +49,12 @@ export class AgentService {
     return { backends: this.#enabled, permission: "read_only" as const };
   }
   list() {
-    return this.#store.tasks();
+    return this.#store
+      .tasks()
+      .map((task) => this.#store.publicProjection(task));
   }
   get(id: string) {
-    return this.#store.task(id);
+    return this.#store.publicProjection(this.#store.task(id));
   }
   workspaces() {
     return this.#store.workspaces();
@@ -69,15 +79,44 @@ export class AgentService {
   }
   async proposeForWorkItem(id: string, input: unknown): Promise<AgentTask> {
     const request = workItemAttemptSchema.parse(input);
-    this.#requireBackend(request.backend);
-    if (request.workspaceId !== null) {
-      const workspace = this.#store.workspace(request.workspaceId);
+    await this.verifyWorkItemWorkspace(request.backend, request.workspaceId);
+    return this.#store.proposeForWorkItem(id, request);
+  }
+  async verifyWorkItemWorkspace(
+    backend: AgentBackend,
+    workspaceId: string | null,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    throwIfAborted(signal);
+    this.#requireBackend(backend);
+    if (workspaceId !== null) {
+      const workspace = this.#store.workspace(workspaceId);
       assertWorkspaceUnchanged(
         workspace,
         await this.#policy.inspect(workspace.path),
       );
     }
-    return this.#store.proposeForWorkItem(id, request);
+    throwIfAborted(signal);
+  }
+  proposeForConversationWithinTransaction(
+    id: string,
+    request: WorkItemAttempt,
+    card: ConversationExecutionReference,
+  ): AgentTask {
+    this.#requireBackend(request.backend);
+    return this.#store.proposeForConversationWithinTransaction(
+      id,
+      request,
+      card,
+    );
+  }
+  conversationExecution(
+    cardId: string,
+  ): ConversationExecutionProjection | null {
+    return this.#store.conversationExecution(cardId);
+  }
+  rejectPendingForConversationWithinTransaction(cardId: string): void {
+    this.#store.rejectPendingForConversationWithinTransaction(cardId);
   }
   async approve(id: string, instruction: string, signal?: AbortSignal) {
     const task = this.#store.task(id);
@@ -106,7 +145,7 @@ export class AgentService {
     if (task.status === "pending") throw new AgentError("conflict");
     if (task.queueId !== null && this.#queue !== undefined)
       await this.#queue.cancel(task.queueId);
-    return this.#store.task(id);
+    return this.get(id);
   }
   async execute(id: string, signal: AbortSignal): Promise<void> {
     try {
@@ -134,7 +173,7 @@ export class AgentService {
         task.sessionId,
         async (cwd) => {
           throwIfAborted(signal);
-          this.#store.assertMemoryContextCurrent(task.sessionId);
+          this.#store.assertExecutionContextCurrent(task);
           return this.#runner.run({
             task,
             session,
@@ -145,7 +184,6 @@ export class AgentService {
         },
       );
       throwIfAborted(signal);
-      this.#store.assertMemoryContextCurrent(task.sessionId);
       // A resumed CLI must return the same remote identity; otherwise do not
       // rebind a stored session to an unrelated conversation.
       if (session.remoteId !== null && session.remoteId !== result.remoteId)

@@ -12,6 +12,7 @@ import {
   chatMessages,
   chatSend,
   conversationPreview,
+  conversationRefresh,
   conversationRetry,
   replyClear,
   detail,
@@ -47,6 +48,7 @@ import {
   sendMessage,
   showBucket,
 } from "./views.ts";
+import { state } from "./state.ts";
 
 import { activateWorkspace, bindWorkspaceNavigation } from "./workspace.ts";
 import { bindWorkItemForm, refreshWorkItems } from "./work-items.ts";
@@ -74,6 +76,8 @@ chatMessages.addEventListener("click", async (event: MouseEvent) => {
     else if (button.dataset["action"] === "revoke-entry") await revokeEntry(button);
     else if (button.dataset["action"] === "show-bucket") {
       await showBucket(button.dataset["bucketId"]);
+    } else if (button.dataset["action"] === "show-entry-citation" && button.dataset["entryId"]) {
+      await showBucket(button.dataset["bucketId"], true, button.dataset["entryId"]);
     }
   } catch (error) {
     setStatus(errorMessage(error), "warning");
@@ -140,6 +144,7 @@ conversationPreview.addEventListener("change", () => {
   }
 });
 conversationRetry.addEventListener("click", () => void retryConversationTurn());
+conversationRefresh.addEventListener("click", () => void loadHistory());
 replyClear.addEventListener("click", discardClarificationReply);
 chatSend.addEventListener("click", () => void sendMessage());
 chatInput.addEventListener("keydown", (event: KeyboardEvent) => {
@@ -187,7 +192,17 @@ void Promise.all([
 ]);
 
 import { agentList, agentPropose, agentRegister, agentRefresh } from "./dom.ts";
-import { refreshAgents, registerWorkspace, proposeAgent, actOnAgent } from "./agents.ts";
+import {
+  refreshAgents,
+  registerWorkspace,
+  proposeAgent,
+  actOnAgent,
+  bindAgentConversationRefresh,
+} from "./agents.ts";
+bindAgentConversationRefresh((taskId) => {
+  if (state.preview && state.clarifications.some((card) => card.execution?.taskId === taskId))
+    void loadHistory();
+});
 agentPropose.addEventListener("click", () => void proposeAgent());
 agentRegister.addEventListener("click", () => void registerWorkspace());
 agentRefresh.addEventListener("click", () => void refreshAgents());

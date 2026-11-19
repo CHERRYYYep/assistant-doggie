@@ -8,7 +8,7 @@ import { WorkItemStore } from "./work-items.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { MIGRATIONS, SCHEMA_KIND } from "./schema.ts";
+import { MIGRATIONS, SCHEMA_KIND, SCHEMA_VERSION } from "./schema.ts";
 import { openDatabase } from "./database.ts";
 import { AgentStore } from "./agents.ts";
 import { Store } from "./store.ts";
@@ -50,7 +50,7 @@ test("T13 genuine v4 migrates through v5 to the current schema preserving conver
       db
         .prepare("SELECT value FROM schema_meta WHERE key='schema_version'")
         .get()?.["value"],
-      "9",
+      String(SCHEMA_VERSION),
     );
     assert.equal(
       new Store(db).listChatMessages(10)[0]?.content,

@@ -1,3 +1,7 @@
+import {
+  ConversationContextService,
+  type GroundedResponder,
+} from "../application/conversation-context.ts";
 import { MainConversationService } from "../application/main-conversation.ts";
 import { ClarificationStore } from "../storage/clarifications.ts";
 import { MemoryTools } from "../application/memory-tools.ts";
@@ -7,6 +11,7 @@ import {
   AgentHarness,
   createMemoryHarnessTools,
   createHarnessChatResponder,
+  createHarnessGroundedResponder,
 } from "../agent/harness.ts";
 import { AgentService } from "../agent/service.ts";
 import { WorkspacePolicy } from "../agent/workspace.ts";
@@ -49,6 +54,7 @@ export type LocalWebDependencies = {
   readonly assets?: readonly StaticAsset[] | undefined;
   readonly agentRunner?: AgentProcessRunner;
   readonly chatResponder?: ChatResponder;
+  readonly groundedResponder?: GroundedResponder;
 };
 
 export class DoggieLocalWeb {
@@ -134,21 +140,28 @@ export async function startDoggieLocalWeb(
       dependencies.model ??
       createProductionModel(config, dependencies, shutdownController.signal);
     const runtime = new ArchiveRuntime(store, model);
+    const harness =
+      dependencies.model === undefined
+        ? new AgentHarness(
+            config.endpoint,
+            config.createTransport(
+              dependencies.fetchImplementation,
+              shutdownController.signal,
+            ),
+            config.model,
+            createMemoryHarnessTools(new MemoryTools(store.memory)),
+          )
+        : undefined;
     const chatResponder =
       dependencies.chatResponder ??
-      (dependencies.model === undefined
-        ? createHarnessChatResponder(
-            new AgentHarness(
-              config.endpoint,
-              config.createTransport(
-                dependencies.fetchImplementation,
-                shutdownController.signal,
-              ),
-              config.model,
-              createMemoryHarnessTools(new MemoryTools(store.memory)),
-            ),
-          )
-        : undefined);
+      (harness === undefined ? undefined : createHarnessChatResponder(harness));
+    const grounding = new ConversationContextService(
+      store,
+      dependencies.groundedResponder ??
+        (harness === undefined
+          ? undefined
+          : createHarnessGroundedResponder(harness)),
+    );
     const chatService = new ChatService(store, runtime, chatResponder);
     const api = new ConcreteDoggieHttpApi(store, runtime, { chatService });
     const agents = new AgentService({
@@ -179,6 +192,8 @@ export async function startDoggieLocalWeb(
         new ClarificationStore(database, store.conversation),
         workItemStore,
         chatService,
+        grounding,
+        agents,
       ),
       signal: shutdownController.signal,
       ...(dependencies.assets === undefined
