@@ -175,3 +175,7 @@ B2：134 项定向回归；550 后端 + 60 前端完整门禁通过。覆盖双 
 ## C2：主对话预览和可恢复澄清
 
 `node --test src/http/main-conversation.test.ts` 验证临时库迁移和回滚、原文与补充恢复、候选和过期范围、真实 loopback 重放及旧确认边界；`npm run test:web` 验证同一前端模块图上的选择、显式回复、重试和转义。运行完整门禁后才提交。详见 [C2 验收记录](MAIN_CONVERSATION_C2_ACCEPTANCE.md)。
+
+## N0–N3：自然续接与历史材料定位（待实施）
+
+按[设计文档](NATURAL_CONVERSATION_DESIGN.md)和[专项测试方案](NATURAL_CONVERSATION_TEST_PLAN.md)先冻结回归，新增普通输入回复、无需预建 WorkItem 的 Entry 候选、材料改写、多问题/插话、可见快照、重放/失败恢复、迁移与撤销晚结果。普通测试仅 fake + 临时库；三份材料基线相同的旧聊天/C3 卡片/自然输入分别对照。浏览器实际操作与真实模型质量单独报告，现有自动测试通过不表示这些新场景已通过。N0–N3 完成后再进入 C4 默认入口决策。
