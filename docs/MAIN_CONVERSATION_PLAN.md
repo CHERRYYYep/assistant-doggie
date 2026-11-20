@@ -4,9 +4,9 @@
 
 **已验收后端阶段**：R0–R5 与后续 A1–A3 的修复证据、提交和边界见[后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。B1 Agent 终态合同与 B2 结构化模型重试也已验收，具体证据见[C0 前执行记录](PRE_C0_BACKEND_PLAN.md#9-当前执行记录)。
 
-**当前交接**：在 [C0 验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md) 查旧行为证据和独立的目标样本。[C1 分流验收](MAIN_CONVERSATION_C1_ACCEPTANCE.md)记录新入口的应用层行为；[C2 澄清预览验收](MAIN_CONVERSATION_C2_ACCEPTANCE.md)记录 schema v9、严格契约和复现路径；[C3 验收](MAIN_CONVERSATION_C3_ACCEPTANCE.md)记录本地取证、证据引用与受批准执行；[N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)记录自然输入、Entry 定位及自动化对照。下一步是 C4 的人工/质量门与默认入口决定。索引/分页 D1 与分层收敛 D2 仍按设计门处理，不阻塞本产品链路。
+**当前交接**：在 [C0 验收记录](MAIN_CONVERSATION_C0_ACCEPTANCE.md) 查旧行为证据和独立的目标样本。[C1 分流验收](MAIN_CONVERSATION_C1_ACCEPTANCE.md)记录新入口的应用层行为；[C2 澄清预览验收](MAIN_CONVERSATION_C2_ACCEPTANCE.md)记录 schema v9、严格契约和复现路径；[C3 验收](MAIN_CONVERSATION_C3_ACCEPTANCE.md)记录本地取证、证据引用与受批准执行；[N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)记录自然输入、Entry 定位及自动化对照。先完成自然对话审查修复 A–D，再进入 C4 的人工/质量门与默认入口决定。索引/分页 D1 与分层收敛 D2 仍按设计门处理，不阻塞本产品链路。
 
-**2026-11-20 补充决定**：隔离验收暴露了自带原文改写多余追问、普通回答必须点击卡片、目标候选只覆盖 WorkItem 的缺口。N0–N3 已实现自然续接和有效 Entry 定位；用户无需预建 WorkItem 或点击回复卡即可在冻结场景中接续，后台仍保存回复关联并检查版本。这个自动化结果不表示任意自然语言理解、真实模型质量或全面浏览器体验已通过；下一步按[专项方案](NATURAL_CONVERSATION_TEST_PLAN.md)完成 C4 对照和默认入口决定。
+**2026-11-20 补充决定**：隔离验收暴露了自带原文改写多余追问、普通回答必须点击卡片、目标候选只覆盖 WorkItem 的缺口。N0–N3 已实现自然续接和有效 Entry 定位；用户无需预建 WorkItem 或点击回复卡即可在冻结场景中接续，后台仍保存回复关联并检查版本。这个自动化结果不表示任意自然语言理解、真实模型质量或全面浏览器体验已通过；下一步按[专项方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)关闭九项反例，再完成 C4 对照和默认入口决定。
 
 ## 1. 希望交付的体验
 
@@ -55,7 +55,7 @@
 | C3 本地取证与受控委派（已完成） | 抽出上下文组装函数；接入现有 WorkItem 来源、查询服务、Harness 与提案服务。前端复用现有卡片/任务状态，主时间线关联提案和结果。 | 已给材料直接答；缺材料能说明缺口；需要工作区时先提案、批准后才执行；重开、取消、撤销及晚结果有回归。详见 [C3 验收](MAIN_CONVERSATION_C3_ACCEPTANCE.md)。 |
 | C4 对照与默认切换 | 在完全相同的 fixtures 上比较旧聊天、主对话＋本地检索；记录每一步错在意图、候选、绑定、证据还是执行。满足 §6 后再把新主输入设为默认。 | 提交结果、适用范围和失败样例，运行 `npm run check`；达不到要求保留旧入口，优先修出现频率最高的具体失败。 |
 
-**2026-11-20 补充的实际顺序**：上表 C4 入口前置自然对话能力，不能按 C3 完成就立即切默认。具体阶段、文件责任和验收边界如下；详细状态字段、OpenAPI、数据迁移、模型预算与操作脚本见[自然续接设计](NATURAL_CONVERSATION_DESIGN.md)及[专项测试方案](NATURAL_CONVERSATION_TEST_PLAN.md)。
+**2026-11-20 补充的实际顺序**：上表 C4 入口前置自然对话能力，不能按 C3 完成就立即切默认。下表区分历史交付与后续阶段；此次修复的边界和验收方法见[自然对话修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)及[专项测试方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
 
 | 新阶段 | 具体改动 | 完成条件 |
 |---|---|---|
@@ -63,6 +63,7 @@
 | N1 自然回复续接（已完成） | 服务端按已观察问题、原消息与 revision 解释普通输入；不用点回复卡，插话独立，多问题不猜。 | 回归覆盖重放、刷新恢复、双页陈旧状态、取消和迟到结果。 |
 | N2 有效 Entry 定位（已完成） | 将有效 Entry 纳入候选与上下文，分离材料对象和 WorkItem，复用本地检索/撤销规则。 | 两份 Entry、零 WorkItem 合成场景可定位并处理，无额外业务写入。 |
 | N3 联合验收（自动验收完成） | 同一数据对照旧聊天、C3 显式卡片与自然输入；覆盖 loopback 重启与前端合同。 | 固定样本及完整自动门禁通过；真实模型与全面浏览器体验独立报告。 |
+| 自然对话修复 A–D（待实施） | 修复错绑、用途与材料边界、零候选续接、快照和卡片恢复。 | 九项反例、正例与隔离网页操作均通过。 |
 | C4 对照与默认入口决策（待完成） | 完成真实模型质量样本及可复现人工路径评估，按相同材料比较错绑、漏召回、追问与操作步数。 | 新门禁与明确结论写入验收记录；通过后再决定是否将预览设为默认。 |
 
 **C2 的 API 和数据演进。** 保持现有 `POST /api/chat`、`/api/chat/confirm` 和 `/api/work-items/...` 不变，给新界面增设 `POST /api/conversation/turns`，用判别字段区分新发言、回复某条澄清、选择候选或取消。响应以回执区分回答、澄清、原归档结果和 C3 执行提案，均有可重读的消息引用；批准仍走既有 Agent 入口，该接口不接受批准字段。请求含 `requestId`；回复含 `clarificationId` 和 `expectedRevision`。按 [API 契约规范](API_CONTRACT.md) 从 schemas 生成 DTO/OpenAPI，添加历史恢复投影、浏览器校验、资源上限与漂移测试；不悄悄改旧客户端返回形状。

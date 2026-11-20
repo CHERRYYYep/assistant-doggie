@@ -8,7 +8,7 @@ N0–N3 已在 `codex/natural-conversation` 实施。新增 `action: utterance` 
 
 支持的路径包括：自带原文的直接改写；用主输入框回答已观察到的澄清；从有效 Entry 或 WorkItem 来源定位材料；只读生成带来源的草稿；插话保持独立；对歧义、失效来源、陈旧页面、重放和晚结果采取保守处理。仅有历史聊天或磁盘文件不作为可检索记忆。没有自动归档、自然语言批准、文件写入、隐藏会话拆分或腾讯记忆生产接入。
 
-实现和场景规格见[设计文档](NATURAL_CONVERSATION_DESIGN.md)及[专项测试方案](NATURAL_CONVERSATION_TEST_PLAN.md)。主要代码位于 [`main-conversation.ts`](../src/application/main-conversation.ts)、[`conversation-subjects.ts`](../src/application/conversation-subjects.ts)、[`natural-reply.ts`](../src/domain/natural-reply.ts)、[`clarifications.ts`](../src/storage/clarifications.ts) 和网页 `web/assets/`。
+本次验收的原设计与场景规格保留在提交 36e90ae 的 docs 目录中。后续问题另见[修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)与[测试矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md)。主要代码位于 [`main-conversation.ts`](../src/application/main-conversation.ts)、[`conversation-subjects.ts`](../src/application/conversation-subjects.ts)、[`natural-reply.ts`](../src/domain/natural-reply.ts)、[`clarifications.ts`](../src/storage/clarifications.ts) 和网页 `web/assets/`。
 
 ## 验证结果
 
@@ -33,4 +33,4 @@ N3 固定数据对照覆盖旧 `/api/chat`、C3 显式卡片操作与自然输�
 
 ## 后续入口
 
-进入 C4 前先冻结真实模型实验的配置和预算，使用同一批合成场景比较意图分支、来源召回、错绑、额外追问、无证据误答和改写新增事实；记录失败归因和未测项。人工浏览器 smoke 应使用专用临时数据库并复现插话与刷新/重启路径。未完成这些评估前，不应将预览设为默认或宣称自然对话理解已通过。
+完成审查修复 A–D 后，再为 C4 冻结真实模型实验的配置和预算，使用同一批合成场景比较意图分支、来源召回、错绑、额外追问、无证据误答和改写新增事实；记录失败归因和未测项。人工浏览器 smoke 应使用专用临时数据库并复现插话与刷新/重启路径。未完成这些评估前，不应将预览设为默认或宣称自然对话理解已通过。

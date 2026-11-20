@@ -51,9 +51,9 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 ### 主对话澄清与本地续做（C0–C3、N0–N3 自动化验收完成，C4 待评估）
 
-后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。[C1 用途分流](MAIN_CONVERSATION_C1_ACCEPTANCE.md)已在 ChatService 中完成，旧 API 与默认网页保持兼容。[C2](MAIN_CONVERSATION_C2_ACCEPTANCE.md) 已交付可恢复的澄清卡；[C3](MAIN_CONVERSATION_C3_ACCEPTANCE.md) 已接入本地上下文、证据引用和受批准只读执行。[N0–N3](NATURAL_CONVERSATION_ACCEPTANCE.md) 已完成自动化验收，网页自然续接仍是默认关闭的预览。接下来是 C4 真实质量与操作体验评估，再决定是否切换默认入口。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
+后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。[C1 用途分流](MAIN_CONVERSATION_C1_ACCEPTANCE.md)已在 ChatService 中完成，旧 API 与默认网页保持兼容。[C2](MAIN_CONVERSATION_C2_ACCEPTANCE.md) 已交付可恢复的澄清卡；[C3](MAIN_CONVERSATION_C3_ACCEPTANCE.md) 已接入本地上下文、证据引用和受批准只读执行。[N0–N3](NATURAL_CONVERSATION_ACCEPTANCE.md) 已完成自动化验收，网页自然续接仍是默认关闭的预览。先完成自然对话审查修复 A–D，再做 C4 真实质量与操作体验评估，再决定是否切换默认入口。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
 
-2026-11-20：N0–N3 已实施并通过固定样本及自动化验收，详见[设计](NATURAL_CONVERSATION_DESIGN.md)、[专项测试方案](NATURAL_CONVERSATION_TEST_PLAN.md)和[验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)。主输入可续接已观察的澄清，从有效 Entry 找材料且不预建 WorkItem；卡片仍是可选快捷入口。普通聊天不自动归档，归档/执行批准边界不变。真实模型质量评估、完整真实浏览器体验和 C4 默认入口决策尚未完成。
+2026-11-20：N0–N3 已实施并通过固定样本及自动化验收，见[历史验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)；随后发现的问题按[修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)及[测试矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md)处理。主输入可续接已观察的澄清，从有效 Entry 找材料且不预建 WorkItem；卡片仍是可选快捷入口。普通聊天不自动归档，归档/执行批准边界不变。真实模型质量评估、完整真实浏览器体验和 C4 默认入口决策尚未完成。
 
 ### 阶段冻结与未完成事项（2026-11-19）
 
@@ -61,8 +61,9 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步 | C4：冻结真实模型配置/预算，完成同样本语义、召回和操作成本对照；保持预览默认关闭 | [自然续接验收](NATURAL_CONVERSATION_ACCEPTANCE.md)、[C4 计划](MAIN_CONVERSATION_PLAN.md) |
-| 待评估 | 真实模型质量、全面浏览器体验及是否切换默认入口；真实自用验收按此前决定延后 | [专项测试方案](NATURAL_CONVERSATION_TEST_PLAN.md)、[主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
+| 下一步 | 修复自然对话审查的九项反例，验证网页恢复路径 | [修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)、[测试矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md) |
+| 修复验收后 | C4：冻结真实模型配置/预算，完成同样本语义、召回和操作成本对照；保持预览默认关闭 | [自然续接验收](NATURAL_CONVERSATION_ACCEPTANCE.md)、[C4 计划](MAIN_CONVERSATION_PLAN.md) |
+| 待评估 | 真实模型质量、全面浏览器体验及是否切换默认入口；真实自用验收按此前决定延后 | [专项测试方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)、[主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
 | 明确延后 | 真实自用验收、全面视觉改版、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
