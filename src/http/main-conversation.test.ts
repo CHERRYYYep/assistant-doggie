@@ -170,6 +170,35 @@ async function firstCard(
   return view;
 }
 
+test("N0 preview answers supplied rewrites and asks for missing text without writing business state", async () => {
+  using tmp = mkdtempDisposableSync(join(tmpdir(), "doggie-n0-"));
+  using db = openDatabase(join(tmp.path, "test.db"));
+  const f = fixture(db);
+  const text =
+    "原文：客户端先发 SYN，服务端回复 SYN-ACK。请改写成简洁实验报告。";
+  const draft = await f.turn(message(text));
+  assert.equal(draft.kind, "answer");
+  assert.deepEqual(f.responderHistory, [[text]]);
+  const missing = await f.turn(message("请改写成简洁实验报告。原文："));
+  assert.equal(missing.kind, "clarify");
+  const save = await f.turn(message("存下来"));
+  assert.equal(save.kind, "clarify");
+  const history = f.store.conversation.listChatMessages(10);
+  assert.match(
+    history.find(({ id }) => id === missing.assistantMessageId)?.content ?? "",
+    /请贴出要处理的原文/u,
+  );
+  assert.match(
+    history.find(({ id }) => id === save.assistantMessageId)?.content ?? "",
+    /哪段内容/u,
+  );
+  assert.deepEqual(await f.getCards(), []);
+  assert.equal(f.classified(), 0);
+  assert.equal(f.count("entries"), 0);
+  assert.equal(f.count("agent_tasks"), 0);
+  assert.deepEqual(f.items.list(), []);
+});
+
 test("C2 same-bucket TCP/UDP, interlude, database reopen and explicit supplement preserve the original request", async () => {
   using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-c2-"));
   const path = join(dir.path, "test.db");

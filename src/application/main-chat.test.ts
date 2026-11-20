@@ -147,6 +147,42 @@ test("C1 routed chat reuses the legacy archive and never treats goal prompts, qu
   ]);
 });
 
+test("N0 transforms supplied text, asks only for missing material, and never treats saving shorthand as approval", async () => {
+  using db = openDatabase(":memory:");
+  const store = new Store(db);
+  const seen: ChatResponderInput[] = [];
+  const { service, archiveCalls } = fixture(store, {
+    async respond(input) {
+      seen.push(input);
+      return { assistantText: "合成报告表述" };
+    },
+  });
+  const source =
+    "原文：客户端先发 SYN，服务端回复 SYN-ACK。请改写成简洁实验报告。";
+  const answer = await service.mainChat({ text: source });
+  assert.equal(answer.purpose.kind, "answer");
+  assert.equal(answer.assistantMessage.content, "合成报告表述");
+  assert.equal(seen[0]?.history.at(-1)?.content, source);
+  assert.equal(seen[0]?.archive, null);
+  assert.equal(seen[0]?.purpose, "answer");
+
+  const missing = await service.mainChat({
+    text: "请改写成简洁实验报告。原文：",
+  });
+  assert.match(missing.assistantMessage.content, /请贴出要处理的原文/u);
+  const save = await service.mainChat({ text: "存下来" });
+  assert.match(save.assistantMessage.content, /哪段内容/u);
+  assert.doesNotMatch(save.assistantMessage.content, /回答问题、查找记录/u);
+  assert.equal(seen.length, 1);
+  assert.deepEqual(archiveCalls, []);
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM pending_actions").get()?.["n"],
+    0,
+  );
+  assert.deepEqual(new WorkItemStore(db).list(), []);
+  assert.deepEqual(new AgentStore(db).tasks(), []);
+});
+
 for (const interrupt of ["cancel", "revoke"] as const) {
   test(
     `C1 ${interrupt} while looking up suppresses the late reply and releases the shared turn coordinator`,

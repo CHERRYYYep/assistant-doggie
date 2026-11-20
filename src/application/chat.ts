@@ -559,6 +559,10 @@ function mainChatFallback(purpose: ChatPurpose): string {
         return "你指的是哪个任务或文件？请给出名称或贴出要修改的段落。";
       case "explicit_confirmation":
         return "如果你要确认保存或批准执行，请使用对应的确认卡片。";
+      case "archive_content":
+        return "你想把哪段内容保存为正式记录？请贴出内容，或明确指出要保存的那条消息。";
+      case "rewrite_material":
+        return "请贴出要处理的原文，我会按你给出的要求处理。";
       case "mixed":
         return "这条消息里有多个要求。你想先处理哪一件？";
       case "purpose":
