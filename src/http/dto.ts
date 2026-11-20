@@ -110,3 +110,7 @@ export type ClarificationListResponse = ResponseDto<
 >;
 export type ClarificationCardDto =
   ClarificationListResponse["clarifications"][number];
+
+export type ConversationInteractionListResponse = ResponseDto<
+  typeof schema.conversationInteractionListResponseSchema
+>;

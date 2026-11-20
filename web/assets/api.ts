@@ -19,8 +19,8 @@ import type {
   ChatConfirmationResponse,
   ChatHistoryResponse,
   ChatResponse,
+  ConversationInteractionListResponse,
   ConversationTurnResponse,
-  ClarificationListResponse,
   DeleteBucketResponse,
   EntryRevocationResponse,
   MemoryQueryResponse,
@@ -32,7 +32,7 @@ import type {
 export const ROUTES = {
   chat: "/api/chat",
   conversationTurns: "/api/conversation/turns",
-  clarifications: "/api/conversation/clarifications",
+  conversationInteractions: "/api/conversation/interactions",
   tasks: "/api/tasks",
   chatConfirm: "/api/chat/confirm",
   chatHistory: "/api/chat/history",
@@ -172,8 +172,8 @@ export function fetchChatHistory(limit = 40): Promise<ChatHistoryResponse> {
   return jsonRequest(`${ROUTES.chatHistory}?limit=${limit}`);
 }
 
-export function fetchClarifications(): Promise<ClarificationListResponse> {
-  return jsonRequest(ROUTES.clarifications);
+export function fetchConversationInteractions(): Promise<ConversationInteractionListResponse> {
+  return jsonRequest(ROUTES.conversationInteractions);
 }
 
 export function postConversationTurn(

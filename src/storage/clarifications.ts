@@ -2,7 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import {
+  awaitingSchema,
+  entryReference,
   clarificationReferenceSchema,
+  subjectReferenceSchema,
+  type SubjectReference,
+  type Awaiting,
+  type PromptReference,
   clarificationStatusSchema,
   conversationReceiptSchema,
   ConversationError,
@@ -31,23 +37,45 @@ const cardRowSchema = z.strictObject({
   revision: z.number().int().positive(),
   candidates: z.string(),
   truncated: z.union([z.literal(0), z.literal(1)]),
+  awaiting: awaitingSchema.nullable(),
+  promptMessageId: z.uuid().nullable(),
+  question: z.string().nullable(),
+  selectedEntryId: z.uuid().nullable(),
+  selectedMemoryRevision: z.number().int().nonnegative().nullable(),
   selectedId: z.uuid().nullable(),
   selectedScopeRevision: z.number().int().positive().nullable(),
 });
 const select = `SELECT c.id,c.original_message_id AS originalMessageId,c.assistant_message_id AS assistantMessageId,
  o.content AS originalText,r.content AS latestReply,c.latest_reply_id AS latestReplyId,
- c.status,c.revision,c.candidates_json AS candidates,c.truncated,
+ c.status,c.revision,c.candidates_json AS candidates,c.truncated,c.awaiting,
+ c.prompt_message_id AS promptMessageId,p.content AS question,
+ c.selected_entry_id AS selectedEntryId,c.selected_memory_revision AS selectedMemoryRevision,
  c.selected_id AS selectedId,c.selected_scope_revision AS selectedScopeRevision
  FROM conversation_clarifications c JOIN conversation_messages o ON o.id=c.original_message_id
- LEFT JOIN conversation_messages r ON r.id=c.latest_reply_id`;
+ LEFT JOIN conversation_messages r ON r.id=c.latest_reply_id
+ LEFT JOIN conversation_messages p ON p.id=c.prompt_message_id`;
 function parseCard(raw: unknown) {
   const row = cardRowSchema.parse(raw);
+  const subjects = z
+    .array(subjectReferenceSchema)
+    .max(MAX_CLARIFICATION_CANDIDATES)
+    .parse(JSON.parse(row.candidates));
   return {
     ...row,
-    candidates: z
-      .array(clarificationReferenceSchema)
-      .max(MAX_CLARIFICATION_CANDIDATES)
-      .parse(JSON.parse(row.candidates)),
+    subjects,
+    entry:
+      row.selectedEntryId === null
+        ? null
+        : entryReference.parse({
+            kind: "entry",
+            id: row.selectedEntryId,
+            memoryRevision: row.selectedMemoryRevision,
+          }),
+    candidates: subjects.flatMap((part) =>
+      part.kind === "work_item"
+        ? [{ id: part.id, scopeRevision: part.scopeRevision }]
+        : [],
+    ),
     truncated: row.truncated === 1,
     selected:
       row.selectedId === null
@@ -73,6 +101,17 @@ export class ClarificationStore {
   ): T {
     return withTransaction<T>(this.#db, run);
   }
+  readSnapshot<T>(read: () => T): T {
+    this.#db.exec("BEGIN DEFERRED");
+    try {
+      const result = read();
+      this.#db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+      throw error;
+    }
+  }
   memoryRevision(): number {
     return this.#conversation.getMemoryContextRevision();
   }
@@ -81,22 +120,26 @@ export class ClarificationStore {
       fence.memoryRevision,
       fence.card,
       fence.work,
+      fence.entry,
     );
   }
   supplements(card: StoredClarification, limit: number) {
+    return this.supplementMessages(card, limit).map(({ text }) => text);
+  }
+  supplementMessages(card: StoredClarification, limit: number) {
     return this.#db
       .prepare(
-        `
-      SELECT content AS text FROM conversation_messages
+        `SELECT id,content AS text FROM conversation_messages
       WHERE role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
         AND json_extract(details_json,'$.action')='reply'
         AND json_extract(details_json,'$.clarification_id')=?
         AND json_extract(details_json,'$.reply_to_message_id')=?
-      ORDER BY sequence LIMIT ?
-    `,
+      ORDER BY sequence LIMIT ?`,
       )
       .all(card.id, card.originalMessageId, limit)
-      .map((row) => z.strictObject({ text: z.string() }).parse(row).text);
+      .map((row) =>
+        z.strictObject({ id: z.uuid(), text: z.string() }).parse(row),
+      );
   }
   #requireTransaction() {
     if (!this.#db.isTransaction)
@@ -148,10 +191,49 @@ export class ClarificationStore {
     return this.#db
       .prepare(
         select +
-          " ORDER BY CASE WHEN c.status='pending' THEN 0 ELSE 1 END,o.sequence DESC LIMIT ?",
+          " ORDER BY CASE WHEN c.awaiting IS NOT NULL OR c.status='pending' THEN 0 ELSE 1 END,o.sequence DESC LIMIT ?",
       )
       .all(MAX_CLARIFICATION_CARDS * 2)
       .map(parseCard);
+  }
+  throughSequence(): number {
+    return z
+      .number()
+      .int()
+      .nonnegative()
+      .parse(
+        this.#db
+          .prepare(
+            "SELECT COALESCE(MAX(sequence),0) AS n FROM conversation_messages",
+          )
+          .get()?.["n"],
+      );
+  }
+  validateObserved(ref: PromptReference, throughSequence: number): void {
+    const row = this.#db
+      .prepare(
+        `SELECT 1 FROM conversation_messages WHERE id=? AND sequence<=? AND role='assistant'
+       AND (json_extract(details_json,'$.clarification_id')=? OR EXISTS (
+         SELECT 1 FROM conversation_clarifications WHERE id=? AND assistant_message_id=?
+       ))`,
+      )
+      .get(
+        ref.promptMessageId,
+        throughSequence,
+        ref.interactionId,
+        ref.interactionId,
+        ref.promptMessageId,
+      );
+    if (row === undefined) throw new ConversationError("stale");
+  }
+  #checkCapacity(): void {
+    const count = this.#db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM conversation_clarifications WHERE awaiting IS NOT NULL OR status='pending'",
+      )
+      .get()?.["n"];
+    if (typeof count === "number" && count >= MAX_CLARIFICATION_CARDS)
+      throw new ConversationError("capacity");
   }
   create(
     originalMessageId: string,
@@ -159,34 +241,35 @@ export class ClarificationStore {
     candidates: readonly ClarificationReference[],
     truncated: boolean,
     selected: ClarificationReference | null,
+    awaiting: Awaiting | null = null,
+    subjects: readonly SubjectReference[] = candidates.map((part) => ({
+      ...part,
+      kind: "work_item",
+    })),
+    entry?: Extract<SubjectReference, { kind: "entry" }>,
   ) {
     this.#requireTransaction();
     const id = randomUUID();
-    const count = this.#db
-      .prepare(
-        "SELECT COUNT(*) AS n FROM conversation_clarifications WHERE status='pending'",
-      )
-      .get()?.["n"];
-    if (
-      selected === null &&
-      typeof count === "number" &&
-      count >= MAX_CLARIFICATION_CARDS
-    )
-      throw new ConversationError("capacity");
+    if ((selected === null && entry === undefined) || awaiting !== null)
+      this.#checkCapacity();
     this.#db
       .prepare(
-        `INSERT INTO conversation_clarifications(id,original_message_id,assistant_message_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision)
-       VALUES (?,?,?,?,1,?,?,?,?)`,
+        `INSERT INTO conversation_clarifications(id,original_message_id,assistant_message_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,awaiting,prompt_message_id,selected_entry_id,selected_memory_revision)
+       VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
         originalMessageId,
         assistantMessageId,
-        selected === null ? "pending" : "resolved",
-        JSON.stringify(candidates),
+        selected === null && entry === undefined ? "pending" : "resolved",
+        JSON.stringify(subjects),
         Number(truncated),
         selected?.id ?? null,
         selected?.scopeRevision ?? null,
+        awaiting,
+        awaiting === null ? null : assistantMessageId,
+        entry?.id ?? null,
+        entry?.memoryRevision ?? null,
       );
     return id;
   }
@@ -198,21 +281,40 @@ export class ClarificationStore {
       truncated: boolean;
       selected: ClarificationReference | null;
       latestReplyId: string | null;
+      awaiting?: Awaiting | null;
+      subjects?: readonly SubjectReference[];
+      entry?: Extract<SubjectReference, { kind: "entry" }> | null;
+      promptMessageId?: string | null;
     },
   ) {
     this.#requireTransaction();
+    if (
+      change.awaiting != null &&
+      card.awaiting === null &&
+      card.status !== "pending"
+    )
+      this.#checkCapacity();
     const changed = this.#db
       .prepare(
         `UPDATE conversation_clarifications SET status=?,revision=revision+1,candidates_json=?,truncated=?,
-       selected_id=?,selected_scope_revision=?,latest_reply_id=? WHERE id=? AND revision=?`,
+       selected_id=?,selected_scope_revision=?,latest_reply_id=?,awaiting=?,prompt_message_id=?,selected_entry_id=?,selected_memory_revision=? WHERE id=? AND revision=?`,
       )
       .run(
         change.status,
-        JSON.stringify(change.candidates),
+        JSON.stringify(
+          change.subjects ??
+            change.candidates.map((part) => ({ ...part, kind: "work_item" })),
+        ),
         Number(change.truncated),
         change.selected?.id ?? null,
         change.selected?.scopeRevision ?? null,
         change.latestReplyId,
+        change.awaiting ?? null,
+        change.promptMessageId === undefined
+          ? card.promptMessageId
+          : change.promptMessageId,
+        change.entry?.id ?? null,
+        change.entry?.memoryRevision ?? null,
         card.id,
         card.revision,
       );

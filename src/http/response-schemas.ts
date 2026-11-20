@@ -1,5 +1,7 @@
 import {
   clarificationCardSchema,
+  conversationInteractionSchema,
+  observedConversationSchema,
   conversationReceiptSchema,
   MAX_CLARIFICATION_CARDS,
 } from "../domain/main-conversation.ts";
@@ -421,5 +423,13 @@ export const clarificationListResponseSchema = z.strictObject({
   ok: z.literal(true),
   clarifications: z
     .array(clarificationCardSchema)
+    .max(MAX_CLARIFICATION_CARDS * 2),
+});
+
+export const conversationInteractionListResponseSchema = z.strictObject({
+  ok: z.literal(true),
+  snapshot: observedConversationSchema,
+  interactions: z
+    .array(conversationInteractionSchema)
     .max(MAX_CLARIFICATION_CARDS * 2),
 });

@@ -582,6 +582,9 @@ export function createDoggieApp(
   }
 
   if (conversation !== undefined) {
+    app.get("/api/conversation/interactions", (context) =>
+      context.json({ ok: true, ...conversation.interactions() }),
+    );
     app.get("/api/conversation/clarifications", (context) =>
       context.json({ ok: true, clarifications: conversation.list() }),
     );

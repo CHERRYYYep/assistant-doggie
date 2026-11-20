@@ -15,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 12;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -361,6 +361,66 @@ CREATE INDEX ix_conversation_supplements
    AND json_extract(details_json,'$.action')='reply';
 `;
 
+const ADD_NATURAL_CONVERSATION_V11 = `
+ALTER TABLE conversation_clarifications ADD COLUMN prompt_message_id TEXT REFERENCES conversation_messages(id);
+ALTER TABLE conversation_clarifications ADD COLUMN awaiting TEXT CHECK (
+ (awaiting IS NULL OR (prompt_message_id IS NOT NULL AND
+   ((status='pending' AND awaiting='subject') OR
+    (status='resolved' AND awaiting IN ('material','requirements')))))
+);
+CREATE INDEX ix_conversation_clarification_waiting ON conversation_clarifications(awaiting);
+`;
+
+// Rebuild parent and its dependent table in one transaction with FK enforcement on.
+const ADD_ENTRY_SUBJECT_V12 = `
+CREATE TABLE clarification_next (
+ id TEXT PRIMARY KEY,
+ original_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ assistant_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ latest_reply_id TEXT REFERENCES conversation_messages(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','resolved','cancelled','stale')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ candidates_json TEXT NOT NULL CHECK(json_valid(candidates_json)),
+ truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+ selected_id TEXT REFERENCES work_items(id),
+ selected_scope_revision INTEGER CHECK(selected_scope_revision > 0),
+ selected_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL,
+ selected_memory_revision INTEGER CHECK(selected_memory_revision >= 0),
+ prompt_message_id TEXT REFERENCES conversation_messages(id),
+ awaiting TEXT CHECK (awaiting IS NULL OR (prompt_message_id IS NOT NULL AND
+   ((status='pending' AND awaiting='subject') OR
+    (status='resolved' AND awaiting IN ('material','requirements'))))),
+ CHECK ((selected_id IS NULL) = (selected_scope_revision IS NULL)),
+ CHECK ((selected_entry_id IS NULL) = (selected_memory_revision IS NULL)),
+ CHECK (selected_id IS NULL OR selected_entry_id IS NULL),
+ CHECK (status != 'resolved' OR selected_id IS NOT NULL OR selected_entry_id IS NOT NULL)
+);
+CREATE TRIGGER clearance_entry_subject BEFORE DELETE ON entries
+ WHEN EXISTS (SELECT 1 FROM clarification_next WHERE selected_entry_id=OLD.id)
+ BEGIN
+  UPDATE clarification_next SET status='stale', revision=revision+1, awaiting=NULL,
+     selected_entry_id=NULL, selected_memory_revision=NULL WHERE selected_entry_id=OLD.id;
+ END;
+INSERT INTO clarification_next(id,original_message_id,assistant_message_id,latest_reply_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,prompt_message_id,awaiting)
+ SELECT id,original_message_id,assistant_message_id,latest_reply_id,status,revision,
+ (SELECT json_group_array(json_set(value,'$.kind','work_item')) FROM json_each(candidates_json)),truncated,selected_id,selected_scope_revision,prompt_message_id,awaiting FROM conversation_clarifications;
+CREATE TABLE execution_next (
+ task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ clarification_id TEXT NOT NULL REFERENCES clarification_next(id),
+ card_revision INTEGER NOT NULL CHECK(card_revision > 0)
+);
+INSERT INTO execution_next SELECT task_id,clarification_id,card_revision FROM conversation_executions;
+DROP TABLE conversation_executions;
+DROP TABLE conversation_clarifications;
+ALTER TABLE clarification_next RENAME TO conversation_clarifications;
+ALTER TABLE execution_next RENAME TO conversation_executions;
+CREATE INDEX ix_conversation_clarification_status ON conversation_clarifications(status);
+CREATE INDEX ix_conversation_clarification_waiting ON conversation_clarifications(awaiting);
+CREATE INDEX ix_conversation_executions_card ON conversation_executions(clarification_id,card_revision);
+CREATE TRIGGER conversation_execution_immutable BEFORE UPDATE ON conversation_executions
+BEGIN SELECT RAISE(ABORT,'conversation execution binding is immutable'); END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
@@ -384,6 +444,12 @@ export const MIGRATIONS: readonly Migration[] = [
     name: "link_conversation_execution_v10",
     sql: ADD_CONVERSATION_EXECUTION_V10,
   },
+  {
+    version: 11,
+    name: "add_natural_conversation_v11",
+    sql: ADD_NATURAL_CONVERSATION_V11,
+  },
+  { version: 12, name: "add_entry_subject_v12", sql: ADD_ENTRY_SUBJECT_V12 },
 ];
 
 /** Tables the schema owns. Used to detect a foreign database. */

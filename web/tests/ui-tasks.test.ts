@@ -5,11 +5,12 @@ import { after, afterEach, test } from "node:test";
 import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type { ChatMessageDto, ClarificationCardDto } from "../../src/http/dto.ts";
 import { installDom, StubElement } from "./dom-harness.ts";
+import type { ConversationInteraction } from "../assets/state.ts";
 
 const dom = installDom();
 const { state } = await import("../assets/state.ts");
 const views = await import("../assets/views.ts");
-const { renderTranscript, renderClarification, renderMessage } =
+const { renderTranscript, renderClarification, renderMessage, showConversationMessage } =
   await import("../assets/render-chat.ts");
 const originalFetch = globalThis.fetch;
 after(() => dom.restore());
@@ -22,7 +23,8 @@ afterEach(async () => {
   state.cancellingTasks.clear();
   state.history = [];
   state.preview = false;
-  state.clarifications = [];
+  state.interactions = [];
+  state.observedConversation = null;
   state.delegateOptions = null;
   state.retryTurn = null;
   views.clearClarificationReply();
@@ -812,6 +814,32 @@ const card: ClarificationCardDto = {
   selected: null,
 };
 
+function migratedCard(old: ClarificationCardDto): ConversationInteraction {
+  return {
+    ...old,
+    awaiting: null,
+    promptMessageId: null,
+    truncated: false,
+    candidates: old.candidates.map((item) => ({ ...item, kind: "work_item" })),
+    selected: old.selected === null ? null : { ...old.selected, kind: "work_item" },
+  };
+}
+
+function interactionView(interactions: readonly ConversationInteraction[], throughSequence = 100) {
+  return {
+    ok: true,
+    snapshot: {
+      throughSequence,
+      prompts: interactions.flatMap(({ id, revision, awaiting, promptMessageId }) =>
+        awaiting !== null && promptMessageId !== null
+          ? [{ interactionId: id, revision, promptMessageId }]
+          : [],
+      ),
+    },
+    interactions,
+  };
+}
+
 test("C2 cards render escaped user data and stable action IDs, including after falling out of chat history", () => {
   const html = renderClarification(card);
   assert.doesNotMatch(html, /<(?:img|svg|script)/);
@@ -834,9 +862,9 @@ test("preview restores cards, keeps interludes independent, retries the same pay
     switch (String(url)) {
       case "/api/chat/history?limit=40":
         return json({ ok: true, messages: [] });
-      case "/api/conversation/clarifications":
+      case "/api/conversation/interactions":
         gets++;
-        return json({ ok: true, clarifications: [current] });
+        return json(interactionView([migratedCard(current)]));
       case "/api/conversation/turns": {
         assert.equal(options?.method, "POST");
         assert.equal(new Headers(options.headers).get("content-type"), "application/json");
@@ -882,7 +910,12 @@ test("preview restores cards, keeps interludes independent, retries the same pay
   const composer = element("chat-input");
   composer.value = "SYN-ACK 是什么？";
   await views.sendMessage();
-  assert.equal(Reflect.get(Object(posts[0]), "action"), "message");
+  assert.deepEqual(posts[0], {
+    action: "utterance",
+    text: "SYN-ACK 是什么？",
+    requestId: Reflect.get(Object(posts[0]), "requestId"),
+    snapshot: { throughSequence: 100, prompts: [] },
+  });
   assert.equal(composer.value, "");
 
   await views.actOnClarification(button("clarification-reply"));
@@ -918,7 +951,7 @@ test("preview restores cards, keeps interludes independent, retries the same pay
   await views.actOnClarification(button("clarification-select"));
   assert.equal(Reflect.get(Object(posts[3]), "expectedRevision"), 1);
   assert.ok(gets > previousGets);
-  assert.equal(state.clarifications[0]?.status, "stale");
+  assert.equal(state.interactions[0]?.status, "stale");
   assert.equal(state.retryTurn, null);
   assert.match(element("chat-status").textContent ?? "", /版本已变化/);
 });
@@ -966,8 +999,8 @@ test("C3 continuing a selected target uses its exact card revision and loads the
     switch (String(input)) {
       case "/api/chat/history?limit=40":
         return json({ ok: true, messages: response ? [response] : [] });
-      case "/api/conversation/clarifications":
-        return json({ ok: true, clarifications: [resolvedCard] });
+      case "/api/conversation/interactions":
+        return json(interactionView([migratedCard(resolvedCard)]));
       case "/api/conversation/turns":
         assert.equal(init?.method, "POST");
         writes.push(JSON.parse(String(init.body)) as unknown);
@@ -1024,8 +1057,8 @@ test("C3 requires explicit workspace and CLI and retries only the same read-only
     const path = String(input);
     routes.push(path);
     if (path === "/api/chat/history?limit=40") return json({ ok: true, messages: [] });
-    if (path === "/api/conversation/clarifications")
-      return json({ ok: true, clarifications: [current] });
+    if (path === "/api/conversation/interactions")
+      return json(interactionView([migratedCard(current)]));
     if (path === "/api/agent/capabilities")
       return json({ ok: true, backends: ["codex"], permission: "read_only" });
     if (path === "/api/agent/workspaces")
@@ -1196,4 +1229,201 @@ test("C3 citations identify the particular active Entry or report that it is una
   } finally {
     detail.controls.delete("#cited-entry");
   }
+});
+
+const entryCandidate = {
+  kind: "entry",
+  id: randomUUID(),
+  memoryRevision: 7,
+  title: tcp.title,
+  hint: tcp.hint,
+  bucketId: randomUUID(),
+  createdAt: "2026-11-19T00:00:00.000Z",
+} as const;
+
+const naturalCard: ConversationInteraction = {
+  ...migratedCard(card),
+  candidates: [entryCandidate],
+  awaiting: "subject",
+  promptMessageId: card.assistantMessageId,
+};
+
+test("natural turns use the rendered snapshot, display the actual association and retain stale drafts", async () => {
+  let current: ConversationInteraction[] = [naturalCard];
+  let sequence = 120;
+  let restored = false;
+  const posts: unknown[] = [];
+  let history: ChatMessageDto[] = [];
+  let status = 200;
+  let drop = false;
+  let refreshes = 0;
+  globalThis.fetch = async (url, init) => {
+    switch (String(url)) {
+      case "/api/chat/history?limit=40":
+        return json({ ok: true, messages: history });
+      case "/api/conversation/interactions":
+        refreshes++;
+        return restored
+          ? json(interactionView(current, sequence))
+          : json({ ok: false, error: "无法读取快照" }, 503);
+      case "/api/conversation/turns": {
+        posts.push(JSON.parse(String(init?.body)) as unknown);
+        if (drop) throw new Error("lost response");
+        if (status === 409) return json({ ok: false, error: "问题已变化" }, status);
+        const userMessageId = randomUUID();
+        const assistantMessageId = randomUUID();
+        history = [
+          {
+            ...message(assistantMessageId, "TCP 报告草稿"),
+            role: "assistant",
+            details: {
+              citations: [{ entryId: entryCandidate.id, bucketId: entryCandidate.bucketId }],
+            },
+          },
+        ];
+        current = [
+          {
+            ...naturalCard,
+            awaiting: null,
+            status: "resolved",
+            selected: entryCandidate,
+            candidates: [],
+            revision: 2,
+          },
+        ];
+        sequence++;
+        return json({
+          ok: true,
+          result: {
+            kind: "clarification",
+            userMessageId,
+            assistantMessageId,
+            clarificationId: naturalCard.id,
+          },
+        });
+      }
+      default:
+        throw new Error("Unexpected route " + String(url));
+    }
+  };
+  await views.setConversationPreview(true);
+  const composer = element("chat-input");
+  composer.value = "抓三次握手那个，只改报告";
+  await views.sendMessage();
+  assert.equal(posts.length, 0);
+  assert.match(element("chat-status").textContent ?? "", /先刷新对话/);
+  restored = true;
+  await views.loadHistory();
+  const originalSnapshot = interactionView([naturalCard], 120).snapshot;
+  assert.match(element("chat-messages").nodes[0]?.innerHTML ?? "", /查看原文/);
+  const count = refreshes;
+  drop = true;
+  await views.sendMessage();
+  assert.equal(refreshes, count + 1, "only refresh after the lost submission");
+  assert.deepEqual(posts[0], {
+    action: "utterance",
+    requestId: state.retryTurn?.requestId,
+    text: composer.value,
+    snapshot: originalSnapshot,
+  });
+  assert.equal(element("clarification-reply-context").hidden, true);
+  sequence += 3;
+  await views.loadHistory();
+  assert.notDeepEqual(state.observedConversation, originalSnapshot);
+  drop = false;
+  await views.retryConversationTurn();
+  assert.deepEqual(posts[1], posts[0], "retry retains the same id and the original snapshot");
+  assert.equal(composer.value, "");
+  const html = element("chat-messages")
+    .nodes.map((node) => node.innerHTML)
+    .join("");
+  assert.match(html, /TCP 报告草稿/);
+  assert.match(html, /已关联材料/);
+  assert.match(html, /data-entry-id=/);
+  assert.doesNotMatch(html, /<img|<svg|clarification-prepare|clarification-continue/);
+
+  status = 409;
+  composer.value = "原文：补充段落";
+  const beforeConflict = refreshes;
+  await views.sendMessage();
+  assert.equal(posts.length, 3, "do not reissue a stale request");
+  assert.equal(refreshes, beforeConflict + 1);
+  assert.equal(state.retryTurn, null);
+  assert.equal(composer.value, "原文：补充段落");
+  assert.match(element("chat-status").textContent ?? "", /问题已变化.*再决定是否重新发送/);
+});
+
+test("Entry candidate buttons keep their exact subject type and current unarchived material has a local citation", async () => {
+  const selection = renderClarification(naturalCard);
+  assert.match(selection, /data-subject-kind="entry"/);
+  assert.match(selection, /查看原文/);
+  assert.doesNotMatch(selection, /data-work-item-id|<img|<svg/);
+  const writes: unknown[] = [];
+  globalThis.fetch = async (input, init) => {
+    switch (String(input)) {
+      case "/api/chat/history?limit=40":
+        return json({ ok: true, messages: [] });
+      case "/api/conversation/interactions":
+        return json(interactionView([naturalCard]));
+      case "/api/conversation/turns":
+        writes.push(JSON.parse(String(init?.body)) as unknown);
+        return json({
+          ok: true,
+          result: {
+            kind: "clarification",
+            userMessageId: randomUUID(),
+            assistantMessageId: randomUUID(),
+            clarificationId: naturalCard.id,
+          },
+        });
+      default:
+        throw new Error("Unexpected route " + String(input));
+    }
+  };
+  await views.setConversationPreview(true);
+  const button = new StubElement();
+  Object.assign(button.dataset, {
+    action: "clarification-select",
+    clarificationId: naturalCard.id,
+    revision: "1",
+    subjectKind: "entry",
+    subjectId: entryCandidate.id,
+  });
+  await views.actOnClarification(button as unknown as HTMLButtonElement);
+  assert.deepEqual(writes, [
+    {
+      requestId: Reflect.get(Object(writes[0]), "requestId"),
+      action: "utterance",
+      text: "选择：" + entryCandidate.title,
+      replyTo: {
+        interactionId: naturalCard.id,
+        revision: naturalCard.revision,
+        promptMessageId: naturalCard.promptMessageId,
+      },
+      selection: {
+        kind: "entry",
+        id: entryCandidate.id,
+        memoryRevision: entryCandidate.memoryRevision,
+      },
+    },
+  ]);
+  const material = message(randomUUID(), "原文：<img src=x onerror=alert(1)>");
+  renderTranscript([
+    material,
+    {
+      ...message(randomUUID(), "改写"),
+      role: "assistant",
+      details: {
+        materialMessageIds: [material.id, '"><svg onload=alert(2)>'],
+      },
+    },
+  ]);
+  const transcript = element("chat-messages")
+    .nodes.map((node) => node.innerHTML)
+    .join("");
+  assert.match(transcript, /本轮提供（未归档）/);
+  assert.doesNotMatch(transcript, /<img|<svg/);
+  assert.equal(showConversationMessage(material.id), true);
+  assert.equal(element("chat-messages").nodes[0]?.focused, true);
+  assert.equal(showConversationMessage("missing"), false);
 });

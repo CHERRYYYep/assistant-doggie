@@ -10,6 +10,7 @@ const groundedFence = z.strictObject({
   card: z
     .strictObject({ id: z.uuid(), revision: z.number().int().positive() })
     .nullable(),
+  entry: z.string().uuid().optional(),
   work: z
     .strictObject({
       id: z.uuid(),
@@ -237,19 +238,28 @@ export class ConversationStore {
       readonly scopeRevision: number;
       readonly status?: string | undefined;
     } | null,
+    entry?: string,
   ): boolean {
+    if (
+      entry !== undefined &&
+      this.#database
+        .prepare("SELECT 1 FROM entries WHERE id=? AND revoked_at IS NULL")
+        .get(entry) === undefined
+    )
+      return false;
     if (this.getMemoryContextRevision() !== memoryRevision) return false;
     if (
       card !== null &&
       this.#database
         .prepare(
-          "SELECT 1 FROM conversation_clarifications WHERE id=? AND revision=? AND status='resolved' AND selected_id=? AND selected_scope_revision=?",
+          "SELECT 1 FROM conversation_clarifications WHERE id=? AND revision=? AND status='resolved' AND selected_id IS ? AND selected_scope_revision IS ? AND selected_entry_id IS ?",
         )
         .get(
           card.id,
           card.revision,
           work?.id ?? null,
           work?.scopeRevision ?? null,
+          entry ?? null,
         ) === undefined
     )
       return false;
@@ -257,7 +267,7 @@ export class ConversationStore {
       work === null ||
       this.#database
         .prepare(
-          "SELECT 1 FROM work_items WHERE id=? AND scope_revision=? AND cancel_requested=0 AND (? IS NULL OR status=?) AND (? = 0 OR status IN ('open','blocked','in_progress'))",
+          "SELECT 1 FROM work_items WHERE id=? AND scope_revision=? AND cancel_requested=0 AND (? IS NULL OR status=?) AND (? = 0 OR status IN ('open','blocked','in_progress') OR status='done' AND ?='done')",
         )
         .get(
           work.id,
@@ -265,6 +275,7 @@ export class ConversationStore {
           work.status ?? null,
           work.status ?? null,
           card === null ? 0 : 1,
+          work.status ?? null,
         ) !== undefined
     );
   }
@@ -302,6 +313,7 @@ export class ConversationStore {
             fence.data.memoryRevision,
             fence.data.card,
             fence.data.work,
+            fence.data.entry,
           )
         ) {
           content = STALE_CONTEXT_MESSAGE;

@@ -184,6 +184,14 @@ export const HTTP_OPERATIONS = [
     responseSchema: response.clarificationListResponseSchema,
   },
   {
+    operationId: "conversationInteractions",
+    method: "get",
+    path: "/api/conversation/interactions",
+    successStatus: 200,
+    feature: "conversation",
+    responseSchema: response.conversationInteractionListResponseSchema,
+  },
+  {
     operationId: "confirmChat",
     method: "post",
     path: "/api/chat/confirm",

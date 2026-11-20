@@ -1,6 +1,6 @@
 # 自然续接与历史材料定位测试方案
 
-2026-11-20 · **待实施的验收规格，不是通过记录。** 与 [设计文档](NATURAL_CONVERSATION_DESIGN.md)配套。普通测试使用 fake model/transport/runner 和临时 SQLite；不读取 `.env`、不打开用户真实数据库、不调用公网模型。
+2026-11-20 · **N0–N3 固定与自动化验收已完成；C4 质量评估仍待执行。** 本文保留可复现的样本与操作步骤，实际结果见[验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)。普通测试使用 fake model/transport/runner 和临时 SQLite；不读取 `.env`、不打开用户真实数据库、不调用公网模型。
 
 ## 1. 三类证据分开报告
 
@@ -9,6 +9,8 @@
 | 确定性单测/HTTP/临时库回归 | 原请求绑定、版本校验、只读、引用有效性、失败原子性和协议边界 | 模型对任意自然语言的真实理解与改写忠实度 |
 | 浏览器端到端验收 | 主输入框无需点卡片、插话、刷新恢复、双页陈旧状态和来源可打开 | 仅凭持久化快照不能声称真实刷新/重启体验通过 |
 | 显式真实模型质量实验 | 冻结样本下的回复关系、材料相关性、改写忠实度和弃答表现 | 不以 fake 答案、逐字引用存在或高召回率替代质量 |
+
+当前通过的自动门禁为 609 个后端测试和 68 个前端测试。有限浏览器 smoke 的环境、步骤与限制见验收记录。以上结果尚不包含真实模型质量结论，不能单独作为 C4 默认入口切换依据。
 
 ## 2. 固定数据与对照条件
 
@@ -55,7 +57,7 @@
 1. N0：`src/domain/chat-purpose.test.ts`、`src/application/main-chat.test.ts`、`src/http/main-conversation.test.ts` 先增加本次失败的回归，再实现修复。新增语义反例，不按正则拼写写测试。
 2. N1：回复关系模块纯规则测试；主对话应用/HTTP 测试覆盖普通 utterance 与显式操作的等价性、等待状态、可见快照、双页/重放和失败恢复。
 3. N2：storage 测试验证正式迁移、带 kind 引用、完整性标记、撤销与只读；上下文测试验证 Entry/本轮材料可改写且不伪造 WorkItem。未知字段和旧响应兼容加入 HTTP/browser contract 测试。
-4. N3：`src/runtime/local-web.test.ts` 用真实 loopback HTTP、fake 模型和临时库跑完整链路；`web/tests/ui-tasks.test.ts` 及模块测试验证主输入不点击卡片和服务端关联提示、恢复/冲突/XSS。浏览器实际重启/点击另列证据。
+4. N3：`src/runtime/local-web.test.ts` 用真实 loopback HTTP、fake 模型和临时库跑完整链路；`web/tests/ui-tasks.test.ts` 及模块测试验证主输入不点击卡片和服务端关联提示、恢复/冲突/XSS。对应固定用例和 loopback 重启测试已通过；人工 smoke 的有限结果见验收记录。
 
 可用的现有定向命令：
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { materialText } from "../domain/natural-reply.ts";
 import type { WorkItem } from "../domain/work-item.ts";
 import { withCancellation, throwIfAborted } from "../llm/cancellation.ts";
 import type { Store } from "../storage/store.ts";
@@ -14,6 +15,15 @@ type Citation = { readonly entryId: string; readonly bucketId: string };
 type Evidence = Citation & { readonly text: string };
 export type ConversationContext = {
   readonly original: string;
+  readonly operation?: "rewrite" | "lookup";
+  readonly subject?: {
+    readonly kind: "entry" | "work_item";
+    readonly id: string;
+  };
+  readonly materialSources?: readonly {
+    readonly messageId: string;
+    readonly text: string;
+  }[];
   readonly supplements: readonly string[];
   readonly target: Pick<
     WorkItem,
@@ -53,6 +63,8 @@ export type GroundedResponder = (
 export type GroundedResult = {
   readonly text: string;
   readonly citations: readonly Citation[];
+  readonly materialMessageIds?: readonly string[];
+  readonly missing?: boolean;
 };
 const noEvidence = (target: ConversationContext["target"]): GroundedResult => ({
   text:
@@ -60,6 +72,7 @@ const noEvidence = (target: ConversationContext["target"]): GroundedResult => ({
       ? "现有有效记录没有提供足够依据回答这个问题。"
       : "我已关联目标和要求，但没有找到能支撑改写或回答的材料。请补充原文，或在卡片中选择工作区创建只读检查提案。",
   citations: [],
+  missing: true,
 });
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 
@@ -83,16 +96,13 @@ export class ConversationContextService {
     signal?: AbortSignal,
   ): Promise<GroundedResult> {
     const material =
-      context.target === null
+      context.materialSources?.map(({ text }) => text) ??
+      (context.target === null
         ? []
         : [context.original, ...context.supplements].flatMap((text) => {
-            // Explicitly supplied passages are working material, not stored memory.
-            const match =
-              /(?:^|[，,。；;\n])\s*(?:原文|正文|材料|报告片段)\s*[:：]\s*(.+)$/su.exec(
-                text,
-              )?.[1];
-            return match ? [match] : [];
-          });
+            const part = materialText(text);
+            return part === undefined ? [] : [part];
+          }));
     const base = { ...context, material };
     if (
       context.supplements.length > MAX_SUPPLEMENTS ||
@@ -137,6 +147,7 @@ export class ConversationContextService {
       if (parsed.data.kind === "missing") return undefined;
       const citations = new Map<string, Citation>();
       const quotes: string[] = [];
+      const materialMessageIds = new Set<string>();
       for (const { entryId, quote } of parsed.data.quotes) {
         if (entryId === null) {
           if (!material.some((source) => source.includes(quote)))
@@ -144,6 +155,10 @@ export class ConversationContextService {
               text: "回复未通过证据校验，请查看原始材料或缩小问题。",
               citations: [],
             };
+          const source = context.materialSources?.find(({ text }) =>
+            text.includes(quote),
+          );
+          if (source !== undefined) materialMessageIds.add(source.messageId);
         } else {
           const source = evidence.find((part) => part.entryId === entryId);
           if (source === undefined || !source.text.includes(quote))
@@ -157,27 +172,32 @@ export class ConversationContextService {
       }
       // A personal lookup only returns verbatim excerpts. A bound rewrite can
       // compose new text, but must refer to a verified piece of source material.
-      if (context.target !== null && parsed.data.text === null)
-        return undefined;
+      const rewrite =
+        context.operation === "rewrite" ||
+        (context.operation === undefined && context.target !== null);
+      if (rewrite && parsed.data.text === null) return undefined;
       return {
-        text:
-          context.target === null
-            ? [...new Set(quotes)].join("\n\n")
-            : (parsed.data.text ?? ""),
+        text: !rewrite
+          ? [...new Set(quotes)].join("\n\n")
+          : (parsed.data.text ?? ""),
         citations: [...citations.values()],
+        materialMessageIds: [...materialMessageIds],
       };
     };
     if (direct.length > 0 || material.length > 0) {
       const first = await tryAnswer(direct);
       if (first !== undefined) return first;
+      if (context.operation !== undefined) return noEvidence(context.target);
     }
     if (!current()) return noEvidence(context.target);
     const searchTerm =
-      context.target === null
-        ? lookupTerms(context.original)
-        : allowTitleSearch
-          ? context.target.title
-          : "";
+      context.subject?.kind === "entry"
+        ? ""
+        : context.target === null
+          ? lookupTerms(context.original)
+          : allowTitleSearch
+            ? context.target.title
+            : "";
     if (!searchTerm) return noEvidence(context.target);
     const query = parseMemoryQuery(searchTerm, 12);
     const results = this.#query.searchWithPlan({
@@ -196,6 +216,12 @@ export class ConversationContextService {
     return (
       (await tryAnswer([...fallback, ...direct])) ?? noEvidence(context.target)
     );
+  }
+  entry(id: string) {
+    return this.#memory.getEntry(id);
+  }
+  query() {
+    return this.#query;
   }
   #load(ids: readonly string[]): Evidence[] {
     return [...new Set(ids)].flatMap((id) => {

@@ -21,7 +21,7 @@ import { ConversationExecutionStore } from "./conversation-execution.ts";
 const select = `SELECT id,title,goal,acceptance,status,revision,scope_revision AS scopeRevision,
  cancel_requested AS cancelRequested,last_attempt_id AS lastAttemptId,last_attempt_status AS lastAttemptStatus,
  created_at AS createdAt,updated_at AS updatedAt FROM work_items`;
-const MAX_LISTED_WORK_ITEMS = 100;
+export const MAX_LISTED_WORK_ITEMS = 100;
 const workItemReferenceSchema = workItemSchema.pick({
   id: true,
   title: true,
@@ -64,13 +64,13 @@ export class WorkItemStore {
         }),
       );
   }
-  clarificationPool() {
+  clarificationPool(includeDone = false) {
     const rows = this.#db
       .prepare(
         select +
-          " WHERE status IN ('open','in_progress','blocked') AND cancel_requested=0 ORDER BY updated_at DESC,id LIMIT 101",
+          " WHERE (status IN ('open','in_progress','blocked') OR (?=1 AND status='done')) AND cancel_requested=0 ORDER BY updated_at DESC,id LIMIT 101",
       )
-      .all();
+      .all(Number(includeDone));
     return {
       items: rows
         .slice(0, 100)
@@ -108,7 +108,7 @@ export class WorkItemStore {
       .prepare(
         "SELECT id,title,status FROM work_items WHERE title = ? ORDER BY CASE WHEN status IN ('done','cancelled') THEN 1 ELSE 0 END,updated_at DESC,id DESC LIMIT ?",
       )
-      .all(title, MAX_LISTED_WORK_ITEMS)
+      .all(title, MAX_LISTED_WORK_ITEMS + 1)
       .map((row) => workItemReferenceSchema.parse(row));
   }
   detail(id: string) {

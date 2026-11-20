@@ -49,6 +49,7 @@ import {
   showBucket,
 } from "./views.ts";
 import { state } from "./state.ts";
+import { showConversationMessage } from "./render-chat.ts";
 
 import { activateWorkspace, bindWorkspaceNavigation } from "./workspace.ts";
 import { bindWorkItemForm, refreshWorkItems } from "./work-items.ts";
@@ -78,6 +79,12 @@ chatMessages.addEventListener("click", async (event: MouseEvent) => {
       await showBucket(button.dataset["bucketId"]);
     } else if (button.dataset["action"] === "show-entry-citation" && button.dataset["entryId"]) {
       await showBucket(button.dataset["bucketId"], true, button.dataset["entryId"]);
+    } else if (
+      button.dataset["action"] === "show-message-citation" &&
+      button.dataset["messageId"]
+    ) {
+      if (!showConversationMessage(button.dataset["messageId"]))
+        setStatus("原文消息不在当前显示的聊天范围。", "warning");
     }
   } catch (error) {
     setStatus(errorMessage(error), "warning");
@@ -200,7 +207,7 @@ import {
   bindAgentConversationRefresh,
 } from "./agents.ts";
 bindAgentConversationRefresh((taskId) => {
-  if (state.preview && state.clarifications.some((card) => card.execution?.taskId === taskId))
+  if (state.preview && state.interactions.some((card) => card.execution?.taskId === taskId))
     void loadHistory();
 });
 agentPropose.addEventListener("click", () => void proposeAgent());

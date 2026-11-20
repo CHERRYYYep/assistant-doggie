@@ -15,10 +15,16 @@ import {
   type ClarificationReference,
   type ConversationReceipt,
   type ConversationTurn,
+  type Utterance,
+  type Interaction,
+  type SubjectReference,
+  type SubjectCandidate,
+  type Awaiting,
+  type PromptReference,
 } from "../domain/main-conversation.ts";
 import { AgentError, HarnessError } from "../domain/agent.ts";
 import { LlmError } from "../llm/structured-output.ts";
-import { decideChatPurpose } from "../domain/chat-purpose.ts";
+import { chatMaterialText, decideChatPurpose } from "../domain/chat-purpose.ts";
 import {
   resolveWorkItem,
   WorkItemError,
@@ -31,7 +37,10 @@ import type {
   ClarificationStore,
   StoredClarification,
 } from "../storage/clarifications.ts";
-import type { WorkItemStore } from "../storage/work-items.ts";
+import {
+  MAX_LISTED_WORK_ITEMS,
+  type WorkItemStore,
+} from "../storage/work-items.ts";
 import {
   STALE_CONTEXT_MESSAGE,
   type GroundedFence,
@@ -44,15 +53,27 @@ import {
   MAX_SUPPLEMENTS,
 } from "./conversation-context.ts";
 import type { ChatService } from "./chat.ts";
+import {
+  entryCandidate,
+  locateEntries,
+  subjectRef,
+} from "./conversation-subjects.ts";
+import {
+  hasRequirements,
+  materialText,
+  matchesCandidate,
+  resolveNaturalReply,
+} from "../domain/natural-reply.ts";
 
 type Mutation = Exclude<
   ConversationTurn,
-  { action: "message" | "continue" | "delegate" }
+  { action: "message" | "continue" | "delegate" | "utterance" }
 >;
 type Continue = Extract<ConversationTurn, { action: "continue" }>;
 type Delegate = Extract<ConversationTurn, { action: "delegate" }>;
 type Lookup = Extract<ConversationTurn, { action: "message" }>;
-type GroundedTurn = Continue | Lookup;
+type GroundedTurn = Continue | Lookup | Utterance;
+type NaturalAdmission = GroundedAdmission;
 type GroundedAdmission = {
   readonly userMessageId: string;
   readonly fence: GroundedFence;
@@ -60,6 +81,11 @@ type GroundedAdmission = {
   readonly entryIds: readonly string[];
   readonly allowTitleSearch: boolean;
   readonly immediate?: GroundedResult;
+};
+type LocatedTarget = {
+  readonly exact: SubjectCandidate | undefined;
+  readonly candidates: readonly SubjectCandidate[];
+  readonly truncated: boolean;
 };
 const ref = (item: WorkItem): ClarificationReference => ({
   id: item.id,
@@ -111,12 +137,36 @@ export class MainConversationService {
     this.#agent = agent;
   }
   list(): readonly ClarificationCard[] {
-    return this.#cards.list().map((card) => this.#project(card));
+    return this.#cards
+      .list()
+      .filter(
+        (card) =>
+          card.entry === null &&
+          !card.subjects.some((subject) => subject.kind === "entry"),
+      )
+      .map((card) => this.#project(card));
+  }
+  interactions() {
+    return this.#cards.readSnapshot(() => {
+      const throughSequence = this.#cards.throughSequence();
+      const interactions = this.#cards
+        .list()
+        .map((card) => this.#interaction(card));
+      const prompts = interactions.flatMap(
+        ({ id, revision, awaiting, promptMessageId }) =>
+          promptMessageId === null || awaiting === null
+            ? []
+            : [{ interactionId: id, revision, promptMessageId }],
+      );
+      return { interactions, snapshot: { throughSequence, prompts } };
+    });
   }
   turn(raw: unknown, signal?: AbortSignal): Promise<ConversationReceipt> {
     const input = conversationTurnSchema.parse(raw);
     return this.#chat.coordinateMain(async (dispatch) => {
       throwIfAborted(signal);
+      if (input.action === "utterance")
+        return this.#utterance(input, dispatch, signal);
       if (input.action === "delegate") return this.#delegate(input, signal);
       if (
         input.action === "continue" ||
@@ -154,6 +204,795 @@ export class MainConversationService {
       if (result === undefined) throw new Error("missing published turn");
       return result;
     }, signal);
+  }
+
+  #subject(reference: SubjectReference): SubjectCandidate | undefined {
+    if (reference.kind === "work_item") {
+      const item = this.#live(reference, true);
+      return item === undefined
+        ? undefined
+        : { kind: "work_item", ...choice(item) };
+    }
+    const entry = this.#grounding?.entry(reference.id);
+    return entry === undefined
+      ? undefined
+      : entryCandidate(entry, reference.memoryRevision);
+  }
+  #interaction(card: StoredClarification): Interaction {
+    const ref =
+      card.entry ??
+      (card.selected === null
+        ? null
+        : { ...card.selected, kind: "work_item" as const });
+    const selected = ref === null ? null : (this.#subject(ref) ?? null);
+    const rejectedCurrentCandidates =
+      card.awaiting === "subject" &&
+      /^都不是[。！!]?$/u.test(normalized(card.latestReply ?? ""));
+    const candidates =
+      card.status === "pending" && !rejectedCurrentCandidates
+        ? card.subjects.flatMap((ref) => this.#subject(ref) ?? [])
+        : [];
+    const stale =
+      (card.status === "resolved" && selected === null) ||
+      (card.status === "pending" &&
+        !rejectedCurrentCandidates &&
+        candidates.length !== card.subjects.length);
+    const execution = this.#agent?.conversationExecution(card.id);
+    return {
+      id: card.id,
+      originalMessageId: card.originalMessageId,
+      assistantMessageId: card.assistantMessageId,
+      originalText: card.originalText,
+      latestReply: card.latestReply,
+      revision: card.revision,
+      status: stale ? "stale" : card.status,
+      candidates: stale ? [] : candidates,
+      selected: stale ? null : selected,
+      awaiting: stale ? null : card.awaiting,
+      promptMessageId: card.promptMessageId,
+      truncated: card.truncated,
+      question: stale
+        ? "目标范围或来源已变化，请刷新后重新发起。"
+        : (card.question ??
+          (selected === null
+            ? ask(candidates.length)
+            : selectedText(selected.title))),
+      ...(execution == null ? {} : { execution }),
+    };
+  }
+  #observed(ref: PromptReference, allowStale = false) {
+    const card = this.#cards.get(ref.interactionId);
+    if (
+      card.revision !== ref.revision ||
+      card.promptMessageId !== ref.promptMessageId ||
+      (!allowStale && this.#interaction(card).status === "stale")
+    )
+      throw new ConversationError("stale");
+    return card;
+  }
+  #naturalTarget(text: string): LocatedTarget {
+    const title =
+      explicitTitle(text) ??
+      /^把[「“]([^」”]+)[」”](?:改写|改成|改为|润色)/u.exec(text)?.[1];
+    const first = title
+      ?.split(/[，,；;\n]/u)[0]
+      ?.trim()
+      .replace(/^[「“]|[」”]$/gu, "");
+    const directWorkItem =
+      first !== undefined && isWorkItemId(first)
+        ? this.#exact(first, true)
+        : undefined;
+    const directEntry =
+      first !== undefined && isWorkItemId(first)
+        ? this.#grounding?.entry(first)
+        : undefined;
+    const memoryRevision = this.#cards.memoryRevision();
+    const titleSource =
+      first ?? /^[把将]?[「“]([^」”]+)[」”]/u.exec(text)?.[1]?.trim();
+    const namedEntries =
+      titleSource === undefined || this.#grounding === undefined
+        ? { candidates: [], truncated: false }
+        : locateEntries(this.#grounding.query(), titleSource, memoryRevision);
+    const exactEntries =
+      titleSource === undefined
+        ? []
+        : namedEntries.candidates.filter(
+            (candidate) =>
+              normalized(candidate.title) === normalized(titleSource),
+          );
+    const exactWorkItemRefs =
+      titleSource === undefined ? [] : this.#items.findExactTitle(titleSource);
+    const workTitleTruncated = exactWorkItemRefs.length > MAX_LISTED_WORK_ITEMS;
+    const exactWorkItems: SubjectCandidate[] = exactWorkItemRefs.flatMap(
+      (reference) => {
+        try {
+          const current = this.#items.get(reference.id);
+          return this.#eligible(current, true)
+            ? [{ kind: "work_item" as const, ...choice(current) }]
+            : [];
+        } catch (error) {
+          if (error instanceof WorkItemError && error.code === "missing")
+            return [];
+          throw error;
+        }
+      },
+    );
+    const namedEntry =
+      !namedEntries.truncated && exactEntries.length === 1
+        ? exactEntries[0]
+        : undefined;
+
+    // A title is only a direct binding when the bounded Entry search is complete
+    // and unique across both subject kinds. A ranked hit (or one returned before
+    // a truncated tail) is never enough to choose a historical source.
+    if (directEntry !== undefined)
+      return {
+        exact: entryCandidate(directEntry, memoryRevision),
+        candidates: [],
+        truncated: false,
+      };
+    if (directWorkItem !== undefined)
+      return {
+        exact: { kind: "work_item", ...choice(directWorkItem) },
+        candidates: [],
+        truncated: false,
+      };
+    if (workTitleTruncated)
+      return {
+        exact: undefined,
+        candidates: [
+          ...exactWorkItems,
+          ...(namedEntries.truncated ? namedEntries.candidates : exactEntries),
+        ].slice(0, MAX_CLARIFICATION_CANDIDATES),
+        truncated: true,
+      };
+    if (
+      titleSource !== undefined &&
+      (exactWorkItems.length + exactEntries.length > 1 ||
+        (namedEntries.truncated && exactWorkItems.length > 0))
+    )
+      return {
+        exact: undefined,
+        candidates: [
+          ...exactWorkItems,
+          ...(namedEntries.truncated ? namedEntries.candidates : exactEntries),
+        ].slice(0, MAX_CLARIFICATION_CANDIDATES),
+        truncated:
+          namedEntries.truncated ||
+          exactWorkItems.length + exactEntries.length >
+            MAX_CLARIFICATION_CANDIDATES,
+      };
+    if (exactWorkItems.length === 1 || namedEntry !== undefined)
+      return {
+        exact: exactWorkItems[0] ?? namedEntry,
+        candidates: [],
+        truncated: false,
+      };
+    const work = this.#matches(text, true);
+    const query = this.#grounding?.query();
+    const entries =
+      query === undefined
+        ? { candidates: [], truncated: false }
+        : locateEntries(query, text, memoryRevision);
+    // Merge only explicit work-item/source relations, never similar titles.
+    const linked = new Set(
+      work.candidates.flatMap((item) =>
+        this.#items.entrySourceIds(item.id, 16),
+      ),
+    );
+    const combined = [
+      ...work.candidates.map((item) => ({
+        kind: "work_item" as const,
+        ...choice(item),
+      })),
+      ...entries.candidates.filter((part) => !linked.has(part.id)),
+    ];
+    return {
+      exact: undefined,
+      candidates: combined.slice(0, MAX_CLARIFICATION_CANDIDATES),
+      truncated:
+        work.truncated ||
+        entries.truncated ||
+        combined.length > MAX_CLARIFICATION_CANDIDATES,
+    };
+  }
+  #utterance(
+    input: Utterance,
+    dispatch: Parameters<Parameters<ChatService["coordinateMain"]>[0]>[0],
+    signal?: AbortSignal,
+  ) {
+    const admitted = this.#cards.transaction<
+      ConversationReceipt | NaturalAdmission | null
+    >(() => {
+      const replay = this.#cards.begin(input);
+      if (replay !== null) return replay;
+      if (input.replyTo !== undefined) {
+        const card = this.#observed(input.replyTo, input.command === "cancel");
+        if (input.selection !== undefined && input.command !== undefined)
+          throw new ConversationError("conflict");
+        const view = this.#interaction(card);
+        const picked =
+          input.selection === undefined
+            ? matchesCandidate(input.text, view.candidates, view.truncated)
+            : view.candidates.find(
+                (candidate) =>
+                  JSON.stringify(subjectRef(candidate)) ===
+                  JSON.stringify(input.selection),
+              );
+        if (input.selection !== undefined && picked === undefined)
+          throw new ConversationError("conflict");
+        return this.#resumeNatural(
+          input,
+          card,
+          picked,
+          input.command,
+          "explicit",
+        );
+      }
+      if (input.selection !== undefined || input.command !== undefined)
+        throw new ConversationError("conflict");
+      const purpose = decideChatPurpose(input.text);
+      const bareMaterial = materialText(input.text);
+      const material =
+        purpose.kind === "answer" ? chatMaterialText(input.text) : null;
+      const quotedObject =
+        material !== null && this.#looksLikeNamedObject(material);
+      if (input.snapshot !== undefined) {
+        const snapshot = input.snapshot;
+        const currentPrompts = this.#cards.list().flatMap((card) => {
+          const view = this.#interaction(card);
+          return view.promptMessageId === null || view.awaiting === null
+            ? []
+            : [
+                {
+                  interactionId: view.id,
+                  revision: view.revision,
+                  promptMessageId: view.promptMessageId,
+                },
+              ];
+        });
+        const sorted = (refs: readonly PromptReference[]) =>
+          [...refs].sort((a, b) =>
+            a.interactionId.localeCompare(b.interactionId),
+          );
+        if (
+          snapshot.throughSequence > this.#cards.throughSequence() ||
+          JSON.stringify(sorted(snapshot.prompts)) !==
+            JSON.stringify(sorted(currentPrompts)) ||
+          new Set(snapshot.prompts.map((ref) => ref.interactionId)).size !==
+            snapshot.prompts.length
+        )
+          throw new ConversationError("stale");
+        for (const ref of snapshot.prompts)
+          this.#cards.validateObserved(ref, snapshot.throughSequence);
+        // Complete independent requests never consume or depend on a waiting question.
+        const independent =
+          purpose.kind === "archive" ||
+          purpose.kind === "lookup" ||
+          (purpose.kind === "answer" && !quotedObject) ||
+          (purpose.kind === "clarify" &&
+            ["explicit_confirmation", "archive_content", "mixed"].includes(
+              purpose.reason,
+            ));
+        if (!independent) {
+          const cards = snapshot.prompts.map((ref) => this.#observed(ref));
+          const matches = resolveNaturalReply(
+            input.text,
+            cards.map((card) => this.#interaction(card)),
+          );
+          if (matches.length > 1)
+            return this.#naturalMessage(
+              input,
+              "这些内容是给哪个问题的？请补充完整对象名称，或使用对应的回复入口。",
+            );
+          const match = matches[0];
+          const card = cards.find(({ id }) => id === match?.view.id);
+          if (match !== undefined && card !== undefined)
+            return this.#resumeNatural(
+              input,
+              card,
+              match.picked,
+              match.command,
+              "natural",
+            );
+          const rejected = cards.filter(
+            (card) =>
+              card.awaiting === "subject" &&
+              /^都不是[。！!]?$/u.test(normalized(card.latestReply ?? "")),
+          );
+          if (rejected.length === 1)
+            return this.#refreshNaturalSubjects(input, rejected[0]!);
+        }
+      }
+      if (material !== null && !this.#looksLikeNamedObject(material)) {
+        const user = this.#cards.append({
+          role: "user",
+          content: input.text,
+          details: { kind: "conversation_context_input" },
+        });
+        return {
+          userMessageId: user.id,
+          fence: {
+            memoryRevision: this.#cards.memoryRevision(),
+            card: null,
+            work: null,
+          },
+          context: {
+            original: input.text,
+            supplements: [],
+            target: null,
+            materialSources: [{ messageId: user.id, text: material }],
+            operation: "rewrite",
+          },
+          entryIds: [],
+          allowTitleSearch: false,
+        };
+      }
+      const namedRewrite = quotedObject;
+      if (
+        purpose.kind === "propose_execution" ||
+        namedRewrite ||
+        (purpose.kind === "clarify" && purpose.reason === "target")
+      )
+        return this.#openNatural(input, namedRewrite);
+      if (purpose.kind === "lookup" && this.#grounding !== undefined)
+        return this.#admitGrounded(input);
+      if (bareMaterial !== undefined)
+        return this.#naturalMessage(
+          input,
+          "已收到原文。你希望怎么处理这段内容？",
+        );
+      return null;
+    });
+    if (admitted === null) return this.#dispatchNatural(input, dispatch);
+    if ("kind" in admitted) return Promise.resolve(admitted);
+    return this.#answerNatural(input, admitted, signal);
+  }
+  async #dispatchNatural(
+    input: Utterance,
+    dispatch: Parameters<Parameters<ChatService["coordinateMain"]>[0]>[0],
+  ): Promise<ConversationReceipt> {
+    let result: ConversationReceipt | undefined;
+    await dispatch(input.text, (kind, user, assistant, chatError) => {
+      result = {
+        kind,
+        userMessageId: user.id,
+        assistantMessageId: assistant.id,
+        chatError,
+      };
+      this.#cards.finish(input.requestId, result);
+    });
+    if (result === undefined) throw new Error("missing published utterance");
+    return result;
+  }
+  #looksLikeNamedObject(text: string) {
+    return (
+      text.length <= 120 &&
+      !/[，。；;、!?？\n:：]/u.test(text) &&
+      /(?:实验|报告|任务|项目|记录|作业|文件)$/u.test(text)
+    );
+  }
+  #naturalMessage(input: Utterance, content: string): ConversationReceipt {
+    const user = this.#cards.append({
+      role: "user",
+      content: input.text,
+      details: { kind: "conversation_context_input" },
+    });
+    return this.#publish(
+      input.requestId,
+      user.id,
+      { kind: "clarify", chatError: null },
+      content,
+      { kind: "task_clarification_result" },
+    );
+  }
+  #openNatural(
+    input: Utterance,
+    namedRewrite: boolean,
+  ): NaturalAdmission | ConversationReceipt {
+    const { exact, candidates, truncated } = this.#naturalTarget(input.text);
+    const user = this.#cards.append({
+      role: "user",
+      content: input.text,
+      details: { kind: "task_clarification_input" },
+    });
+    const requirements =
+      namedRewrite ||
+      hasRequirements(input.text) ||
+      /只改报告|仅改报告|只读检查/u.test(input.text);
+    const direct =
+      exact?.kind === "entry"
+        ? [exact.id]
+        : exact === undefined
+          ? []
+          : this.#items.entrySourceIds(exact.id, 6);
+    const workspace =
+      /^(?:请\s*)?(?:帮我\s*)?(?:只读\s*)?(?:检查|打开|读取|运行|执行)/u.test(
+        input.text,
+      );
+    const awaiting: Awaiting | null =
+      exact === undefined
+        ? "subject"
+        : workspace
+          ? null
+          : !requirements
+            ? "requirements"
+            : direct.length === 0
+              ? "material"
+              : null;
+    const question =
+      workspace && exact !== undefined
+        ? exact.kind === "entry"
+          ? "已定位这份记录。检查工作区需要单独指定工作目标并批准。"
+          : "已关联目标。检查工作区请从卡片创建只读提案。"
+        : this.#question(awaiting, candidates, exact?.title);
+    const assistant = this.#cards.append({
+      role: "assistant",
+      content: question,
+      details: {
+        kind: "task_clarification_result",
+        source_message_id: user.id,
+      },
+    });
+    const ref = exact === undefined ? undefined : subjectRef(exact);
+    const id = this.#cards.create(
+      user.id,
+      assistant.id,
+      [],
+      truncated,
+      ref?.kind === "work_item" ? ref : null,
+      awaiting,
+      candidates.map(subjectRef),
+      ref?.kind === "entry" ? ref : undefined,
+    );
+    if (
+      exact !== undefined &&
+      awaiting === null &&
+      !workspace &&
+      ref !== undefined
+    ) {
+      const card = this.#cards.get(id);
+      return this.#forSubject(card, ref, user.id);
+    }
+    const result = {
+      kind: "clarification",
+      clarificationId: id,
+      userMessageId: user.id,
+      assistantMessageId: assistant.id,
+    } as const;
+    this.#cards.finish(input.requestId, result);
+    return result;
+  }
+  #question(
+    awaiting: Awaiting | null,
+    candidates: readonly SubjectCandidate[],
+    title?: string,
+  ) {
+    if (awaiting === "subject")
+      return candidates.length === 0
+        ? "在已保存的有效记录中没有定位到相关材料。请告诉我完整主题或贴出原文。"
+        : (
+            "你指的是哪一份？" +
+            candidates
+              .map((x) =>
+                x.kind === "entry"
+                  ? `记录「${x.title.slice(0, 14)}」（${x.createdAt.slice(5, 10)} ${x.hint.slice(0, 12)}）`
+                  : `工作目标「${x.title.slice(0, 20)}」`,
+              )
+              .join("；") +
+            "。可回复名称或区分内容，也可以说都不是。"
+          ).slice(0, 240);
+    if (awaiting === "material")
+      return (
+        "已关联「" + (title ?? "材料").slice(0, 80) + "」。请贴出要处理的原文。"
+      );
+    if (awaiting === "requirements")
+      return "已关联「" + (title ?? "材料").slice(0, 80) + "」。你希望怎么改？";
+    return "已关联所选材料，下面处理原请求。";
+  }
+  #resumeNatural(
+    input: Utterance,
+    card: StoredClarification,
+    picked: SubjectCandidate | undefined,
+    command: "none" | "cancel" | "retry" | undefined,
+    relation: "natural" | "explicit",
+  ): NaturalAdmission | ConversationReceipt {
+    if (card.status === "cancelled" || card.status === "stale")
+      throw new ConversationError("stale");
+    const prior =
+      card.entry ??
+      (card.selected === null
+        ? null
+        : { kind: "work_item" as const, ...card.selected });
+    if (command === "retry") {
+      if (prior === null || card.awaiting !== null)
+        throw new ConversationError("stale");
+      return this.#forSubject(
+        card,
+        prior,
+        card.latestReplyId ?? card.originalMessageId,
+      );
+    }
+    if (card.awaiting === null && command !== "cancel")
+      throw new ConversationError("stale");
+    const ref = picked === undefined ? prior : subjectRef(picked);
+    const user = this.#cards.append({
+      role: "user",
+      content: input.text,
+      details: {
+        kind: "task_clarification_reply",
+        action: command ?? "reply",
+        clarification_id: card.id,
+        reply_to_message_id: card.originalMessageId,
+        prompt_message_id: card.promptMessageId,
+        observed_revision: card.revision,
+        relation,
+        ...(ref === null ? {} : { target: ref }),
+      },
+    });
+    const changed = {
+      status:
+        command === "cancel"
+          ? ("cancelled" as const)
+          : ref === null
+            ? ("pending" as const)
+            : ("resolved" as const),
+      candidates: [],
+      subjects: command === "cancel" ? [] : card.subjects,
+      truncated: command === "none" ? false : card.truncated,
+      selected: command !== "cancel" && ref?.kind === "work_item" ? ref : null,
+      entry: command !== "cancel" && ref?.kind === "entry" ? ref : null,
+      latestReplyId: command === "cancel" ? card.latestReplyId : user.id,
+    };
+    const supplements = this.#cards.supplements(card, MAX_SUPPLEMENTS + 1);
+    if (supplements.length > MAX_SUPPLEMENTS)
+      throw new ConversationError("context_limit");
+    const workspace =
+      /^(?:请\s*)?(?:帮我\s*)?(?:只读\s*)?(?:检查|打开|读取|运行|执行)/u.test(
+        input.text,
+      );
+    const title =
+      picked?.title ?? (ref === null ? undefined : this.#subject(ref)?.title);
+    const awaiting: Awaiting | null =
+      changed.status === "cancelled" || (workspace && ref !== null)
+        ? null
+        : ref === null
+          ? "subject"
+          : ![card.originalText, ...supplements].some(
+                (x) => hasRequirements(x) || /只改报告|仅改报告/u.test(x),
+              )
+            ? "requirements"
+            : ref.kind === "work_item" &&
+                this.#items.entrySourceIds(ref.id, 1).length === 0 &&
+                ![card.originalText, ...supplements].some(
+                  (x) => materialText(x) !== undefined,
+                )
+              ? "material"
+              : null;
+    if (
+      awaiting === null &&
+      changed.status === "resolved" &&
+      ref !== null &&
+      !workspace
+    ) {
+      this.#cards.update(card, { ...changed, awaiting: null });
+      this.#agent?.rejectPendingForConversationWithinTransaction(card.id);
+      return this.#forSubject(this.#cards.get(card.id), ref, user.id);
+    }
+    const content =
+      changed.status === "cancelled"
+        ? "已取消这次澄清。"
+        : workspace && ref !== null
+          ? "检查工作区需要单独创建只读提案并批准；这条回复没有执行任何操作。"
+          : this.#question(
+              awaiting,
+              command === "none" ? [] : this.#interaction(card).candidates,
+              title,
+            );
+    const result = this.#publish(
+      input.requestId,
+      user.id,
+      { kind: "clarification", clarificationId: card.id },
+      content,
+      { kind: "task_clarification_result", clarification_id: card.id },
+    );
+    this.#cards.update(card, {
+      ...changed,
+      awaiting,
+      promptMessageId: result.assistantMessageId,
+    });
+    this.#agent?.rejectPendingForConversationWithinTransaction(card.id);
+    return result;
+  }
+  #refreshNaturalSubjects(
+    input: Utterance,
+    card: StoredClarification,
+  ): NaturalAdmission | ConversationReceipt {
+    const located = this.#naturalTarget(input.text);
+    if (located.exact !== undefined)
+      return this.#resumeNatural(
+        input,
+        card,
+        located.exact,
+        undefined,
+        "natural",
+      );
+    const candidates =
+      located.exact === undefined ? located.candidates : [located.exact];
+    const user = this.#cards.append({
+      role: "user",
+      content: input.text,
+      details: {
+        kind: "task_clarification_reply",
+        action: "reply",
+        clarification_id: card.id,
+        reply_to_message_id: card.originalMessageId,
+        prompt_message_id: card.promptMessageId,
+        observed_revision: card.revision,
+        relation: "natural",
+      },
+    });
+    const question = this.#question("subject", candidates);
+    const result = this.#publish(
+      input.requestId,
+      user.id,
+      { kind: "clarification", clarificationId: card.id },
+      question,
+      { kind: "task_clarification_result", clarification_id: card.id },
+    );
+    this.#cards.update(card, {
+      status: "pending",
+      candidates: [],
+      subjects: candidates.map(subjectRef),
+      truncated: located.truncated,
+      selected: null,
+      entry: null,
+      awaiting: "subject",
+      latestReplyId: user.id,
+      promptMessageId: result.assistantMessageId,
+    });
+    return result;
+  }
+  #forSubject(
+    card: StoredClarification,
+    ref: SubjectReference,
+    userMessageId: string,
+  ): NaturalAdmission {
+    const target = ref.kind === "work_item" ? this.#live(ref, true) : null;
+    if (target === undefined || this.#subject(ref) === undefined)
+      throw new ConversationError("stale");
+    const supplements = this.#cards.supplementMessages(
+      card,
+      MAX_SUPPLEMENTS + 1,
+    );
+    const materialSources = [
+      { id: card.originalMessageId, text: card.originalText },
+      ...supplements,
+    ].flatMap(({ id, text }) => {
+      const value = materialText(text);
+      return value === undefined ? [] : [{ messageId: id, text: value }];
+    });
+    return {
+      userMessageId,
+      fence: {
+        memoryRevision: this.#cards.memoryRevision(),
+        card: { id: card.id, revision: card.revision },
+        work:
+          target === null
+            ? null
+            : {
+                id: target.id,
+                scopeRevision: target.scopeRevision,
+                status: target.status,
+              },
+        ...(ref.kind === "entry" ? { entry: ref.id } : {}),
+      },
+      context: {
+        original: card.originalText,
+        supplements: supplements.map(({ text }) => text),
+        target,
+        operation: "rewrite",
+        subject: { kind: ref.kind, id: ref.id },
+        materialSources,
+      },
+      entryIds:
+        ref.kind === "entry" ? [ref.id] : this.#items.entrySourceIds(ref.id, 6),
+      allowTitleSearch: false,
+    };
+  }
+  async #answerNatural(
+    input: Utterance,
+    admitted: NaturalAdmission,
+    signal?: AbortSignal,
+  ): Promise<ConversationReceipt> {
+    const current = () =>
+      this.#cards.contextCurrent(admitted.fence) &&
+      (admitted.fence.work === null ||
+        this.#items.hasAvailableScopeSources(admitted.fence.work.id));
+    let result: GroundedResult;
+    try {
+      result = admitted.immediate ??
+        (await this.#grounding?.answer(
+          admitted.context,
+          admitted.entryIds,
+          admitted.allowTitleSearch,
+          current,
+          signal,
+        )) ?? { text: "暂时无法处理资料，请稍后重试。", citations: [] };
+    } catch (error) {
+      throwIfAborted(signal);
+      if (!(error instanceof LlmError) && !(error instanceof HarnessError))
+        throw error;
+      result = { text: "暂时无法处理资料，可从对应卡片重试。", citations: [] };
+    }
+    throwIfAborted(signal);
+    return this.#cards.transaction(() => {
+      const valid = current();
+      const card =
+        admitted.fence.card === null
+          ? null
+          : this.#cards.get(admitted.fence.card.id);
+      const needsMaterial = valid && result.missing && card !== null;
+      const fence =
+        needsMaterial && card !== null
+          ? {
+              ...admitted.fence,
+              card: { id: card.id, revision: card.revision + 1 },
+            }
+          : admitted.fence;
+      const content = !valid
+        ? STALE_CONTEXT_MESSAGE
+        : needsMaterial
+          ? this.#question(
+              "material",
+              [],
+              card === null
+                ? undefined
+                : this.#interaction(card).selected?.title,
+            )
+          : result.text;
+      const payload =
+        card === null
+          ? {
+              kind:
+                admitted.context.operation === "rewrite"
+                  ? ("answer" as const)
+                  : ("lookup" as const),
+              chatError: valid ? null : STALE_CONTEXT_MESSAGE,
+            }
+          : { kind: "clarification" as const, clarificationId: card.id };
+      const published = this.#publish(
+        input.requestId,
+        admitted.userMessageId,
+        payload,
+        content,
+        {
+          kind: "conversation_context_result",
+          fence,
+          ...(valid
+            ? {
+                citations: result.citations,
+                materialMessageIds: result.materialMessageIds ?? [],
+                clarification_id: card?.id,
+                workItemId: fence.work?.id,
+              }
+            : {}),
+        },
+      );
+      if (needsMaterial && card !== null)
+        this.#cards.update(card, {
+          status: card.status,
+          candidates: card.candidates,
+          subjects: card.subjects,
+          truncated: card.truncated,
+          selected: card.selected,
+          entry: card.entry,
+          latestReplyId: card.latestReplyId,
+          awaiting: "material",
+          promptMessageId: published.assistantMessageId,
+        });
+      return published;
+    });
   }
 
   #resolved(input: Continue | Delegate) {
@@ -405,7 +1244,7 @@ export class MainConversationService {
     userMessageId: string,
     payload:
       | { kind: "clarification"; clarificationId: string }
-      | { kind: "lookup"; chatError: string | null },
+      | { kind: "lookup" | "clarify" | "answer"; chatError: string | null },
     content: string,
     details: Readonly<Record<string, unknown>>,
   ): ConversationReceipt {
@@ -423,11 +1262,14 @@ export class MainConversationService {
     return result;
   }
 
-  #live(reference: ClarificationReference): WorkItem | undefined {
+  #live(
+    reference: ClarificationReference,
+    natural = false,
+  ): WorkItem | undefined {
     try {
       const item = this.#items.get(reference.id);
       return item.scopeRevision === reference.scopeRevision &&
-        this.#eligible(item)
+        this.#eligible(item, natural)
         ? item
         : undefined;
     } catch (error) {
@@ -436,10 +1278,10 @@ export class MainConversationService {
       throw error;
     }
   }
-  #eligible(item: WorkItem) {
+  #eligible(item: WorkItem, natural = false) {
     return (
       !item.cancelRequested &&
-      item.status !== "done" &&
+      (natural || item.status !== "done") &&
       item.status !== "cancelled" &&
       this.#items.hasAvailableScopeSources(item.id)
     );
@@ -486,15 +1328,21 @@ export class MainConversationService {
     if (!projected.success) throw new Error("invalid clarification projection");
     return projected.data;
   }
-  #exact(titleOrId: string): WorkItem | undefined {
+  #exact(titleOrId: string, natural = false): WorkItem | undefined {
     if (isWorkItemId(titleOrId)) {
       try {
         const item = this.#items.get(titleOrId);
-        if (this.#eligible(item)) return item;
+        if (this.#eligible(item, natural)) return item;
       } catch (error) {
         if (!(error instanceof WorkItemError && error.code === "missing"))
           throw error;
       }
+    }
+    if (natural) {
+      const matches = this.#items.findExactTitle(titleOrId);
+      if (matches.length !== 1 || matches[0] === undefined) return undefined;
+      const item = this.#items.get(matches[0].id);
+      return this.#eligible(item, true) ? item : undefined;
     }
     const resolution = resolveWorkItem(
       { title: titleOrId },
@@ -502,10 +1350,10 @@ export class MainConversationService {
     );
     if (resolution.workItemId === null) return undefined;
     const item = this.#items.get(resolution.workItemId);
-    return this.#eligible(item) ? item : undefined;
+    return this.#eligible(item, natural) ? item : undefined;
   }
-  #matches(text: string) {
-    const { items, truncated } = this.#items.clarificationPool();
+  #matches(text: string, natural = false) {
+    const { items, truncated } = this.#items.clarificationPool(natural);
     const wording = normalized(text);
     const terms = topicTerms(text);
     const ranked = items
@@ -518,7 +1366,9 @@ export class MainConversationService {
         const score = titleMention
           ? 100
           : terms.filter((term) => words.has(term)).length;
-        return score > 0 && this.#eligible(item) ? [{ item, score }] : [];
+        return score > 0 && this.#eligible(item, natural)
+          ? [{ item, score }]
+          : [];
       })
       .sort((a, b) => b.score - a.score);
     return {
@@ -591,6 +1441,11 @@ export class MainConversationService {
 
   #change(input: Mutation): ConversationReceipt {
     const card = this.#cards.get(input.clarificationId);
+    if (
+      card.entry !== null ||
+      card.subjects.some((subject) => subject.kind === "entry")
+    )
+      throw new ConversationError("conflict");
     if (card.revision !== input.expectedRevision)
       throw new ConversationError("stale");
     const view = this.#project(card);

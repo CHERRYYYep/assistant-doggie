@@ -28,7 +28,7 @@ import type { SourceReference } from "../domain/work-item.ts";
 import { ClarificationStore } from "../storage/clarifications.ts";
 import { STALE_CONTEXT_MESSAGE } from "../storage/conversation.ts";
 import { openDatabase, readSchemaVersion } from "../storage/database.ts";
-import { MIGRATIONS, SCHEMA_KIND } from "../storage/schema.ts";
+import { MIGRATIONS, SCHEMA_KIND, SCHEMA_VERSION } from "../storage/schema.ts";
 import { Store } from "../storage/store.ts";
 import { WorkItemStore } from "../storage/work-items.ts";
 import { ConcreteDoggieHttpApi } from "./api.ts";
@@ -626,7 +626,7 @@ test("v8 migration is atomic and upgrades through C3 and reopens with old WorkIt
   }
   {
     using db = openDatabase(path);
-    assert.equal(readSchemaVersion(db), 10);
+    assert.equal(readSchemaVersion(db), SCHEMA_VERSION);
     const f = fixture(db);
     assert.equal(f.store.conversation.listChatMessages(40).length, 1);
     const card = await firstCard(f);
@@ -940,8 +940,31 @@ test("C3 v9 → v10 migration rolls back on failure and preserves existing cards
       "INSERT INTO schema_meta VALUES ('schema_kind',?),('schema_version','9')",
     ).run(SCHEMA_KIND);
     const f = fixture(db);
-    f.goal(networkLab.tcp);
-    cardId = (await firstCard(f)).id;
+    const tcp = f.goal(networkLab.tcp);
+    const question = f.store.conversation.appendChatMessage({
+      role: "user",
+      content: networkLab.request,
+      details: { kind: "task_clarification" },
+    });
+    const prompt = f.store.conversation.appendChatMessage({
+      role: "assistant",
+      content: "你指的是哪项实验？",
+      details: { kind: "task_clarification" },
+    });
+    cardId = randomUUID();
+    // Seed using the v9 contract: current application writes require the
+    // current schema and cannot generate genuinely pre-migration rows.
+    db.prepare(
+      `INSERT INTO conversation_clarifications
+        (id, original_message_id, assistant_message_id, status, revision,
+         candidates_json, truncated)
+       VALUES (?, ?, ?, 'pending', 1, ?, 0)`,
+    ).run(
+      cardId,
+      question.id,
+      prompt.id,
+      JSON.stringify([{ id: tcp.id, scopeRevision: tcp.scopeRevision }]),
+    );
     db.exec(
       "CREATE INDEX ix_conversation_supplements ON conversation_messages(role)",
     );
@@ -966,8 +989,11 @@ test("C3 v9 → v10 migration rolls back on failure and preserves existing cards
   }
   for (let i = 0; i < 2; i++) {
     using db = openDatabase(path);
-    assert.equal(readSchemaVersion(db), 10);
-    assert.equal((await fixture(db).getCards())[0]?.id, cardId);
+    assert.equal(readSchemaVersion(db), SCHEMA_VERSION);
+    const [card] = await fixture(db).getCards();
+    assert.equal(card?.id, cardId);
+    assert.equal(card.originalText, networkLab.request);
+    assert.equal(card.candidates[0]?.title, networkLab.tcp);
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   }
 });

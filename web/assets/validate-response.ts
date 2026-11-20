@@ -12,6 +12,7 @@ const KEYWORDS = new Set([
   "const",
   "enum",
   "anyOf",
+  "oneOf",
   "properties",
   "required",
   "additionalProperties",
@@ -79,6 +80,18 @@ export function matchesResponseSchema(value: unknown, schema: unknown): boolean 
         !alternatives.some((alternative) => visit(item, alternative, depth + 1))
       )
         return false;
+    }
+    if (own(rule, "oneOf")) {
+      const alternatives = rule["oneOf"];
+      if (!Array.isArray(alternatives)) return false;
+      let matched = false;
+      for (const alternative of alternatives) {
+        if (visit(item, alternative, depth + 1)) {
+          if (matched) return false;
+          matched = true;
+        }
+      }
+      if (!matched) return false;
     }
     const type = rule["type"];
     if (type === undefined) return true;

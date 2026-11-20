@@ -18,7 +18,7 @@ import {
   fetchActiveBuckets,
   fetchBucketDetail,
   fetchChatHistory,
-  fetchClarifications,
+  fetchConversationInteractions,
   fetchAgentCapabilities,
   fetchAgentWorkspaces,
   postConversationTurn,
@@ -357,22 +357,31 @@ export async function showBucket(
 }
 
 export function renderHistory(): void {
-  renderTranscript(state.history, state.preview ? state.clarifications : [], state.delegateOptions);
+  renderTranscript(state.history, state.preview ? state.interactions : [], state.delegateOptions);
 }
 
 export async function loadHistory(): Promise<void> {
   const revision = ++state.historyRequestRevision;
   try {
-    const [data, cards] = await Promise.all([
+    const [data, interactionView] = await Promise.all([
       fetchChatHistory(),
-      state.preview ? fetchClarifications().catch((error: unknown) => ({ error })) : undefined,
+      state.preview
+        ? fetchConversationInteractions().catch((error: unknown) => ({ error }))
+        : undefined,
     ]);
     if (revision !== state.historyRequestRevision) return;
     state.history = [...data.messages];
-    if (cards && "clarifications" in cards) state.clarifications = cards.clarifications;
-    if (cards && "error" in cards) {
-      state.clarifications = [];
-      setStatus(`无法恢复澄清卡：${errorMessage(cards.error)}`, "warning");
+    if (interactionView && "interactions" in interactionView) {
+      state.interactions = interactionView.interactions;
+      state.observedConversation = interactionView.snapshot;
+    }
+    if (interactionView && "error" in interactionView) {
+      state.interactions = [];
+      state.observedConversation = null;
+      setStatus(
+        `无法恢复待回复问题，请刷新对话：${errorMessage(interactionView.error)}`,
+        "warning",
+      );
     }
     renderHistory();
   } catch (error) {
@@ -408,7 +417,8 @@ export async function setConversationPreview(enabled: boolean): Promise<void> {
   state.preview = enabled;
   conversationRefresh.hidden = !enabled;
   if (!enabled) {
-    state.clarifications = [];
+    state.interactions = [];
+    state.observedConversation = null;
     state.delegateOptions = null;
     clearClarificationReply();
     renderHistory();
@@ -439,14 +449,18 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
   if (chatSend.disabled || state.retryTurn !== null || button.disabled) return;
   const clarificationId = requireDataset(button, "clarificationId");
   const expectedRevision = Number(requireDataset(button, "revision"));
+  const card = state.interactions.find(({ id }) => id === clarificationId);
   if (action === "clarification-reply") {
-    const card = state.clarifications.find(({ id }) => id === clarificationId);
     if (!card || card.revision !== expectedRevision) return;
-    if (chatInput.value.trim() && state.reply?.clarificationId !== clarificationId) {
+    if (chatInput.value.trim() && state.reply?.interactionId !== clarificationId) {
       setStatus("输入框中还有草稿，请先处理后再回复这张卡。", "warning");
       return;
     }
-    state.reply = { clarificationId, expectedRevision };
+    state.reply = {
+      interactionId: clarificationId,
+      revision: expectedRevision,
+      promptMessageId: card.promptMessageId,
+    };
     replyLabel.textContent = `回复：${card.originalText.slice(0, 100)}`;
     replyContext.hidden = false;
     chatInput.focus();
@@ -454,7 +468,7 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
   }
   if (
     (action === "clarification-continue" || action === "clarification-delegate") &&
-    state.reply?.clarificationId === clarificationId &&
+    state.reply?.interactionId === clarificationId &&
     chatInput.value.trim()
   ) {
     setStatus("请先发送或丢弃这张卡的回复草稿。", "warning");
@@ -477,7 +491,7 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
       ]);
       if (
         !state.preview ||
-        !state.clarifications.some(
+        !state.interactions.some(
           (card) => card.id === clarificationId && card.revision === expectedRevision,
         )
       )
@@ -507,16 +521,55 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
     }
     await submitPreviewTurn({ ...base, action: "delegate", backend, workspaceId });
   } else if (action === "clarification-select") {
+    if (button.dataset["subjectKind"] === undefined) {
+      await submitPreviewTurn({
+        ...base,
+        action: "select",
+        workItemId: requireDataset(button, "workItemId"),
+      });
+      return;
+    }
+    if (!card || card.revision !== expectedRevision || card.promptMessageId === null) return;
+    const choice = card.candidates.find(
+      ({ id, kind }) =>
+        id === button.dataset["subjectId"] && kind === button.dataset["subjectKind"],
+    );
+    if (!choice) return;
     await submitPreviewTurn({
-      ...base,
-      action: "select",
-      workItemId: requireDataset(button, "workItemId"),
+      action: "utterance",
+      requestId: base.requestId,
+      text: `选择：${choice.title}`,
+      replyTo: {
+        interactionId: clarificationId,
+        revision: expectedRevision,
+        promptMessageId: card.promptMessageId,
+      },
+      selection:
+        choice.kind === "work_item"
+          ? { kind: choice.kind, id: choice.id, scopeRevision: choice.scopeRevision }
+          : { kind: choice.kind, id: choice.id, memoryRevision: choice.memoryRevision },
     });
-  } else if (action === "clarification-none" || action === "clarification-cancel") {
-    await submitPreviewTurn({
-      ...base,
-      action: action === "clarification-none" ? "none" : "cancel",
-    });
+  } else if (
+    action === "clarification-none" ||
+    action === "clarification-cancel" ||
+    action === "clarification-retry"
+  ) {
+    const command =
+      action === "clarification-none"
+        ? "none"
+        : action === "clarification-cancel"
+          ? "cancel"
+          : "retry";
+    const promptMessageId = button.dataset["promptMessageId"];
+    if (promptMessageId) {
+      await submitPreviewTurn({
+        action: "utterance",
+        requestId: base.requestId,
+        text: command === "none" ? "都不是" : command === "cancel" ? "取消" : "重试回答",
+        replyTo: { interactionId: clarificationId, revision: expectedRevision, promptMessageId },
+        command,
+      });
+    } else if (command !== "retry") await submitPreviewTurn({ ...base, action: command });
   }
 }
 
@@ -534,10 +587,15 @@ async function submitPreviewTurn(request: ConversationTurnRequest): Promise<void
   try {
     const { result } = await postConversationTurn(request);
     state.retryTurn = null;
-    if ("text" in request && chatInput.value.trim() === request.text) {
+    if (
+      "text" in request &&
+      (request.action !== "utterance" || (!request.command && !request.selection)) &&
+      chatInput.value.trim() === request.text
+    ) {
       chatInput.value = "";
       chatInput.style.height = "auto";
-      if (request.action === "reply") clearClarificationReply();
+      if (request.action === "reply" || (request.action === "utterance" && request.replyTo))
+        clearClarificationReply();
     }
     if (result.kind === "archive") await Promise.all([refreshBuckets(), refreshAgenda()]);
     if (request.action === "delegate" && result.kind === "clarification") {
@@ -556,7 +614,14 @@ async function submitPreviewTurn(request: ConversationTurnRequest): Promise<void
     const known = error instanceof ApiRequestError && error.status < 500;
     state.retryTurn = known ? null : request;
     await loadHistory();
-    setStatus(known ? errorMessage(error) : "提交结果未确认。可用同一请求核对或重试。", "warning");
+    setStatus(
+      known
+        ? isConflictError(error) && request.action === "utterance"
+          ? `${errorMessage(error)} 请核对刷新后的问题，再决定是否重新发送。`
+          : errorMessage(error)
+        : "提交结果未确认。可用同一请求核对或重试。",
+      "warning",
+    );
   } finally {
     chatSend.disabled = false;
     conversationPreview.disabled = state.retryTurn !== null;
@@ -579,12 +644,38 @@ export async function sendMessage(): Promise<void> {
       setStatus("主对话预览每条消息最多 4000 字符。", "warning");
       return;
     }
+    const snapshot = state.observedConversation;
+    if (snapshot === null) {
+      setStatus("请先刷新对话，恢复待回复的问题，再发送当前草稿。", "warning");
+      return;
+    }
     const requestId = crypto.randomUUID();
-    await submitPreviewTurn(
-      state.reply === null
-        ? { action: "message", text, requestId }
-        : { action: "reply", text, requestId, ...state.reply },
-    );
+    const reply = state.reply;
+    if (reply !== null && reply.promptMessageId === null) {
+      await submitPreviewTurn({
+        action: "reply",
+        text,
+        requestId,
+        clarificationId: reply.interactionId,
+        expectedRevision: reply.revision,
+      });
+    } else {
+      await submitPreviewTurn({
+        action: "utterance",
+        text,
+        requestId,
+        snapshot: { throughSequence: snapshot.throughSequence, prompts: [...snapshot.prompts] },
+        ...(reply !== null && reply.promptMessageId !== null
+          ? {
+              replyTo: {
+                interactionId: reply.interactionId,
+                revision: reply.revision,
+                promptMessageId: reply.promptMessageId,
+              },
+            }
+          : {}),
+      });
+    }
     return;
   }
   chatInput.value = "";

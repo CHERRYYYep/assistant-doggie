@@ -10,8 +10,46 @@ const change = {
   expectedRevision: revision,
 };
 const text = z.string().trim().min(1).max(4000);
+export const MAX_CLARIFICATION_CANDIDATES = 5;
+export const MAX_CLARIFICATION_CARDS = 20;
+export const promptReferenceSchema = z.strictObject({
+  interactionId: id,
+  revision,
+  promptMessageId: id,
+});
+export const observedConversationSchema = z.strictObject({
+  throughSequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  prompts: z.array(promptReferenceSchema).max(MAX_CLARIFICATION_CARDS),
+});
+export const awaitingSchema = z.enum(["subject", "material", "requirements"]);
+export const clarificationReferenceSchema = z.strictObject({
+  id,
+  scopeRevision: revision,
+});
+const workReference = clarificationReferenceSchema.extend({
+  kind: z.literal("work_item"),
+});
+export const entryReference = z.strictObject({
+  kind: z.literal("entry"),
+  id,
+  memoryRevision: z.number().int().nonnegative(),
+});
+export const subjectReferenceSchema = z.discriminatedUnion("kind", [
+  workReference,
+  entryReference,
+]);
+export const utteranceSchema = z.strictObject({
+  action: z.literal("utterance"),
+  ...requestId,
+  text,
+  snapshot: observedConversationSchema.optional(),
+  replyTo: promptReferenceSchema.optional(),
+  selection: subjectReferenceSchema.optional(),
+  command: z.enum(["none", "cancel", "retry"]).optional(),
+});
 export const conversationTurnSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("message"), ...requestId, text }),
+  utteranceSchema,
   z.strictObject({ action: z.literal("reply"), ...change, text }),
   z.strictObject({ action: z.literal("select"), ...change, workItemId: id }),
   z.strictObject({ action: z.literal("none"), ...change }),
@@ -25,12 +63,6 @@ export const conversationTurnSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
-export const clarificationReferenceSchema = z.strictObject({
-  id,
-  scopeRevision: revision,
-});
-export const MAX_CLARIFICATION_CANDIDATES = 5;
-export const MAX_CLARIFICATION_CARDS = 20;
 export const clarificationStatusSchema = z.enum([
   "pending",
   "resolved",
@@ -64,6 +96,31 @@ export const clarificationCardSchema = z.strictObject({
   question: z.string().min(1).max(240),
   execution: conversationExecutionSchema.optional(),
 });
+const entryCandidate = entryReference.extend({
+  title: z.string().min(1).max(120),
+  hint: z.string().max(240),
+  bucketId: z.string().min(1),
+  createdAt: z.string(),
+});
+const subjectCandidateSchema = z.discriminatedUnion("kind", [
+  clarificationCandidateSchema.extend({ kind: z.literal("work_item") }),
+  entryCandidate,
+]);
+export type SubjectCandidate = Readonly<z.infer<typeof subjectCandidateSchema>>;
+export const conversationInteractionSchema = clarificationCardSchema.extend({
+  candidates: z.array(subjectCandidateSchema).max(MAX_CLARIFICATION_CANDIDATES),
+  selected: subjectCandidateSchema.nullable(),
+  awaiting: awaitingSchema.nullable(),
+  promptMessageId: id.nullable(),
+  truncated: z.boolean(),
+});
+export type Interaction = Readonly<
+  z.infer<typeof conversationInteractionSchema>
+>;
+export type SubjectReference = Readonly<z.infer<typeof subjectReferenceSchema>>;
+export type Awaiting = z.infer<typeof awaitingSchema>;
+export type PromptReference = Readonly<z.infer<typeof promptReferenceSchema>>;
+export type Utterance = Readonly<z.infer<typeof utteranceSchema>>;
 const receipt = { userMessageId: id, assistantMessageId: id };
 export const conversationReceiptSchema = z.union([
   z.strictObject({

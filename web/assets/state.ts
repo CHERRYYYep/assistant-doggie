@@ -9,8 +9,8 @@ import type { TaskSnapshot } from "../../src/domain/task.ts";
 import type { AgentBackend, AgentWorkspace } from "../../src/domain/agent.ts";
 import type { ConversationTurnRequest } from "../../src/http/contracts.ts";
 import type {
-  ClarificationCardDto,
   BucketDto,
+  ConversationInteractionListResponse,
   TodoDto,
   UiChatMessageDto,
 } from "../../src/http/dto.ts";
@@ -22,6 +22,14 @@ export type ConversationDelegateOptions = {
   readonly workspaces: readonly Pick<AgentWorkspace, "id" | "path" | "baseCommit">[];
 };
 
+export type ConversationInteraction = ConversationInteractionListResponse["interactions"][number];
+export type ObservedConversation = ConversationInteractionListResponse["snapshot"];
+export type InteractionReply = {
+  readonly interactionId: string;
+  readonly revision: number;
+  readonly promptMessageId: string | null;
+};
+
 export type FrontendState = {
   /** Active buckets as last returned by the server. */
   activeBuckets: readonly BucketDto[];
@@ -31,9 +39,10 @@ export type FrontendState = {
   /** Chat messages currently rendered, oldest first. */
   history: UiChatMessageDto[];
   preview: boolean;
-  clarifications: readonly ClarificationCardDto[];
+  interactions: readonly ConversationInteraction[];
+  observedConversation: ObservedConversation | null;
   delegateOptions: ConversationDelegateOptions | null;
-  reply: { readonly clarificationId: string; readonly expectedRevision: number } | null;
+  reply: InteractionReply | null;
   retryTurn: ConversationTurnRequest | null;
   tasks: Map<string, TaskSnapshot>;
   taskObservers: Map<string, AbortController>;
@@ -54,7 +63,8 @@ export const state: FrontendState = {
   selectedBucketId: null,
   history: [],
   preview: false,
-  clarifications: [],
+  interactions: [],
+  observedConversation: null,
   delegateOptions: null,
   reply: null,
   retryTurn: null,

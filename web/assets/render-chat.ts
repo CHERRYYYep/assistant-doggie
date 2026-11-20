@@ -4,7 +4,9 @@ import type { ClarificationCardDto, UiChatMessageDto } from "../../src/http/dto.
 import { escapeHtml, renderMarkdown } from "./markdown.ts";
 import { chatMessages } from "./dom.ts";
 import { renderArchiveCard } from "./render-archive.ts";
-import type { ConversationDelegateOptions } from "./state.ts";
+import type { ConversationDelegateOptions, ConversationInteraction } from "./state.ts";
+
+type TranscriptCard = ClarificationCardDto | ConversationInteraction;
 
 export function renderEmpty(): void {
   chatMessages.innerHTML = `<div class="empty-chat"><div class="welcome-symbol" aria-hidden="true">✳</div><span class="eyebrow">A PLACE FOR YOUR THOUGHTS</span><h3>从这里，接着想。</h3><p>记录今天的进展，留住刚刚的灵感。<br />Doggie 帮你整理，等你需要时再找回来。</p><div class="welcome-examples"><div><span>01 / 记录进展</span><p>例如：接口 A 的延迟已降到 80ms。</p></div><div><span>02 / 留下下一步</span><p>例如：明天下午复核这次压测结果。</p></div></div><small>发送后会尝试归档；目标不明确时，由你选择保存到哪里。</small></div>`;
@@ -22,7 +24,7 @@ export function renderMessage(message: UiChatMessageDto): string {
     if (isRecord(archive) && typeof archive["archive_state"] === "string") {
       html += renderArchiveCard(archive as never, stringValue(message.details["source_text"]));
     }
-    html += renderCitations(message.details["citations"]);
+    html += renderCitations(message.details["citations"], message.details["materialMessageIds"]);
   }
   html += "</div></article>";
   return html;
@@ -36,9 +38,8 @@ function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-function renderCitations(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  const buttons = value.flatMap((item: unknown, index) => {
+function renderCitations(entries: unknown, currentMaterial: unknown): string {
+  const buttons = (Array.isArray(entries) ? entries : []).flatMap((item: unknown, index) => {
     if (!isRecord(item)) return [];
     const entryId = stringValue(item["entryId"]);
     const bucketId = stringValue(item["bucketId"]);
@@ -47,6 +48,15 @@ function renderCitations(value: unknown): string {
       `<button type="button" data-action="show-entry-citation" data-bucket-id="${escapeHtml(bucketId)}" data-entry-id="${escapeHtml(entryId)}">来源 ${index + 1}</button>`,
     ];
   });
+  if (Array.isArray(currentMaterial)) {
+    for (const item of currentMaterial as readonly unknown[]) {
+      const messageId = stringValue(item);
+      if (messageId)
+        buttons.push(
+          `<button type="button" data-action="show-message-citation" data-message-id="${escapeHtml(messageId)}">本轮提供（未归档）</button>`,
+        );
+    }
+  }
   return buttons.length
     ? `<div class="evidence-links" aria-label="本地证据">${buttons.join("")}</div>`
     : "";
@@ -93,33 +103,48 @@ function renderDelegateOptions(options: ConversationDelegateOptions, submit: str
 }
 
 export function renderClarification(
-  card: ClarificationCardDto,
+  card: TranscriptCard,
   options: ConversationDelegateOptions | null = null,
 ): string {
-  const binding = `data-clarification-id="${escapeHtml(card.id)}" data-revision="${card.revision}"`;
+  const prompt = "promptMessageId" in card ? card.promptMessageId : null;
+  const selected = card.selected;
+  const binding = `data-clarification-id="${escapeHtml(card.id)}" data-revision="${card.revision}"${prompt ? ` data-prompt-message-id="${escapeHtml(prompt)}"` : ""}`;
   const button = (action: string, label: string) =>
     `<button type="button" data-action="clarification-${action}" ${binding}>${label}</button>`;
   const candidates = card.candidates
-    .map(
-      (item) =>
-        `<li><button type="button" data-action="clarification-select" ${binding} data-work-item-id="${escapeHtml(item.id)}">${escapeHtml(item.title)}</button> <span>${escapeHtml(item.hint)}</span></li>`,
-    )
+    .map((item) => {
+      const reference =
+        prompt && "kind" in item
+          ? `data-subject-id="${escapeHtml(item.id)}" data-subject-kind="${escapeHtml(item.kind)}"`
+          : `data-work-item-id="${escapeHtml(item.id)}"`;
+      return `<li><button type="button" data-action="clarification-select" ${binding} ${reference}>${escapeHtml(item.title)}</button> <span>${escapeHtml(item.hint)}</span>${renderCandidateSource(item)}</li>`;
+    })
     .join("");
-  const active = card.status === "pending" || card.status === "resolved";
-  const canContinue = card.status === "resolved" && card.selected !== null;
+  const active =
+    card.status === "pending" ||
+    (card.status === "resolved" &&
+      (prompt === null || ("awaiting" in card && card.awaiting !== null)));
+  const selectedEntry = selected !== null && "kind" in selected && selected.kind === "entry";
+  const resolved = card.status === "resolved" && selected !== null;
+  const legacyContinue = resolved && !selectedEntry && prompt === null;
   const status = card.execution?.status;
   const canDelegate =
-    canContinue && status !== "pending" && status !== "queued" && status !== "running";
+    resolved &&
+    !selectedEntry &&
+    status !== "pending" &&
+    status !== "queued" &&
+    status !== "running";
   const showOptions =
     options !== null && options.clarificationId === card.id && options.revision === card.revision;
-  return `<article class="clarification-card"><strong>任务澄清</strong>
+  return `<article class="clarification-card"><strong>${prompt ? "对话续接" : "任务澄清"}</strong>
     <p>原请求：${escapeHtml(card.originalText)}</p>
     ${card.latestReply === null ? "" : `<p>最新补充：${escapeHtml(card.latestReply)}</p>`}
     <p>${escapeHtml(card.question)}</p>
-    ${card.selected === null ? "" : `<p>已选目标：<strong>${escapeHtml(card.selected.title)}</strong></p>`}
-    ${candidates ? `<ul>${candidates}</ul>${button("none", "都不是")}` : ""}
+    ${selected === null ? "" : `<p>${selectedEntry ? "已关联材料" : "已选目标"}：<strong>${escapeHtml(selected.title)}</strong>${renderCandidateSource(selected)}</p>`}
+    ${active && candidates ? `<ul>${candidates}</ul>${button("none", "都不是")}` : ""}
+    ${active && "truncated" in card && card.truncated ? '<p class="muted">只显示部分候选，可补充更具体的名称。</p>' : ""}
     ${active ? button("reply", "补充这条请求") : ""}
-    ${canContinue ? button("continue", "查阅本地资料并继续") : ""}
+    ${legacyContinue ? button("continue", "查阅本地资料并继续") : ""}
     ${canDelegate ? button("prepare", showOptions ? "关闭只读检查选项" : "准备只读检查") : ""}
     ${canDelegate && showOptions ? renderDelegateOptions(options, button("delegate", "提交只读检查提案")) : ""}
     ${card.status !== "cancelled" ? button("cancel", "取消澄清") : ""}
@@ -127,12 +152,17 @@ export function renderClarification(
   </article>`;
 }
 
+function renderCandidateSource(candidate: TranscriptCard["candidates"][number]): string {
+  if (!("kind" in candidate) || candidate.kind !== "entry") return "";
+  return ` <span class="muted">${escapeHtml(candidate.createdAt)}</span> <button type="button" data-action="show-entry-citation" data-bucket-id="${escapeHtml(candidate.bucketId)}" data-entry-id="${escapeHtml(candidate.id)}">查看原文</button>`;
+}
+
 /** Preserve unchanged confirmation form controls and focused nodes between history refreshes. */
 const renderedRows = new Map<string, { readonly node: HTMLElement; readonly html: string }>();
 
 export function renderTranscript(
   messages: readonly UiChatMessageDto[],
-  cards: readonly ClarificationCardDto[] = [],
+  cards: readonly TranscriptCard[] = [],
   options: ConversationDelegateOptions | null = null,
 ): void {
   const rows = messages.map((message) => ({
@@ -140,7 +170,9 @@ export function renderTranscript(
     html: renderMessage(message),
   }));
   const historyIds = new Set(rows.map(({ id }) => id));
-  const byAssistant = new Map(cards.map((card) => [card.assistantMessageId, card]));
+  const anchor = (card: TranscriptCard): string =>
+    ("promptMessageId" in card ? card.promptMessageId : null) ?? card.assistantMessageId;
+  const byAssistant = new Map(cards.map((card) => [anchor(card), card]));
   const timeline = rows.flatMap((row) => {
     const card = byAssistant.get(row.id);
     return card === undefined
@@ -150,7 +182,7 @@ export function renderTranscript(
   // A pending request can outlive the ordinary history window.
   timeline.push(
     ...cards
-      .filter((card) => !historyIds.has(card.assistantMessageId))
+      .filter((card) => !historyIds.has(anchor(card)))
       .slice()
       .reverse()
       .map((card) => ({ id: `card-${card.id}`, html: renderClarification(card, options) })),
@@ -196,4 +228,12 @@ export function renderTranscript(
     renderedRows.set(id, { node, html });
   });
   if (atBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+export function showConversationMessage(messageId: string): boolean {
+  const row = renderedRows.get(messageId)?.node;
+  if (!row) return false;
+  row.tabIndex = -1;
+  row.focus();
+  return true;
 }

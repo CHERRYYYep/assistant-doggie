@@ -1,9 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { naturalLab } from "../../tests/fixtures/natural-conversation-cases.ts";
 import {
   agentApprovalResponseSchema,
   agentWorkspaceResponseSchema,
+  archiveProjectionSchema,
+  chatHistoryResponseSchema,
   clarificationListResponseSchema,
+  conversationInteractionListResponseSchema,
   conversationTurnResponseSchema,
   workItemResponseSchema,
 } from "../http/response-schemas.ts";
@@ -25,7 +29,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
 import type { MemoryModel } from "../application/archive-runtime.ts";
-import { createNew } from "../domain/classification.ts";
+import { appendExisting, createNew } from "../domain/classification.ts";
 import { minimalExtraction } from "../domain/memory.ts";
 import { BucketType } from "../domain/types.ts";
 import { DoggieMcpTools } from "../mcp/tools.ts";
@@ -861,5 +865,163 @@ test("C3 composed preview delegates once to a registered workspace and returns t
     assert.equal(runtime.store.listBuckets().length, 0);
   } finally {
     await runtime.close();
+  }
+});
+
+test("N3 natural input over loopback restores an Entry clarification across a Local Web restart", async () => {
+  using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-natural-web-"));
+  const config = setupConfig(dir.path);
+  let draftCalls = 0;
+  const start = () =>
+    startDoggieLocalWeb(config, {
+      model: {
+        modelName: "fake-natural-web",
+        async classify(_text, candidates) {
+          const bucket = candidates.find(
+            ({ title }) => title === naturalLab.bucket,
+          );
+          return bucket === undefined
+            ? createNew(BucketType.Experiment, naturalLab.bucket, 1, "测试记录")
+            : appendExisting(bucket.id, BucketType.Experiment, 1, "测试记录");
+        },
+        async extract(text) {
+          return minimalExtraction(text);
+        },
+      },
+      chatResponder: {
+        async respond() {
+          return { assistantText: "SYN-ACK 确认已收到 SYN。" };
+        },
+      },
+      async groundedResponder(input) {
+        draftCalls++;
+        assert.equal(input.original, naturalLab.original);
+        assert.deepEqual(input.supplements, [naturalLab.chooseTcp]);
+        assert.equal(input.target, null);
+        assert.deepEqual(
+          input.evidence.map(({ text }) => text),
+          [naturalLab.tcp.entry],
+        );
+        return {
+          kind: "answer",
+          text: naturalLab.tcp.draft,
+          quotes: input.evidence.map(({ entryId, text }) => ({
+            entryId,
+            quote: text,
+          })),
+        };
+      },
+    });
+  const client = (origin: string) => {
+    const get = (path: string) => fetch(new URL(path, origin));
+    const post = (path: string, body: unknown) =>
+      fetch(new URL(path, origin), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const turn = async (body: unknown) => {
+      const response = await post("api/conversation/turns", body);
+      const payload: unknown = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(payload));
+      return conversationTurnResponseSchema.parse(payload).result;
+    };
+    const interactions = async () => {
+      const response = await get("api/conversation/interactions");
+      assert.equal(response.status, 200);
+      return conversationInteractionListResponseSchema.parse(
+        await response.json(),
+      );
+    };
+    return { get, post, turn, interactions };
+  };
+  const baseline = (db: DatabaseSync) =>
+    db
+      .prepare(
+        `SELECT (SELECT count(*) FROM entries) AS entries,
+              (SELECT count(*) FROM memory_items) AS memories,
+              (SELECT count(*) FROM work_items) AS goals,
+              (SELECT count(*) FROM agent_tasks) AS executions,
+              (SELECT count(*) FROM pending_actions) AS approvals`,
+      )
+      .get();
+  let cardId: string;
+  let sourceId: string | undefined;
+  let originalCounts: ReturnType<typeof baseline>;
+  const first = await start();
+  try {
+    const page = client(first.url);
+    for (const sample of [naturalLab.tcp.entry, naturalLab.udp.entry]) {
+      const saved = await page.post("api/archive", { text: sample });
+      assert.equal(saved.status, 200);
+      const payload = archiveProjectionSchema.parse(await saved.json());
+      assert.equal(payload.archive_state, "archived");
+      assert.ok(payload.entry_id);
+      if (sample === naturalLab.tcp.entry) sourceId = payload.entry_id;
+    }
+    originalCounts = baseline(first.database);
+    assert.equal(originalCounts?.["goals"], 0);
+    const opened = await page.turn({
+      action: "utterance",
+      text: naturalLab.original,
+      requestId: randomUUID(),
+    });
+    assert.equal(opened.kind, "clarification");
+    cardId = opened.clarificationId;
+    assert.equal(
+      (await page.interactions()).interactions.find(({ id }) => id === cardId)
+        ?.candidates.length,
+      2,
+    );
+  } finally {
+    await first.close();
+  }
+  const second = await start();
+  try {
+    const page = client(second.url);
+    assert.equal((await page.get("/")).status, 200);
+    const restored = await page.interactions();
+    assert.equal(restored.snapshot.prompts[0]?.interactionId, cardId);
+    assert.equal(
+      (
+        await page.turn({
+          action: "utterance",
+          text: naturalLab.interlude,
+          requestId: randomUUID(),
+          snapshot: restored.snapshot,
+        })
+      ).kind,
+      "answer",
+    );
+    const fresh = (await page.interactions()).snapshot;
+    const input = {
+      action: "utterance",
+      text: naturalLab.chooseTcp,
+      requestId: randomUUID(),
+      snapshot: fresh,
+    };
+    const result = await page.turn(input);
+    assert.equal(result.kind, "clarification");
+    assert.equal(result.clarificationId, cardId);
+    const history = chatHistoryResponseSchema.parse(
+      await (await page.get("api/chat/history")).json(),
+    );
+    assert.equal(
+      history.messages.find(({ id }) => id === result.assistantMessageId)
+        ?.content,
+      naturalLab.tcp.draft,
+    );
+    const selected = (await page.interactions()).interactions.find(
+      ({ id }) => id === cardId,
+    );
+    assert.ok(sourceId);
+    assert.equal(selected?.selected?.id, sourceId);
+    assert.equal(selected?.selected?.kind, "entry");
+    assert.equal(selected?.awaiting, null);
+    assert.deepEqual(await page.turn(input), result);
+    assert.equal(draftCalls, 1);
+    assert.deepEqual(baseline(second.database), originalCounts);
+  } finally {
+    await second.close();
   }
 });
