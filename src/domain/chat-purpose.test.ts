@@ -122,3 +122,13 @@ test("N02 and N12 keep material wording inert while external mixed commands stil
     reason: "explicit_confirmation",
   });
 });
+
+test("N0 does not choose one of multiple separately marked source segments", () => {
+  const text =
+    "原文：客户端先发 SYN。然后，正文：服务端回复 SYN-ACK。请改写成报告。";
+  assert.deepEqual(decideChatPurpose(text), {
+    kind: "clarify",
+    reason: "mixed",
+  });
+  assert.equal(chatMaterialText(text), null);
+});

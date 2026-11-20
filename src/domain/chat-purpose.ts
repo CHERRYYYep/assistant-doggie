@@ -72,6 +72,7 @@ function nonemptyMaterial(text: string): string | null {
 function splitMaterial(text: string): {
   readonly wording: string;
   readonly material: string | null;
+  readonly ambiguous: boolean;
 } {
   const delimited = [...text.matchAll(DELIMITED_MATERIAL)].map((match) => ({
     start: match.index,
@@ -85,6 +86,19 @@ function splitMaterial(text: string): {
         "",
     ),
   }));
+  const markerCount = (
+    text.match(
+      /(?:^|[\s：:。！？!?；;，,])(?:原文|正文|材料|报告片段|以下内容|如下内容|这段内容)[ \t]*[:：]/gu,
+    ) ?? []
+  ).length;
+  if (markerCount > 1)
+    return {
+      wording: text
+        .replace(DELIMITED_MATERIAL, (data) => " ".repeat(data.length))
+        .trim(),
+      material: null,
+      ambiguous: true,
+    };
   // Preserve character offsets while separating instructions from material.
   const masked = text.replace(DELIMITED_MATERIAL, (data) =>
     " ".repeat(data.length),
@@ -103,6 +117,7 @@ function splitMaterial(text: string): {
           masked.slice(start)
         ).trim(),
         material: first.text,
+        ambiguous: false,
       };
     const trailing = MATERIAL_TRAILING_INSTRUCTION.exec(masked.slice(start));
     const end = trailing === null ? text.length : start + trailing.index + 1;
@@ -113,11 +128,13 @@ function splitMaterial(text: string): {
         masked.slice(end)
       ).trim(),
       material: nonemptyMaterial(text.slice(start, end)),
+      ambiguous: false,
     };
   }
   return {
     wording: masked.trim(),
     material: delimited.find(({ text: value }) => value !== null)?.text ?? null,
+    ambiguous: false,
   };
 }
 
@@ -128,13 +145,15 @@ export function chatMaterialText(text: string): string | null {
 
 export function decideChatPurpose(text: string): ChatPurpose {
   const input = text.trim();
-  const { wording: instruction, material } = splitMaterial(input);
+  const { wording: instruction, material, ambiguous } = splitMaterial(input);
   const wording = instruction.normalize("NFKC");
   if (BARE_APPROVAL.test(wording))
     return { kind: "clarify", reason: "explicit_confirmation" };
   if (SAVE_WITHOUT_TARGET.test(wording))
     return { kind: "clarify", reason: "archive_content" };
   if (SECOND_REQUEST.test(wording)) return { kind: "clarify", reason: "mixed" };
+  if (ambiguous && TRANSFORM.test(wording))
+    return { kind: "clarify", reason: "mixed" };
 
   const saves = SAVE_PREFIX.exec(wording);
   const definition = DEFINITION.test(wording);
