@@ -1,6 +1,6 @@
 # C4 前：自然对话修复实施计划
 
-状态：**待实施**。基线为 2026-11-20 的 `36e90ae`（schema v12，预览默认关闭）。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文回答“随后审查发现什么、下一步改哪里”。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
+状态：**A 已实施并提交；B–D 待实施**。基线为 2026-11-20 的 `36e90ae`（schema v12，预览默认关闭）。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文回答“随后审查发现什么、下一步改哪里”。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
 
 ## 用户应得到什么
 
@@ -12,6 +12,10 @@
 | B：用途与原文 | F2 带引号的问题变改写；F3 引号截断原文；F5 显式归档被裸原文拦截 | [用途解析](../src/domain/chat-purpose.ts)、主对话服务、既有 ChatService | 每次解析产出用途与原文范围；按用途调用既有服务。 |
 | C：缺对象与并发 | F4 零候选补充丢失；F6 指代被清成空串返回 400；F7 无关快照变化阻塞独立问题 | [对象定位](../src/application/conversation-subjects.ts)、主对话服务、[交互存储](../src/storage/clarifications.ts) | 无材料时能问，有补充时接回；独立问题不修改等待记录。 |
 | D：结果与恢复 | F8 提示重试却无法操作；F9 已出草稿仍显示旧问题 | 交互存储、主对话服务、[网页渲染](../web/assets/render-chat.ts)及[操作入口](../web/assets/views.ts) | 网页重开后反映真实结果，重试有可验证的目标。 |
+
+### 执行记录
+
+- **A / F1（`codex/natural-conversation`）**：`candidateSelection()` 扫描整条回复的明确选择分句，区分唯一选择、冲突和非选择；冲突回复作为普通澄清答复呈现，不更新原卡、不进入回答器。保留“不是 TCP，是 UDP”的纠正；编辑要求中顺带提及 TCP 不会覆盖 UDP 选择。回归：`src/http/natural-conversation.test.ts` 的 F1 测试。定向 HTTP 测试与 TypeScript 类型检查通过；浏览器 smoke 尚未测。提交号见 Git 历史。
 
 ## 决策规则与实现边界
 

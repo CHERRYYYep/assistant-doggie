@@ -22,20 +22,66 @@ export function matchesCandidate(
   candidates: readonly SubjectCandidate[],
   truncated: boolean,
 ): SubjectCandidate | undefined {
-  if (
-    truncated ||
-    /[?？]|都(?:改|选|要)|两个|两份|以及|或者|(?:同时|并且|然后|另外)\s*(?:也|再)?(?:改|选|检查)/u.test(
-      text,
-    )
-  )
-    return undefined;
-  const clauses = text.split(/[，,；;。\n]/u).map(normalized);
-  const first = clauses[0] ?? "";
-  const selected = /^(?:不是|不要|别)/u.test(first)
-    ? clauses[1]?.match(/^是\s*(.+)$/u)?.[1]
-    : first.replace(/^(?:我选|选择|就是|选|是)\s*/u, "");
-  if (!selected) return undefined;
-  const arg = selected.replace(/^[「『“"]|[」』”"]$/gu, "");
+  const result = candidateSelection(text, candidates, truncated);
+  return result.kind === "selected" ? result.candidate : undefined;
+}
+
+export type CandidateSelection =
+  | { readonly kind: "selected"; readonly candidate: SubjectCandidate }
+  | { readonly kind: "conflict" }
+  | { readonly kind: "none" };
+
+/**
+ * Resolve selection statements across the whole reply. Incidental mentions in
+ * editing requirements are ignored; two separately stated selections are not.
+ */
+export function candidateSelection(
+  text: string,
+  candidates: readonly SubjectCandidate[],
+  truncated: boolean,
+): CandidateSelection {
+  if (truncated || /[?？]|都(?:改|选|要)|两个|两份|以及|或者/u.test(text))
+    return { kind: "none" };
+
+  const choices: SubjectCandidate[] = [];
+  const clauses = text.split(/[，,；;。\n]/u).map((part) => part.trim());
+  for (const [index, clause] of clauses.entries()) {
+    const normalizedClause = normalized(clause);
+    if (!normalizedClause) continue;
+    const negated = /^(?:不是|不要|别)\s*/u.exec(normalizedClause);
+    const appendChoice = /(?:也要|还要|也改|也选|另外要|另一个)$/u.test(
+      normalizedClause,
+    );
+    const explicitlySelected =
+      /^(?:我选|选择|选|就是|是|我想(?:改|选)|改成|改为|换成)\s*/u.test(
+        normalizedClause,
+      ) || appendChoice;
+    const firstBare = index === 0 && negated === null;
+    if (!explicitlySelected && !firstBare) continue;
+
+    const argument = normalizedClause
+      .replace(/^(?:不对\s*)/u, "")
+      .replace(/^(?:我选|选择|选|就是|是|我想(?:改|选)|改成|改为|换成)\s*/u, "")
+      .replace(/(?:也要|还要|也改|也选|另外要|另一个)$/u, "")
+      .replace(/^[「『“"]|[」』”"]$/gu, "")
+      .trim();
+    if (!argument || /^(?:不对|不是|不要|别)$/u.test(argument)) continue;
+    const candidate = candidateForArgument(argument, candidates);
+    if (candidate !== undefined) choices.push(candidate);
+  }
+
+  const unique = [...new Map(choices.map((item) => [item.id, item])).values()];
+  if (unique.length > 1) return { kind: "conflict" };
+  const candidate = unique[0];
+  return candidate === undefined
+    ? { kind: "none" }
+    : { kind: "selected", candidate };
+}
+
+function candidateForArgument(
+  arg: string,
+  candidates: readonly SubjectCandidate[],
+): SubjectCandidate | undefined {
   const fragment =
     distinguishingFragment(arg) ??
     /^([a-z][a-z\d-]{1,31})(?:那个|这个)?$/iu.exec(arg)?.[1];
@@ -91,13 +137,21 @@ export function resolveNaturalReply(
       view: Interaction;
       picked?: SubjectCandidate;
       command?: "none" | "cancel";
+      conflict?: true;
     }[] => {
       if (view.awaiting === null) return [];
       if (cancel) return [{ view, command: "cancel" }];
       if (view.awaiting === "subject") {
         if (none) return [{ view, command: "none" }];
-        const picked = matchesCandidate(text, view.candidates, view.truncated);
-        return picked === undefined ? [] : [{ view, picked }];
+        const selection = candidateSelection(
+          text,
+          view.candidates,
+          view.truncated,
+        );
+        if (selection.kind === "conflict") return [{ view, conflict: true }];
+        return selection.kind === "selected"
+          ? [{ view, picked: selection.candidate }]
+          : [];
       }
       const first = normalized(text.split(/[，,；;。\n]/u)[0] ?? "");
       const mentions =

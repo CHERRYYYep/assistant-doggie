@@ -575,6 +575,67 @@ test("N09/N12 independent records and ambiguous, negated or approval-like replie
   assert.equal(f.count("agent_tasks"), 0);
 });
 
+test("F1 conflicting target choices keep the observed prompt pending until one target is explicit", async () => {
+  for (const conflicting of [
+    "TCP，不对，我想改 UDP，只改报告",
+    "TCP，UDP 也要，只改报告",
+  ]) {
+    using db = openDatabase(":memory:");
+    const f = fixture(db);
+    const { tcp, udp } = await f.seedTwo();
+    const { card, snapshot } = await f.opened();
+    const baseline = f.business();
+    const rejected = await f.send(utterance(conflicting, snapshot));
+    assert.equal(rejected.kind, "clarify");
+    assert.equal(
+      f.seen.length,
+      0,
+      "conflicts must not invoke draft generation",
+    );
+    assert.deepEqual(f.business(), baseline);
+    const unchanged = await f.interactions();
+    const pending = unchanged.interactions.find(({ id }) => id === card.id);
+    assert.equal(pending?.revision, card.revision);
+    assert.equal(pending?.awaiting, "subject");
+    assert.equal(pending?.selected, null);
+    assert.deepEqual(unchanged.snapshot.prompts, snapshot.prompts);
+
+    const chosen = await f.send(utterance("我选 UDP，只改报告", snapshot));
+    assert.equal(chosen.kind, "clarification");
+    assert.equal(chosen.clarificationId, card.id);
+    assert.equal(f.seen.length, 1);
+    assert.deepEqual(
+      f.seen[0]?.evidence.map(({ entryId }) => entryId),
+      [udp.entryId],
+    );
+    assert.notEqual(udp.entryId, tcp.entryId);
+    const result = (await f.interactions()).interactions.find(
+      ({ id }) => id === card.id,
+    );
+    assert.equal(result?.awaiting, null);
+    assert.equal(result?.selected?.id, udp.entryId);
+  }
+
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  const { udp } = await f.seedTwo();
+  const { card, snapshot } = await f.opened();
+  await f.send(
+    utterance("不是 TCP，是 UDP，只改报告里的 TCP 测量描述", snapshot),
+  );
+  assert.equal(f.seen.length, 1, "an explicit correction remains valid");
+  assert.deepEqual(
+    f.seen[0]?.evidence.map(({ entryId }) => entryId),
+    [udp.entryId],
+    "an incidental mention in the editing requirement is not a second choice",
+  );
+  assert.equal(
+    (await f.interactions()).interactions.find(({ id }) => id === card.id)
+      ?.selected?.id,
+    udp.entryId,
+  );
+});
+
 test("N10 explicit duplicate Entry and cross-kind titles ask instead of binding the first hit", async () => {
   using db = openDatabase(":memory:");
   const f = fixture(db);

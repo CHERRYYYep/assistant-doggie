@@ -61,7 +61,7 @@ import {
 import {
   hasRequirements,
   materialText,
-  matchesCandidate,
+  candidateSelection,
   resolveNaturalReply,
 } from "../domain/natural-reply.ts";
 
@@ -411,9 +411,20 @@ export class MainConversationService {
         if (input.selection !== undefined && input.command !== undefined)
           throw new ConversationError("conflict");
         const view = this.#interaction(card);
+        const selection =
+          input.selection === undefined
+            ? candidateSelection(input.text, view.candidates, view.truncated)
+            : undefined;
+        if (selection?.kind === "conflict")
+          return this.#naturalMessage(
+            input,
+            "我看到多个不同的目标选择。请明确回复一个目标名称；这条消息还没有用于生成内容。",
+          );
         const picked =
           input.selection === undefined
-            ? matchesCandidate(input.text, view.candidates, view.truncated)
+            ? selection?.kind === "selected"
+              ? selection.candidate
+              : undefined
             : view.candidates.find(
                 (candidate) =>
                   JSON.stringify(subjectRef(candidate)) ===
@@ -487,6 +498,11 @@ export class MainConversationService {
             );
           const match = matches[0];
           const card = cards.find(({ id }) => id === match?.view.id);
+          if (match?.conflict === true)
+            return this.#naturalMessage(
+              input,
+              "我看到多个不同的目标选择。请明确回复一个目标名称；这条消息还没有用于生成内容。",
+            );
           if (match !== undefined && card !== undefined)
             return this.#resumeNatural(
               input,
