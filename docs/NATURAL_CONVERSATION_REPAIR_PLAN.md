@@ -1,6 +1,6 @@
 # C4 前：自然对话修复实施计划
 
-状态：**A–D 已实施，待阶段提交与浏览器 smoke**。当前工作区将 schema 从 v12 升至 v13，预览仍默认关闭；真实模型质量评估与 C4 默认入口决策不在本轮范围。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文记录修复范围与证据。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
+状态：**A–D 已实施并完成阶段提交；浏览器 smoke 已用隔离 fake 模型执行**。当前工作区将 schema 从 v12 升至 v13，预览仍默认关闭；真实模型质量评估与 C4 默认入口决策不在本轮范围。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文记录修复范围与证据。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
 
 ## 用户应得到什么
 
@@ -18,7 +18,7 @@
 - **A / F1（`codex/natural-conversation`）**：`candidateSelection()` 扫描整条回复的明确选择分句，区分唯一选择、冲突和非选择；冲突回复作为普通澄清答复呈现，不更新原卡、不进入回答器。保留“不是 TCP，是 UDP”的纠正；编辑要求中顺带提及 TCP 不会覆盖 UDP 选择。回归：`src/http/natural-conversation.test.ts` 的 F1 测试。定向 HTTP 测试与 TypeScript 类型检查通过；浏览器 smoke 尚未测。提交号见 Git 历史。
 - **B / F2、F3、F5**：用途解析与材料区间提取保留原始引文、数字、换行和多段顺序；带引号的问题走普通问答，显式归档继续走既有归档门控，裸材料只询问用途。回归：`src/domain/chat-purpose.test.ts`、`src/application/main-chat.test.ts`、`src/http/natural-conversation.test.ts`。
 - **C / F4、F6、F7**：零候选澄清可在同一交互接收本轮材料；空指代不再传入空查询；独立问题不消费新提示；schema v13 以互斥 `selected_message_id` 保存材料消息，并拒绝跨交互消息。回归：`src/http/natural-conversation.test.ts`、`src/storage/store.test.ts`。
-- **D / F8、F9**：失败结果写入 `retryable`/`failed` 标记，交互投影提供失败结果消息 ID；`retry_context` 只接受同一交互、revision 和失败消息，数据库请求幂等与已消费检查防止双击/跨页重复调用。结果已完成、已取消、来源失效或结果未知时不显示可消费重试。网页卡片显示完成/失败/未知状态并提供受绑定的重试按钮。回归：`src/http/natural-conversation.test.ts` F8、`web/tests/ui-tasks.test.ts` F8。
+- **D / F8、F9**：失败结果写入 `retryable`/`failed` 标记，交互投影提供失败结果消息 ID；`retry_context` 只接受同一交互、revision 和失败消息，数据库请求幂等与已消费检查防止双击/跨页重复调用。结果已完成、已取消、来源失效或结果未知时不显示可消费重试；在途重试保留原 request ID 供刷新核对。网页卡片显示完成/失败/未知状态并提供受绑定的重试按钮。回归：`src/http/natural-conversation.test.ts` F8、`web/tests/ui-tasks.test.ts` F8。
 
 ## 决策规则与实现边界
 

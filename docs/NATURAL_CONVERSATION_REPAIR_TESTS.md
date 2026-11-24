@@ -1,6 +1,6 @@
 # C4 前：自然对话修复测试与交接
 
-**F1–F9 自动化验收已执行；浏览器 smoke、真实模型质量评估和 C4 默认入口决策仍未执行。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
+**F1–F9 自动化验收已执行；隔离浏览器 smoke 已执行；真实模型质量评估和 C4 默认入口决策仍未执行。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
 
 ## 环境与判定方法
 
@@ -49,7 +49,9 @@ npm run openapi:check
 git diff --check
 ~~~
 
-结果：完整 TypeScript 门禁通过（`npm test` 619 项、`npm run test:web` 70 项），类型检查、OpenAPI 漂移检查和 diff 检查通过。F8 服务端与网页回归已加入；浏览器 smoke 标记为未测。
+结果：完整 TypeScript 门禁通过（`npm test` 619 项、`npm run test:web` 70 项），类型检查、OpenAPI 漂移检查和 diff 检查通过。F8 服务端与网页回归已加入。
+
+隔离浏览器 smoke 也已通过：使用临时 SQLite、loopback 端口和内存 fake responder，打开主对话预览，完成 F4“零候选 → 粘贴原文”，故意触发一次可恢复回答失败，刷新后看到“重试回答”，点击后只调用第二次模型请求并显示带“本轮提供（未归档）”来源的草稿；随后重启隔离服务，重新打开页面并再次操作，持久化失败卡仍能恢复并完成。未读取 `.env`，未连接默认数据库；该 smoke 不代表真实模型质量验收。
 
 ## 放行与 C4 交接
 
