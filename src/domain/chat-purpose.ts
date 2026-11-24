@@ -37,12 +37,14 @@ const REWRITE_COMMAND = new RegExp(
   String.raw`^(?:请\s*)?(?:帮我\s*)?` + TRANSFORM.source,
   "iu",
 );
+const DEICTIC_REWRITE =
+  /^(?:请\s*)?帮我把.{1,100}(?:改写|改成|改为|润色|缩写|总结|译成|翻译)/iu;
 const MATERIAL_LABEL =
   /(?:^|[\s：:。！？!?；;，,])(?:原文|正文|材料|报告片段|以下内容|如下内容|这段内容)[ \t]*[:：]/u;
 const MATERIAL_TRAILING_INSTRUCTION = new RegExp(
-  String.raw`[。！？!?；;\r\n]\s*(?=(?:请\s*)?(?:帮我\s*)?` +
+  String.raw`[。！？!?；;\r\n]\s*(?=(?:(?:请\s*)?(?:帮我\s*)?(?:(?:合并|合在一起|一起|并|merge|combine)\s*)?` +
     TRANSFORM.source +
-    ")",
+    String.raw`|(?:然后|同时|另外|并且|顺便|and then)\s*(?:请\s*)?(?:帮我\s*)?(?:保存|保存下来|存下来|记下来|归档|执行|检查|运行|打开|查找|检索|save\b|run\b|edit\b|check\b)))`,
   "iu",
 );
 const MATERIAL_COLON_INSTRUCTION = new RegExp(
@@ -76,71 +78,164 @@ function splitMaterial(text: string): {
 } {
   const delimited = [...text.matchAll(DELIMITED_MATERIAL)].map((match) => ({
     start: match.index,
-    text: nonemptyMaterial(
-      match.groups?.["code"] ??
-        match.groups?.["corner"] ??
-        match.groups?.["doubleCorner"] ??
-        match.groups?.["curly"] ??
-        match.groups?.["single"] ??
-        match.groups?.["straight"] ??
-        "",
-    ),
+    end: match.index + match[0].length,
+    text:
+      match.groups?.["code"]?.replace(/\r?\n$/u, "") ??
+      match.groups?.["corner"] ??
+      match.groups?.["doubleCorner"] ??
+      match.groups?.["curly"] ??
+      match.groups?.["single"] ??
+      match.groups?.["straight"] ??
+      "",
   }));
-  const markerCount = (
-    text.match(
+  // Use a non-whitespace sentinel while finding instruction boundaries so a
+  // trailing-command regex cannot jump over a masked quote or code fence.
+  const masked = text.replace(DELIMITED_MATERIAL, (data) =>
+    "\uE000".repeat(data.length),
+  );
+  const wordingMask = masked.replaceAll("\uE000", " ");
+  const markers = [
+    ...masked.matchAll(
       /(?:^|[\s：:。！？!?；;，,])(?:原文|正文|材料|报告片段|以下内容|如下内容|这段内容)[ \t]*[:：]/gu,
-    ) ?? []
-  ).length;
-  if (markerCount > 1)
+    ),
+  ];
+  const explicitlyMerged =
+    TRANSFORM.test(masked.normalize("NFKC")) &&
+    /合并|合在一起|merge|combine/iu.test(masked);
+  if (markers.length > 1 && !explicitlyMerged)
     return {
-      wording: text
-        .replace(DELIMITED_MATERIAL, (data) => " ".repeat(data.length))
-        .trim(),
+      wording: wordingMask.trim(),
       material: null,
       ambiguous: true,
     };
-  // Preserve character offsets while separating instructions from material.
-  const masked = text.replace(DELIMITED_MATERIAL, (data) =>
-    " ".repeat(data.length),
-  );
+
+  if (markers.length > 1) {
+    const first = markers[0];
+    const last = markers.at(-1);
+    if (first === undefined || last === undefined)
+      return { wording: wordingMask.trim(), material: null, ambiguous: true };
+    const lastStart = last.index + last[0].length;
+    const trailing = MATERIAL_TRAILING_INSTRUCTION.exec(
+      masked.slice(lastStart),
+    );
+    const lastEnd =
+      trailing === null
+        ? text.length
+        : lastStart + trailing.index + boundaryLength(trailing[0]);
+    const segments = markers.map((marker, index) => {
+      const start = marker.index + marker[0].length;
+      const next = markers[index + 1];
+      const end = next === undefined ? lastEnd : next.index;
+      return extractMaterial(text, start, end, delimited);
+    });
+    return {
+      wording: (
+        wordingMask.slice(0, first.index) +
+        " " +
+        wordingMask.slice(lastEnd)
+      ).trim(),
+      material: combineMaterial(segments),
+      ambiguous: false,
+    };
+  }
+
+  if (
+    markers.length === 0 &&
+    delimited.length > 1 &&
+    TRANSFORM.test(masked.normalize("NFKC")) &&
+    !explicitlyMerged
+  )
+    return { wording: wordingMask.trim(), material: null, ambiguous: true };
+
   const labelled = MATERIAL_LABEL.exec(masked);
   const marker = labelled ?? MATERIAL_COLON_INSTRUCTION.exec(masked);
   if (marker !== null) {
     const start = marker.index + marker[0].length;
-    const instructionEnd = labelled === null ? start : marker.index;
-    const first = delimited.find(({ start: at }) => at >= start);
-    if (first !== undefined && text.slice(start, first.start).trim() === "")
-      return {
-        wording: (
-          masked.slice(0, instructionEnd) +
-          " " +
-          masked.slice(start)
-        ).trim(),
-        material: first.text,
-        ambiguous: false,
-      };
     const trailing = MATERIAL_TRAILING_INSTRUCTION.exec(masked.slice(start));
-    const end = trailing === null ? text.length : start + trailing.index + 1;
+    const end =
+      trailing === null
+        ? text.length
+        : start + trailing.index + boundaryLength(trailing[0]);
+    const instructionEnd = labelled === null ? start : marker.index;
     return {
       wording: (
-        masked.slice(0, instructionEnd) +
+        wordingMask.slice(0, instructionEnd) +
         " " +
-        masked.slice(end)
+        wordingMask.slice(end)
       ).trim(),
-      material: nonemptyMaterial(text.slice(start, end)),
+      material: extractMaterial(text, start, end, delimited),
       ambiguous: false,
     };
   }
-  return {
-    wording: masked.trim(),
-    material: delimited.find(({ text: value }) => value !== null)?.text ?? null,
-    ambiguous: false,
-  };
+
+  if (delimited.length > 0 && TRANSFORM.test(masked.normalize("NFKC"))) {
+    return {
+      wording: wordingMask.trim(),
+      material: combineMaterial(
+        delimited.map(({ text: part }) => nonemptyMaterial(part)),
+      ),
+      ambiguous: false,
+    };
+  }
+  return { wording: wordingMask.trim(), material: null, ambiguous: false };
 }
+
+function boundaryLength(boundary: string): number {
+  return boundary.startsWith("\r\n") ? 2 : 1;
+}
+
+function extractMaterial(
+  text: string,
+  start: number,
+  end: number,
+  delimited: readonly {
+    readonly start: number;
+    readonly end: number;
+    readonly text: string;
+  }[],
+): string | null {
+  const content = text.slice(start, end);
+  const candidate = delimited.find(
+    (part) => part.start >= start && part.end <= end,
+  );
+  if (
+    candidate !== undefined &&
+    content.slice(0, candidate.start - start).trim() === "" &&
+    content.slice(candidate.end - start).trim() === "" &&
+    delimited.filter((part) => part.start >= start && part.end <= end)
+      .length === 1
+  )
+    return nonemptyMaterial(candidate.text);
+  const enclosed = delimited.filter(
+    (part) => part.start >= start && part.end <= end,
+  );
+  const last = enclosed.at(-1);
+  if (last !== undefined) {
+    const suffix = text.slice(last.end, end);
+    if (
+      /^\s*[。！？!?；;\r\n]*\s*(?:(?:合并|合在一起|一起|并|merge|combine)\s*)?(?:请\s*)?(?:帮我\s*)?(?:改写|润色|改成|改为|缩写|总结|译成|翻译|rewrite\b|rephrase\b|summari[sz]e\b|translate\b)/iu.test(
+        suffix,
+      )
+    )
+      return combineMaterial(
+        enclosed.map(({ text: part }) => nonemptyMaterial(part)),
+      );
+  }
+  return nonemptyMaterial(content);
+}
+
+function combineMaterial(parts: readonly (string | null)[]): string | null {
+  const material = parts.filter((part): part is string => part !== null);
+  return material.length === 0 ? null : material.join("\n\n");
+}
+
+// Preserve punctuation inside a marked body. Unwrap a quote only when it
+// encloses the entire body by itself.
 
 /** Read explicitly provided source text without normalizing its characters. */
 export function chatMaterialText(text: string): string | null {
-  return splitMaterial(text.trim()).material;
+  const parsed = splitMaterial(text.trim());
+  return parsed.ambiguous ? null : parsed.material;
 }
 
 export function decideChatPurpose(text: string): ChatPurpose {
@@ -165,6 +260,8 @@ export function decideChatPurpose(text: string): ChatPurpose {
       : { kind: "clarify", reason: "purpose" };
   }
   if (material !== null && TRANSFORM.test(wording)) return { kind: "answer" };
+  if (material === null && DEICTIC_REWRITE.test(wording))
+    return { kind: "clarify", reason: "target" };
   const personal = PERSONAL_CONTEXT.test(wording);
   if (definition && !personal) return { kind: "answer" };
   if (SEARCH_REQUEST.test(wording) || (asks && personal))

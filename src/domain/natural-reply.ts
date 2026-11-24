@@ -7,9 +7,7 @@ import {
 } from "./main-conversation.ts";
 
 export function materialText(text: string): string | undefined {
-  return /(?:^|[，,。；;\n])\s*(?:原文|正文|材料|报告片段)\s*[:：]\s*(\S[\s\S]*)$/u
-    .exec(text)?.[1]
-    ?.trim();
+  return chatMaterialText(text) ?? undefined;
 }
 export function hasRequirements(text: string): boolean {
   return /改(?:写|成|为|得)|润色|缩写|精简|更(?:简洁|正式)|写反|纠正|不(?:增加|新增)事实|不要.{0,15}(?:改变|新增)|调整.{1,30}(?:顺序|格式)|翻译|rewrite|rephrase/iu.test(

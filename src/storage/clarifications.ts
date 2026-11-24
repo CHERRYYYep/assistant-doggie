@@ -42,6 +42,7 @@ const cardRowSchema = z.strictObject({
   question: z.string().nullable(),
   selectedEntryId: z.uuid().nullable(),
   selectedMemoryRevision: z.number().int().nonnegative().nullable(),
+  selectedMessageId: z.uuid().nullable(),
   selectedId: z.uuid().nullable(),
   selectedScopeRevision: z.number().int().positive().nullable(),
 });
@@ -50,6 +51,7 @@ const select = `SELECT c.id,c.original_message_id AS originalMessageId,c.assista
  c.status,c.revision,c.candidates_json AS candidates,c.truncated,c.awaiting,
  c.prompt_message_id AS promptMessageId,p.content AS question,
  c.selected_entry_id AS selectedEntryId,c.selected_memory_revision AS selectedMemoryRevision,
+ c.selected_message_id AS selectedMessageId,
  c.selected_id AS selectedId,c.selected_scope_revision AS selectedScopeRevision
  FROM conversation_clarifications c JOIN conversation_messages o ON o.id=c.original_message_id
  LEFT JOIN conversation_messages r ON r.id=c.latest_reply_id
@@ -71,6 +73,7 @@ function parseCard(raw: unknown) {
             id: row.selectedEntryId,
             memoryRevision: row.selectedMemoryRevision,
           }),
+    selectedMessageId: row.selectedMessageId,
     candidates: subjects.flatMap((part) =>
       part.kind === "work_item"
         ? [{ id: part.id, scopeRevision: part.scopeRevision }]
@@ -140,6 +143,104 @@ export class ClarificationStore {
       .map((row) =>
         z.strictObject({ id: z.uuid(), text: z.string() }).parse(row),
       );
+  }
+  materialMessage(card: StoredClarification) {
+    if (card.selectedMessageId === null) return undefined;
+    const row = this.#db
+      .prepare(
+        `SELECT id,content AS text FROM conversation_messages
+         WHERE id=? AND role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
+           AND json_extract(details_json,'$.clarification_id')=?`,
+      )
+      .get(card.selectedMessageId, card.id);
+    return row === undefined
+      ? undefined
+      : z.strictObject({ id: z.uuid(), text: z.string() }).parse(row);
+  }
+  latestContextResult(card: StoredClarification) {
+    const row = this.#db
+      .prepare(
+        `SELECT id,content AS text,sequence,
+           json_extract(details_json,'$.retryable') AS retryable,
+           json_extract(details_json,'$.failed') AS failed
+         FROM conversation_messages
+         WHERE role='assistant'
+           AND json_extract(details_json,'$.kind')='conversation_context_result'
+           AND json_extract(details_json,'$.clarification_id')=?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get(card.id);
+    if (row === undefined) return undefined;
+    const parsed = z
+      .strictObject({
+        id: z.uuid(),
+        text: z.string(),
+        sequence: z.number().int().positive(),
+        retryable: z.union([z.literal(0), z.literal(1), z.null()]),
+        failed: z.union([z.literal(0), z.literal(1), z.null()]),
+      })
+      .parse(row);
+    if (parsed.failed === null)
+      return {
+        id: parsed.id,
+        text: parsed.text,
+        failed: null,
+        retryable: false,
+        consumed: false,
+        inProgress: false,
+        retryRequestId: undefined,
+      };
+    if (parsed.failed !== 1)
+      return {
+        id: parsed.id,
+        text: parsed.text,
+        failed: false as const,
+        retryable: false,
+        consumed: false,
+        inProgress: false,
+        retryRequestId: undefined,
+      };
+    const consumed = this.#db
+      .prepare(
+        `SELECT json_extract(details_json,'$.retry_request_id') AS retryRequestId
+         FROM conversation_messages
+         WHERE role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
+           AND json_extract(details_json,'$.action')='retry'
+           AND json_extract(details_json,'$.retry_result_message_id')=?
+         ORDER BY sequence DESC LIMIT 1`,
+      )
+      .get(parsed.id);
+    const consumedRequestId =
+      consumed === undefined
+        ? undefined
+        : (z
+            .strictObject({ retryRequestId: z.uuid().nullable() })
+            .parse(consumed).retryRequestId ?? undefined);
+    const retryRequest =
+      consumedRequestId === undefined
+        ? undefined
+        : this.#db
+            .prepare(
+              "SELECT result_json AS resultJson FROM conversation_requests WHERE request_id=?",
+            )
+            .get(consumedRequestId);
+    const inProgress =
+      retryRequest === undefined
+        ? false
+        : z
+            .strictObject({ resultJson: z.string().nullable() })
+            .parse(retryRequest).resultJson === null;
+    return {
+      id: parsed.id,
+      text: parsed.text,
+      failed: true as const,
+      retryable: parsed.retryable === 1 && consumed === undefined,
+      consumed: consumed !== undefined,
+      inProgress,
+      ...(inProgress && consumedRequestId !== undefined
+        ? { retryRequestId: consumedRequestId }
+        : {}),
+    };
   }
   #requireTransaction() {
     if (!this.#db.isTransaction)
@@ -254,8 +355,8 @@ export class ClarificationStore {
       this.#checkCapacity();
     this.#db
       .prepare(
-        `INSERT INTO conversation_clarifications(id,original_message_id,assistant_message_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,awaiting,prompt_message_id,selected_entry_id,selected_memory_revision)
-       VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO conversation_clarifications(id,original_message_id,assistant_message_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,awaiting,prompt_message_id,selected_entry_id,selected_memory_revision,selected_message_id)
+       VALUES (?,?,?,?,1,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         id,
@@ -270,6 +371,7 @@ export class ClarificationStore {
         awaiting === null ? null : assistantMessageId,
         entry?.id ?? null,
         entry?.memoryRevision ?? null,
+        null,
       );
     return id;
   }
@@ -284,6 +386,7 @@ export class ClarificationStore {
       awaiting?: Awaiting | null;
       subjects?: readonly SubjectReference[];
       entry?: Extract<SubjectReference, { kind: "entry" }> | null;
+      materialMessageId?: string | null;
       promptMessageId?: string | null;
     },
   ) {
@@ -297,7 +400,7 @@ export class ClarificationStore {
     const changed = this.#db
       .prepare(
         `UPDATE conversation_clarifications SET status=?,revision=revision+1,candidates_json=?,truncated=?,
-       selected_id=?,selected_scope_revision=?,latest_reply_id=?,awaiting=?,prompt_message_id=?,selected_entry_id=?,selected_memory_revision=? WHERE id=? AND revision=?`,
+       selected_id=?,selected_scope_revision=?,latest_reply_id=?,awaiting=?,prompt_message_id=?,selected_entry_id=?,selected_memory_revision=?,selected_message_id=? WHERE id=? AND revision=?`,
       )
       .run(
         change.status,
@@ -315,6 +418,7 @@ export class ClarificationStore {
           : change.promptMessageId,
         change.entry?.id ?? null,
         change.entry?.memoryRevision ?? null,
+        change.materialMessageId ?? null,
         card.id,
         card.revision,
       );

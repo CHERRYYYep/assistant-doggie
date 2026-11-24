@@ -8,7 +8,11 @@ const groundedCitation = z.strictObject({
 const groundedFence = z.strictObject({
   memoryRevision: z.number().int().nonnegative(),
   card: z
-    .strictObject({ id: z.uuid(), revision: z.number().int().positive() })
+    .strictObject({
+      id: z.uuid(),
+      revision: z.number().int().positive(),
+      selectedMessageId: z.uuid().nullable().optional().or(z.undefined()),
+    })
     .nullable(),
   entry: z.string().uuid().optional(),
   work: z
@@ -232,7 +236,11 @@ export class ConversationStore {
 
   groundedResultCurrent(
     memoryRevision: number,
-    card: { readonly id: string; readonly revision: number } | null,
+    card: {
+      readonly id: string;
+      readonly revision: number;
+      readonly selectedMessageId?: string | null | undefined;
+    } | null,
     work: {
       readonly id: string;
       readonly scopeRevision: number;
@@ -252,7 +260,7 @@ export class ConversationStore {
       card !== null &&
       this.#database
         .prepare(
-          "SELECT 1 FROM conversation_clarifications WHERE id=? AND revision=? AND status='resolved' AND selected_id IS ? AND selected_scope_revision IS ? AND selected_entry_id IS ?",
+          "SELECT 1 FROM conversation_clarifications WHERE id=? AND revision=? AND status='resolved' AND selected_id IS ? AND selected_scope_revision IS ? AND selected_entry_id IS ? AND selected_message_id IS ?",
         )
         .get(
           card.id,
@@ -260,6 +268,7 @@ export class ConversationStore {
           work?.id ?? null,
           work?.scopeRevision ?? null,
           entry ?? null,
+          card.selectedMessageId ?? null,
         ) === undefined
     )
       return false;

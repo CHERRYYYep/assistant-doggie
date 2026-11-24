@@ -561,15 +561,28 @@ export async function actOnClarification(button: HTMLButtonElement): Promise<voi
           ? "cancel"
           : "retry";
     const promptMessageId = button.dataset["promptMessageId"];
+    const retryResultMessageId = button.dataset["retryResultMessageId"];
+    const retryRequestId = button.dataset["retryRequestId"];
+    if (command === "retry") {
+      if (retryResultMessageId === undefined) return;
+      await submitPreviewTurn({
+        action: "retry_context",
+        requestId: retryRequestId ?? base.requestId,
+        clarificationId,
+        expectedRevision,
+        resultMessageId: retryResultMessageId,
+      });
+      return;
+    }
     if (promptMessageId) {
       await submitPreviewTurn({
         action: "utterance",
         requestId: base.requestId,
-        text: command === "none" ? "都不是" : command === "cancel" ? "取消" : "重试回答",
+        text: command === "none" ? "都不是" : "取消",
         replyTo: { interactionId: clarificationId, revision: expectedRevision, promptMessageId },
         command,
       });
-    } else if (command !== "retry") await submitPreviewTurn({ ...base, action: command });
+    } else await submitPreviewTurn({ ...base, action: command });
   }
 }
 

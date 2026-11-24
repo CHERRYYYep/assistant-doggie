@@ -44,15 +44,16 @@ export function locateEntries(
   text: string,
   memoryRevision: number,
 ) {
-  const plan = parseMemoryQuery(
-    text
-      .replace(
-        /^(?:请\s*)?(?:帮我\s*)?(?:继续\s*)?(?:修改|改写|改|修订|查看|查找|回顾)\s*(?:那个|这个)?/u,
-        "",
-      )
-      .slice(0, 500),
-    7,
-  );
+  const queryText = text
+    .replace(
+      /^(?:请\s*)?(?:帮我\s*)?(?:继续\s*)?(?:修改|改写|改|修订|查看|查找|回顾)\s*(?:那个|这个)?/u,
+      "",
+    )
+    .replace(/^(?:原文|正文|材料|报告片段)\s*[:：]/u, "")
+    .slice(0, 500)
+    .trim();
+  if (queryText === "") return { candidates: [], truncated: false };
+  const plan = parseMemoryQuery(queryText, 7);
   const terms = [
     ...new Set([
       ...plan.terms,

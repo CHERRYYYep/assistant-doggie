@@ -84,6 +84,10 @@ test("N02 typed labels and empty delimiters do not substitute for missing source
     kind: "clarify",
     reason: "target",
   });
+  assert.deepEqual(decideChatPurpose("帮我把那个计网实验改成一句正式说明"), {
+    kind: "clarify",
+    reason: "target",
+  });
 });
 
 test("N02 and N12 keep material wording inert while external mixed commands still clarify", () => {
@@ -121,6 +125,52 @@ test("N02 and N12 keep material wording inert while external mixed commands stil
     kind: "clarify",
     reason: "explicit_confirmation",
   });
+});
+
+test("F2 quoted terms remain part of questions, while quoted edit requests provide only source text", () => {
+  for (const text of [
+    "解释一下「SYN-ACK」是什么？",
+    "比较「TCP」和「UDP」有什么区别？",
+  ]) {
+    assert.deepEqual(decideChatPurpose(text), { kind: "answer" }, text);
+    assert.equal(chatMaterialText(text), null, text);
+  }
+  const rewrite = "请把「客户端先发送 SYN」改成正式表述";
+  assert.deepEqual(decideChatPurpose(rewrite), { kind: "answer" });
+  assert.equal(chatMaterialText(rewrite), "客户端先发送 SYN");
+});
+
+test("F3 marked material preserves internal quotes, facts, numbers and explicitly merged segments", () => {
+  const marked =
+    "原文：「无连接」是 UDP 的特点，收到 97 个数据报。请改写成报告。";
+  assert.equal(
+    chatMaterialText(marked),
+    "「无连接」是 UDP 的特点，收到 97 个数据报。",
+  );
+  assert.deepEqual(decideChatPurpose(marked), { kind: "answer" });
+
+  const merged =
+    "请把「TCP 发送 SYN。」和「UDP 收到 97 个数据报。」合并改写为报告。";
+  assert.equal(
+    chatMaterialText(merged),
+    "TCP 发送 SYN。\n\nUDP 收到 97 个数据报。",
+  );
+  assert.deepEqual(decideChatPurpose(merged), { kind: "answer" });
+
+  const labelled =
+    "原文：TCP 发送 SYN。；正文：UDP 收到 97 个数据报。请合并改写成报告。";
+  assert.equal(
+    chatMaterialText(labelled),
+    "TCP 发送 SYN。\n\nUDP 收到 97 个数据报。",
+  );
+  assert.deepEqual(decideChatPurpose(labelled), { kind: "answer" });
+
+  const fenced =
+    "原文：\n```text\n客户端先发 SYN。\n服务端回复 SYN-ACK。\n```\n请改写成报告。";
+  assert.equal(
+    chatMaterialText(fenced),
+    "客户端先发 SYN。\n服务端回复 SYN-ACK。",
+  );
 });
 
 test("N0 does not choose one of multiple separately marked source segments", () => {

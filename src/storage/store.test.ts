@@ -873,7 +873,7 @@ test("the schema records its version", () => {
   const meta = store.database
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     .get() as { value: string };
-  assert.equal(meta.value, "12");
+  assert.equal(meta.value, "13");
 
   const migrations = store.database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -891,6 +891,7 @@ test("the schema records its version", () => {
     { version: 10, name: "link_conversation_execution_v10" },
     { version: 11, name: "add_natural_conversation_v11" },
     { version: 12, name: "add_entry_subject_v12" },
+    { version: 13, name: "bind_clarification_material_message_v13" },
   ]);
 });
 

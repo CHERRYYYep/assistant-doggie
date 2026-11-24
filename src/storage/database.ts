@@ -335,6 +335,7 @@ function assertSchemaShape(database: DatabaseSync): void {
         "prompt_message_id",
         "selected_entry_id",
         "selected_memory_revision",
+        "selected_message_id",
       ],
     ],
     ["conversation_requests", ["request_id", "payload_hash", "result_json"]],

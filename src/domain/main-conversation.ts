@@ -46,10 +46,18 @@ export const utteranceSchema = z.strictObject({
   replyTo: promptReferenceSchema.optional(),
   selection: subjectReferenceSchema.optional(),
   command: z.enum(["none", "cancel", "retry"]).optional(),
+  retryResultMessageId: id.optional(),
 });
 export const conversationTurnSchema = z.discriminatedUnion("action", [
   z.strictObject({ action: z.literal("message"), ...requestId, text }),
   utteranceSchema,
+  z.strictObject({
+    action: z.literal("retry_context"),
+    ...requestId,
+    clarificationId: id,
+    expectedRevision: revision,
+    resultMessageId: id,
+  }),
   z.strictObject({ action: z.literal("reply"), ...change, text }),
   z.strictObject({ action: z.literal("select"), ...change, workItemId: id }),
   z.strictObject({ action: z.literal("none"), ...change }),
@@ -112,6 +120,20 @@ export const conversationInteractionSchema = clarificationCardSchema.extend({
   selected: subjectCandidateSchema.nullable(),
   awaiting: awaitingSchema.nullable(),
   promptMessageId: id.nullable(),
+  selectedMaterialMessageId: id.nullable().optional(),
+  selectedMaterial: z
+    .strictObject({ messageId: id, text: z.string().min(1).max(4000) })
+    .nullable()
+    .optional(),
+  retryResultMessageId: id.optional(),
+  retryRequestId: id.optional(),
+  contextResult: z
+    .strictObject({
+      messageId: id,
+      status: z.enum(["completed", "failed", "retryable_failure", "unknown"]),
+      text: z.string().min(1).max(4000),
+    })
+    .optional(),
   truncated: z.boolean(),
 });
 export type Interaction = Readonly<

@@ -227,7 +227,7 @@ const replyDetails = z.looseObject({
   reply_to_message_id: z.uuid(),
 });
 
-test("N17 a failed v10 upgrade preserves old cards, sources and immutable execution bindings", async () => {
+test("N17 a failed v13 upgrade preserves v12 cards, sources and immutable execution bindings", async () => {
   using dir = mkdtempDisposableSync(join(tmpdir(), "doggie-natural-v10-"));
   const path = join(dir.path, "test.db");
   const time = "2026-11-17T04:00:00.000Z";
@@ -288,23 +288,30 @@ test("N17 a failed v10 upgrade preserves old cards, sources and immutable execut
       taskId,
       cardId,
     );
-    // Fail at the end of the Entry-subject table rebuild: v11 may commit, v12 must roll back completely.
+    // The v12 baseline can commit, but the v13 parent rebuild must roll back completely.
     db.exec(
-      "CREATE TRIGGER fixture_fail_v12 BEFORE INSERT ON schema_migrations WHEN NEW.version=12 BEGIN SELECT RAISE(ABORT,'fixture migration failure'); END",
+      "CREATE TRIGGER fixture_fail_v13 BEFORE INSERT ON schema_migrations WHEN NEW.version=13 BEGIN SELECT RAISE(ABORT,'fixture migration failure'); END",
     );
   }
   assert.throws(() => openDatabase(path), /fixture migration failure/);
   {
     using db = new DatabaseSync(path);
-    assert.equal(readSchemaVersion(db), 11);
+    assert.equal(readSchemaVersion(db), 12);
     assert.equal(
-      db.prepare("SELECT 1 FROM schema_migrations WHERE version=12").get(),
+      db.prepare("SELECT 1 FROM schema_migrations WHERE version=13").get(),
       undefined,
+    );
+    assert.ok(
+      db
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('conversation_clarifications') WHERE name='selected_entry_id'",
+        )
+        .get(),
     );
     assert.equal(
       db
         .prepare(
-          "SELECT 1 FROM pragma_table_info('conversation_clarifications') WHERE name='selected_entry_id'",
+          "SELECT 1 FROM pragma_table_info('conversation_clarifications') WHERE name='selected_message_id'",
         )
         .get(),
       undefined,
@@ -318,7 +325,7 @@ test("N17 a failed v10 upgrade preserves old cards, sources and immutable execut
       cardId,
     );
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
-    db.exec("DROP TRIGGER fixture_fail_v12");
+    db.exec("DROP TRIGGER fixture_fail_v13");
   }
   for (let reopen = 0; reopen < 2; reopen++) {
     using db = openDatabase(path);
@@ -498,6 +505,270 @@ test("N07 a unique named Entry with requirements goes directly to a sourced draf
   );
   assert.deepEqual((await f.interactions()).snapshot.prompts, []);
   assert.deepEqual(f.business(), baseline);
+});
+
+test("F2/F3 quoted questions and source extraction preserve purpose and exact material", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  for (const text of [
+    "解释一下「SYN-ACK」是什么？",
+    "比较「TCP」和「UDP」有什么区别？",
+  ]) {
+    const result = await f.send(
+      utterance(text, (await f.interactions()).snapshot),
+    );
+    assert.equal(result.kind, "answer", text);
+    assert.equal(
+      f.seen.length,
+      0,
+      "questions should use ordinary answer routing",
+    );
+    assert.equal((await f.interactions()).interactions.length, 0);
+  }
+
+  const marked =
+    "原文：「无连接」是 UDP 的特点，收到 97 个数据报。请改写成报告。";
+  await f.send(utterance(marked, (await f.interactions()).snapshot));
+  assert.equal(
+    f.seen.at(-1)?.material[0],
+    "「无连接」是 UDP 的特点，收到 97 个数据报。",
+  );
+
+  const merged =
+    "请把「TCP 发送 SYN。」和「UDP 收到 97 个数据报。」合并改写为报告。";
+  await f.send(utterance(merged, (await f.interactions()).snapshot));
+  assert.equal(
+    f.seen.at(-1)?.material[0],
+    "TCP 发送 SYN。\n\nUDP 收到 97 个数据报。",
+  );
+  await f.send(
+    utterance(
+      "请把「执行脚本并保存结果。」改写成正式表述",
+      (await f.interactions()).snapshot,
+    ),
+  );
+  assert.equal(f.seen.at(-1)?.material[0], "执行脚本并保存结果。");
+  assert.equal(f.count("archive_attempts"), 0);
+  assert.equal(f.count("pending_actions"), 0);
+  assert.equal(f.count("entries"), 0);
+  assert.equal(f.count("work_items"), 0);
+  assert.equal(f.count("agent_tasks"), 0);
+});
+
+test("F5 explicit archive takes the archive path, while bare marked material asks its purpose", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  const archived = await f.send(
+    utterance(
+      "记一下，原文：客户端先发 SYN。",
+      (await f.interactions()).snapshot,
+    ),
+  );
+  assert.equal(archived.kind, "archive");
+  assert.equal(
+    f.count("entries"),
+    0,
+    "the existing low-information gate applies",
+  );
+  assert.equal(f.count("archive_attempts"), 1);
+  assert.equal(f.count("pending_actions"), 1);
+  assert.match(
+    (await f.history()).find(({ id }) => id === archived.assistantMessageId)
+      ?.content ?? "",
+    /请选择/u,
+  );
+  assert.equal(f.seen.length, 0);
+
+  using bareDb = openDatabase(":memory:");
+  const bare = fixture(bareDb);
+  const baseline = bare.business();
+  const result = await bare.send(
+    utterance("原文：客户端先发 SYN。", (await bare.interactions()).snapshot),
+  );
+  assert.equal(result.kind, "clarify");
+  assert.match(
+    (await bare.history()).find(({ id }) => id === result.assistantMessageId)
+      ?.content ?? "",
+    /希望怎么处理/u,
+  );
+  assert.equal(bare.seen.length, 0);
+  assert.deepEqual(bare.business(), baseline);
+});
+
+test("F6 incomplete deictic targets open a recoverable clarification instead of a query error", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  for (const text of ["帮我修改那个", "帮我改那个"]) {
+    const response = await f.post(utterance(text));
+    const body: unknown = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(body));
+    const result = conversationTurnResponseSchema.parse(body).result;
+    assert.equal(result.kind, "clarification");
+    const card = (await f.interactions()).interactions.find(
+      ({ id }) => id === result.clarificationId,
+    );
+    assert.equal(card?.awaiting, "subject");
+    assert.equal(card?.candidates.length, 0);
+  }
+
+  const { udp } = await f.seedTwo();
+  const cards = (await f.interactions()).interactions;
+  const discarded = cards.find(
+    ({ originalText }) => originalText === "帮我改那个",
+  );
+  const before = cards.find(
+    ({ originalText }) => originalText === "帮我修改那个",
+  );
+  assert.ok(discarded);
+  assert.ok(before);
+  const current = await f.interactions();
+  const prompt = current.snapshot.prompts.find(
+    ({ interactionId }) => interactionId === discarded.id,
+  );
+  assert.ok(prompt);
+  await f.send({
+    ...utterance("取消", current.snapshot),
+    replyTo: prompt,
+    command: "cancel",
+  });
+  const refreshed = await f.send(
+    utterance("UDP 实验", (await f.interactions()).snapshot),
+  );
+  assert.equal(refreshed.kind, "clarification");
+  assert.equal(refreshed.clarificationId, before.id);
+  const updated = (await f.interactions()).interactions.find(
+    ({ id }) => id === before.id,
+  );
+  assert.ok(updated?.candidates.some(({ id }) => id === udp.entryId));
+  assert.equal(updated?.selected, null);
+  assert.equal(f.seen.length, 0);
+});
+
+test("F4 zero-candidate clarifications bind supplied material to the same interaction and resume requirements", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  const baseline = f.business();
+  const opening = await f.opened("帮我把那个计网实验改成一句正式说明");
+  assert.equal(opening.card.awaiting, "subject");
+  assert.equal(opening.card.candidates.length, 0);
+  const materialText = "原文：先发 SYN，随后收到 SYN-ACK。";
+  const supplied = await f.send(utterance(materialText, opening.snapshot));
+  assert.equal(supplied.kind, "clarification");
+  assert.equal(supplied.clarificationId, opening.card.id);
+  assert.equal(f.seen.length, 1);
+  assert.equal(f.seen[0]?.original, opening.card.originalText);
+  assert.deepEqual(f.seen[0]?.material, ["先发 SYN，随后收到 SYN-ACK。"]);
+  const interaction = (await f.interactions()).interactions.find(
+    ({ id }) => id === opening.card.id,
+  );
+  assert.equal(interaction?.awaiting, null);
+  assert.equal(interaction?.selectedMaterialMessageId, supplied.userMessageId);
+  assert.equal(
+    interaction?.selectedMaterial?.messageId,
+    supplied.userMessageId,
+  );
+  assert.throws(
+    () =>
+      db
+        .prepare(
+          "UPDATE conversation_clarifications SET selected_entry_id=?, selected_memory_revision=? WHERE id=?",
+        )
+        .run(randomUUID(), 7, opening.card.id),
+    /CHECK constraint failed/u,
+  );
+  const unrelatedMessage = f.store.conversation.appendChatMessage({
+    role: "user",
+    content: "unrelated message",
+  });
+  assert.throws(
+    () =>
+      db
+        .prepare(
+          "UPDATE conversation_clarifications SET selected_message_id=? WHERE id=?",
+        )
+        .run(unrelatedMessage.id, opening.card.id),
+    /belong to its clarification/u,
+  );
+  const output = (await f.history()).find(
+    ({ id }) => id === supplied.assistantMessageId,
+  );
+  assert.equal(output?.content, naturalLab.tcp.draft);
+  assert.deepEqual(
+    z
+      .looseObject({ materialMessageIds: z.array(z.uuid()) })
+      .parse(output?.details).materialMessageIds,
+    [supplied.userMessageId],
+  );
+  assert.deepEqual(f.business(), baseline);
+  assert.equal(
+    db
+      .prepare(
+        "SELECT selected_message_id FROM conversation_clarifications WHERE id=?",
+      )
+      .get(opening.card.id)?.["selected_message_id"],
+    supplied.userMessageId,
+  );
+
+  using secondDb = openDatabase(":memory:");
+  const second = fixture(secondDb);
+  const noRequirement = await second.opened("帮我修改那个");
+  const reply = await second.send(
+    utterance(materialText, noRequirement.snapshot),
+  );
+  assert.equal(reply.kind, "clarification");
+  assert.equal(second.seen.length, 0);
+  const waiting = (await second.interactions()).interactions.find(
+    ({ id }) => id === noRequirement.card.id,
+  );
+  assert.equal(waiting?.awaiting, "requirements");
+  assert.equal(waiting?.selectedMaterialMessageId, reply.userMessageId);
+  const completed = await second.send(
+    utterance("改成一句正式报告表述", (await second.interactions()).snapshot),
+  );
+  assert.equal(completed.kind, "clarification");
+  assert.equal(completed.clarificationId, noRequirement.card.id);
+  assert.equal(second.seen.length, 1);
+  assert.deepEqual(second.seen[0]?.material, ["先发 SYN，随后收到 SYN-ACK。"]);
+  assert.equal(
+    (await second.interactions()).interactions.find(
+      ({ id }) => id === noRequirement.card.id,
+    )?.awaiting,
+    null,
+  );
+  assert.deepEqual(second.business(), [0, 0, 0, 0, 0, 0]);
+});
+
+test("F7 an old snapshot may send an independent question but cannot consume a newly opened prompt", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  await f.seedTwo();
+  const oldSnapshot = (await f.interactions()).snapshot;
+  const opened = await f.send(utterance(naturalLab.original, oldSnapshot));
+  assert.equal(opened.kind, "clarification");
+  const cardBefore = (await f.interactions()).interactions.find(
+    ({ id }) => id === opened.clarificationId,
+  );
+  assert.equal(cardBefore?.awaiting, "subject");
+
+  const independent = await f.post(utterance("SYN-ACK 是什么？", oldSnapshot));
+  assert.equal(independent.status, 200, await independent.text());
+  assert.equal(f.seen.length, 0);
+  const cardAfter = (await f.interactions()).interactions.find(
+    ({ id }) => id === opened.clarificationId,
+  );
+  assert.equal(cardAfter?.revision, cardBefore?.revision);
+  assert.equal(cardAfter?.awaiting, "subject");
+
+  const staleSelection = await f.post(
+    utterance("我选 TCP，只改报告", oldSnapshot),
+  );
+  assert.equal(staleSelection.status, 409);
+  assert.equal(
+    (await f.interactions()).interactions.find(
+      ({ id }) => id === opened.clarificationId,
+    )?.selected,
+    null,
+  );
 });
 
 test("N06/N08 marked material resumes only a uniquely identified waiting request", async () => {
@@ -1027,29 +1298,146 @@ test("N18 failed registration rolls back; failed answer publication keeps one ac
     1,
   );
   assert.ok(selected);
-  assert.ok(selected.promptMessageId);
-  const retried = await f.send({
-    ...utterance("重试这次只读回答"),
-    replyTo: {
-      interactionId: selected.id,
-      revision: selected.revision,
-      promptMessageId: selected.promptMessageId,
-    },
-    command: "retry",
-  });
-  assert.equal(f.seen.length, 2);
   assert.equal(
-    (await f.history()).filter(({ content }) => content === input.text).length,
-    1,
+    selected.retryResultMessageId,
+    undefined,
+    "a publication failure leaves the result unknown and must not offer retry",
   );
-  assert.equal(
-    (await f.history()).find(({ id }) => id === retried.assistantMessageId)
-      ?.content,
-    naturalLab.tcp.draft,
-  );
+  assert.equal(f.seen.length, 1);
   assert.equal(f.count("entries"), 2);
   assert.equal(f.count("work_items"), 0);
   assert.equal(f.count("agent_tasks"), 0);
+});
+
+test("F8 a persisted retryable failure is anchored to one result and consumed once", async () => {
+  using db = openDatabase(":memory:");
+  let attempts = 0;
+  const f = fixture(db, undefined, async (input) => {
+    attempts++;
+    if (attempts === 1) {
+      const { LlmError } = await import("../llm/structured-output.ts");
+      throw LlmError.response("unexpected_status", "temporary", true);
+    }
+    const source = input.evidence[0];
+    assert.ok(source);
+    return {
+      kind: "answer",
+      text: naturalLab.tcp.draft,
+      quotes: [{ entryId: source.entryId, quote: source.text }],
+    };
+  });
+  const { tcp } = await f.seedTwo();
+  const opened = await f.opened();
+  const view = await f.interactions();
+  const prompt = view.snapshot.prompts[0];
+  const candidate = view.interactions[0]?.candidates.find(
+    ({ id }) => id === tcp.entryId,
+  );
+  assert.ok(prompt && candidate?.kind === "entry");
+  const failed = await f.send({
+    ...utterance("选 TCP，只改报告", view.snapshot),
+    replyTo: prompt,
+    selection: {
+      kind: "entry",
+      id: candidate.id,
+      memoryRevision: candidate.memoryRevision,
+    },
+  });
+  assert.equal(failed.kind, "clarification");
+  const failedView = (await f.interactions()).interactions[0];
+  assert.ok(failedView?.retryResultMessageId);
+  assert.equal(attempts, 1);
+  const retried = await f.send({
+    action: "retry_context",
+    requestId: randomUUID(),
+    clarificationId: failedView.id,
+    expectedRevision: failedView.revision,
+    resultMessageId: failedView.retryResultMessageId,
+  });
+  assert.equal(retried.kind, "clarification");
+  assert.equal(attempts, 2);
+  const completed = (await f.interactions()).interactions[0];
+  assert.equal(completed?.retryResultMessageId, undefined);
+  assert.equal(completed?.contextResult?.status, "completed");
+  const duplicate = await f.post({
+    action: "retry_context",
+    requestId: randomUUID(),
+    clarificationId: failedView.id,
+    expectedRevision: failedView.revision,
+    resultMessageId: failedView.retryResultMessageId,
+  });
+  assert.equal(duplicate.status, 409);
+  assert.equal(attempts, 2);
+});
+
+test("F8 an in-flight retry is visible as unknown and same-request reconciliation never calls the model twice", async () => {
+  using db = openDatabase(":memory:");
+  let attempts = 0;
+  let release: () => void = () => {};
+  let entered: () => void = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const modelEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const answer: GroundedResponder = async (input) => {
+    attempts++;
+    if (attempts === 1) {
+      const { LlmError } = await import("../llm/structured-output.ts");
+      throw LlmError.response("unexpected_status", "temporary", true);
+    }
+    entered();
+    await blocked;
+    const source = input.evidence[0];
+    assert.ok(source);
+    return {
+      kind: "answer",
+      text: naturalLab.tcp.draft,
+      quotes: [{ entryId: source.entryId, quote: source.text }],
+    };
+  };
+  const first = fixture(db, undefined, answer);
+  const { tcp } = await first.seedTwo();
+  const opened = await first.opened();
+  const prompt = opened.snapshot.prompts[0];
+  const candidate = opened.card.candidates.find(({ id }) => id === tcp.entryId);
+  assert.ok(prompt && candidate?.kind === "entry");
+  await first.send({
+    ...utterance("选 TCP，只改报告", opened.snapshot),
+    replyTo: prompt,
+    selection: {
+      kind: "entry",
+      id: candidate.id,
+      memoryRevision: candidate.memoryRevision,
+    },
+  });
+  const failed = (await first.interactions()).interactions.find(
+    ({ id }) => id === opened.card.id,
+  );
+  assert.ok(failed?.retryResultMessageId);
+  const secondService = fixture(db, undefined, answer);
+  const retry = {
+    action: "retry_context" as const,
+    requestId: randomUUID(),
+    clarificationId: opened.card.id,
+    expectedRevision: failed.revision,
+    resultMessageId: failed.retryResultMessageId,
+  };
+  const inFlight = secondService.post(retry);
+  await modelEntered;
+  const observed = (await first.interactions()).interactions.find(
+    ({ id }) => id === opened.card.id,
+  );
+  assert.equal(observed?.contextResult?.status, "unknown");
+  assert.equal(observed?.retryRequestId, retry.requestId);
+  const duplicate = await first.post(retry);
+  assert.equal(duplicate.status, 409);
+  assert.equal(attempts, 2);
+  release();
+  assert.equal((await inFlight).status, 200);
+  assert.equal((await first.post(retry)).status, 200);
+  assert.equal(attempts, 2);
 });
 
 test("N19 forged quotes or unknown grounded fields cannot publish an unverified draft", async () => {

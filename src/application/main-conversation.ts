@@ -67,7 +67,9 @@ import {
 
 type Mutation = Exclude<
   ConversationTurn,
-  { action: "message" | "continue" | "delegate" | "utterance" }
+  {
+    action: "message" | "continue" | "delegate" | "utterance" | "retry_context";
+  }
 >;
 type Continue = Extract<ConversationTurn, { action: "continue" }>;
 type Delegate = Extract<ConversationTurn, { action: "delegate" }>;
@@ -167,6 +169,8 @@ export class MainConversationService {
       throwIfAborted(signal);
       if (input.action === "utterance")
         return this.#utterance(input, dispatch, signal);
+      if (input.action === "retry_context")
+        return this.#retryContext(input, signal);
       if (input.action === "delegate") return this.#delegate(input, signal);
       if (
         input.action === "continue" ||
@@ -225,6 +229,14 @@ export class MainConversationService {
         ? null
         : { ...card.selected, kind: "work_item" as const });
     const selected = ref === null ? null : (this.#subject(ref) ?? null);
+    const materialMessage =
+      card.selectedMessageId === null
+        ? undefined
+        : this.#cards.materialMessage(card);
+    const selectedMaterialText =
+      materialMessage === undefined
+        ? undefined
+        : materialText(materialMessage.text);
     const rejectedCurrentCandidates =
       card.awaiting === "subject" &&
       /^都不是[。！!]?$/u.test(normalized(card.latestReply ?? ""));
@@ -233,11 +245,18 @@ export class MainConversationService {
         ? card.subjects.flatMap((ref) => this.#subject(ref) ?? [])
         : [];
     const stale =
-      (card.status === "resolved" && selected === null) ||
+      (card.status === "resolved" &&
+        selected === null &&
+        selectedMaterialText === undefined) ||
       (card.status === "pending" &&
         !rejectedCurrentCandidates &&
         candidates.length !== card.subjects.length);
     const execution = this.#agent?.conversationExecution(card.id);
+    const latestContextResult = this.#cards.latestContextResult(card);
+    const contextResult =
+      !stale && card.status === "resolved" && card.awaiting === null
+        ? latestContextResult
+        : undefined;
     return {
       id: card.id,
       originalMessageId: card.originalMessageId,
@@ -250,6 +269,42 @@ export class MainConversationService {
       selected: stale ? null : selected,
       awaiting: stale ? null : card.awaiting,
       promptMessageId: card.promptMessageId,
+      ...(contextResult?.retryable === true ||
+      contextResult?.inProgress === true
+        ? { retryResultMessageId: contextResult.id }
+        : {}),
+      ...(contextResult === undefined ||
+      (contextResult.consumed && !contextResult.inProgress)
+        ? {}
+        : {
+            contextResult: {
+              messageId: contextResult.id,
+              status: contextResult.inProgress
+                ? ("unknown" as const)
+                : contextResult.retryable
+                  ? ("retryable_failure" as const)
+                  : contextResult.failed === null
+                    ? ("unknown" as const)
+                    : contextResult.failed
+                      ? ("failed" as const)
+                      : ("completed" as const),
+              text: contextResult.text,
+            },
+          }),
+      ...(contextResult?.inProgress && contextResult.retryRequestId
+        ? { retryRequestId: contextResult.retryRequestId }
+        : {}),
+      ...(card.selectedMessageId === null
+        ? {}
+        : { selectedMaterialMessageId: card.selectedMessageId }),
+      ...(selectedMaterialText === undefined || materialMessage === undefined
+        ? {}
+        : {
+            selectedMaterial: {
+              messageId: materialMessage.id,
+              text: selectedMaterialText,
+            },
+          }),
       truncated: card.truncated,
       question: stale
         ? "目标范围或来源已变化，请刷新后重新发起。"
@@ -269,6 +324,51 @@ export class MainConversationService {
     )
       throw new ConversationError("stale");
     return card;
+  }
+  async #retryContext(
+    input: Extract<ConversationTurn, { action: "retry_context" }>,
+    signal?: AbortSignal,
+  ): Promise<ConversationReceipt> {
+    const admitted = this.#cards.transaction<
+      NaturalAdmission | ConversationReceipt
+    >(() => {
+      const replay = this.#cards.begin(input);
+      if (replay !== null) return replay;
+      const card = this.#cards.get(input.clarificationId);
+      const failure = this.#cards.latestContextResult(card);
+      if (
+        card.revision !== input.expectedRevision ||
+        card.status !== "resolved" ||
+        card.awaiting !== null ||
+        failure?.retryable !== true ||
+        failure.id !== input.resultMessageId
+      )
+        throw new ConversationError("stale");
+      const user = this.#cards.append({
+        role: "user",
+        content: "重试这次回答",
+        details: {
+          kind: "task_clarification_reply",
+          action: "retry",
+          clarification_id: card.id,
+          reply_to_message_id: card.originalMessageId,
+          observed_revision: card.revision,
+          retry_result_message_id: failure.id,
+          retry_request_id: input.requestId,
+        },
+      });
+      if (card.selectedMessageId !== null)
+        return this.#forMaterialMessage(card, card.selectedMessageId, user.id);
+      const prior =
+        card.entry ??
+        (card.selected === null
+          ? null
+          : { kind: "work_item" as const, ...card.selected });
+      if (prior === null) throw new ConversationError("stale");
+      return this.#forSubject(card, prior, user.id);
+    });
+    if ("kind" in admitted) return admitted;
+    return this.#answerNatural(input, admitted, signal);
   }
   #naturalTarget(text: string): LocatedTarget {
     const title =
@@ -448,44 +548,48 @@ export class MainConversationService {
         purpose.kind === "answer" ? chatMaterialText(input.text) : null;
       const quotedObject =
         material !== null && this.#looksLikeNamedObject(material);
+      const independent =
+        purpose.kind === "archive" ||
+        purpose.kind === "lookup" ||
+        (purpose.kind === "answer" &&
+          !quotedObject &&
+          !this.#looksLikeNamedObject(input.text)) ||
+        (purpose.kind === "clarify" &&
+          ["explicit_confirmation", "archive_content", "mixed"].includes(
+            purpose.reason,
+          ));
       if (input.snapshot !== undefined) {
         const snapshot = input.snapshot;
-        const currentPrompts = this.#cards.list().flatMap((card) => {
-          const view = this.#interaction(card);
-          return view.promptMessageId === null || view.awaiting === null
-            ? []
-            : [
-                {
-                  interactionId: view.id,
-                  revision: view.revision,
-                  promptMessageId: view.promptMessageId,
-                },
-              ];
-        });
-        const sorted = (refs: readonly PromptReference[]) =>
-          [...refs].sort((a, b) =>
-            a.interactionId.localeCompare(b.interactionId),
-          );
         if (
           snapshot.throughSequence > this.#cards.throughSequence() ||
-          JSON.stringify(sorted(snapshot.prompts)) !==
-            JSON.stringify(sorted(currentPrompts)) ||
           new Set(snapshot.prompts.map((ref) => ref.interactionId)).size !==
             snapshot.prompts.length
         )
           throw new ConversationError("stale");
-        for (const ref of snapshot.prompts)
-          this.#cards.validateObserved(ref, snapshot.throughSequence);
-        // Complete independent requests never consume or depend on a waiting question.
-        const independent =
-          purpose.kind === "archive" ||
-          purpose.kind === "lookup" ||
-          (purpose.kind === "answer" && !quotedObject) ||
-          (purpose.kind === "clarify" &&
-            ["explicit_confirmation", "archive_content", "mixed"].includes(
-              purpose.reason,
-            ));
         if (!independent) {
+          const currentPrompts = this.#cards.list().flatMap((card) => {
+            const view = this.#interaction(card);
+            return view.promptMessageId === null || view.awaiting === null
+              ? []
+              : [
+                  {
+                    interactionId: view.id,
+                    revision: view.revision,
+                    promptMessageId: view.promptMessageId,
+                  },
+                ];
+          });
+          const sorted = (refs: readonly PromptReference[]) =>
+            [...refs].sort((a, b) =>
+              a.interactionId.localeCompare(b.interactionId),
+            );
+          if (
+            JSON.stringify(sorted(snapshot.prompts)) !==
+            JSON.stringify(sorted(currentPrompts))
+          )
+            throw new ConversationError("stale");
+          for (const ref of snapshot.prompts)
+            this.#cards.validateObserved(ref, snapshot.throughSequence);
           const cards = snapshot.prompts.map((ref) => this.#observed(ref));
           const matches = resolveNaturalReply(
             input.text,
@@ -518,6 +622,31 @@ export class MainConversationService {
           );
           if (rejected.length === 1)
             return this.#refreshNaturalSubjects(input, rejected[0]!);
+          const emptySubjectCards = cards.filter(
+            (card) => card.awaiting === "subject" && card.subjects.length === 0,
+          );
+          if (bareMaterial !== undefined && emptySubjectCards.length > 1) {
+            return this.#naturalMessage(
+              input,
+              "我已收到材料，但有多个待回答的问题。请使用对应问题的回复入口说明这段材料用于哪一条请求。",
+            );
+          } else if (
+            bareMaterial !== undefined &&
+            emptySubjectCards.length === 1
+          ) {
+            return this.#bindNaturalMaterial(input, emptySubjectCards[0]!);
+          } else if (emptySubjectCards.length > 1) {
+            const located = this.#naturalTarget(input.text);
+            if (located.exact !== undefined || located.candidates.length > 0)
+              return this.#naturalMessage(
+                input,
+                "我找到了一份相关材料，但同时有多个待回答的问题。请使用对应问题的回复入口。",
+              );
+          } else if (emptySubjectCards.length === 1) {
+            const located = this.#naturalTarget(input.text);
+            if (located.exact !== undefined || located.candidates.length > 0)
+              return this.#refreshNaturalSubjects(input, emptySubjectCards[0]!);
+          }
         }
       }
       if (material !== null && !this.#looksLikeNamedObject(material)) {
@@ -553,7 +682,7 @@ export class MainConversationService {
         return this.#openNatural(input, namedRewrite);
       if (purpose.kind === "lookup" && this.#grounding !== undefined)
         return this.#admitGrounded(input);
-      if (bareMaterial !== undefined)
+      if (bareMaterial !== undefined && purpose.kind !== "archive")
         return this.#naturalMessage(
           input,
           "已收到原文。你希望怎么处理这段内容？",
@@ -715,19 +844,104 @@ export class MainConversationService {
   ): NaturalAdmission | ConversationReceipt {
     if (card.status === "cancelled" || card.status === "stale")
       throw new ConversationError("stale");
+    if (
+      command === undefined &&
+      card.awaiting === "material" &&
+      materialText(input.text) !== undefined
+    )
+      return this.#bindNaturalMaterial(input, card);
+    if (
+      command === undefined &&
+      card.awaiting === "requirements" &&
+      card.selectedMessageId !== null
+    ) {
+      const user = this.#cards.append({
+        role: "user",
+        content: input.text,
+        details: {
+          kind: "task_clarification_reply",
+          action: "reply",
+          clarification_id: card.id,
+          reply_to_message_id: card.originalMessageId,
+          prompt_message_id: card.promptMessageId,
+          observed_revision: card.revision,
+          relation,
+          material_message_id: card.selectedMessageId,
+        },
+      });
+      if (hasRequirements(input.text)) {
+        this.#cards.update(card, {
+          status: "resolved",
+          candidates: [],
+          subjects: [],
+          truncated: false,
+          selected: null,
+          entry: null,
+          materialMessageId: card.selectedMessageId,
+          latestReplyId: user.id,
+          awaiting: null,
+          promptMessageId: null,
+        });
+        return this.#forMaterialMessage(
+          this.#cards.get(card.id),
+          card.selectedMessageId,
+          user.id,
+        );
+      }
+      const result = this.#publish(
+        input.requestId,
+        user.id,
+        { kind: "clarification", clarificationId: card.id },
+        "已收到补充。请告诉我希望如何改写这段原文。",
+        { kind: "task_clarification_result", clarification_id: card.id },
+      );
+      this.#cards.update(card, {
+        status: "resolved",
+        candidates: [],
+        subjects: [],
+        truncated: false,
+        selected: null,
+        entry: null,
+        materialMessageId: card.selectedMessageId,
+        latestReplyId: user.id,
+        awaiting: "requirements",
+        promptMessageId: result.assistantMessageId,
+      });
+      return result;
+    }
     const prior =
       card.entry ??
       (card.selected === null
         ? null
         : { kind: "work_item" as const, ...card.selected });
     if (command === "retry") {
-      if (prior === null || card.awaiting !== null)
+      const failedResult = this.#cards.latestContextResult(card);
+      if (
+        input.retryResultMessageId === undefined ||
+        failedResult?.retryable !== true ||
+        failedResult.id !== input.retryResultMessageId ||
+        card.awaiting !== null
+      )
         throw new ConversationError("stale");
-      return this.#forSubject(
-        card,
-        prior,
-        card.latestReplyId ?? card.originalMessageId,
-      );
+      const retry = this.#cards.append({
+        role: "user",
+        content: input.text,
+        details: {
+          kind: "task_clarification_reply",
+          action: "retry",
+          clarification_id: card.id,
+          reply_to_message_id: card.originalMessageId,
+          prompt_message_id: card.promptMessageId,
+          observed_revision: card.revision,
+          relation,
+          retry_result_message_id: failedResult.id,
+          retry_request_id: input.requestId,
+        },
+      });
+      if (card.selectedMessageId !== null)
+        return this.#forMaterialMessage(card, card.selectedMessageId, retry.id);
+      if (prior === null) throw new ConversationError("stale");
+      return this.#forSubject(card, prior, retry.id);
     }
     if (card.awaiting === null && command !== "cancel")
       throw new ConversationError("stale");
@@ -820,6 +1034,101 @@ export class MainConversationService {
     this.#agent?.rejectPendingForConversationWithinTransaction(card.id);
     return result;
   }
+  #bindNaturalMaterial(
+    input: Utterance,
+    card: StoredClarification,
+  ): NaturalAdmission | ConversationReceipt {
+    const body = materialText(input.text);
+    if (body === undefined) return this.#refreshNaturalSubjects(input, card);
+    const user = this.#cards.append({
+      role: "user",
+      content: input.text,
+      details: {
+        kind: "task_clarification_reply",
+        action: "reply",
+        clarification_id: card.id,
+        reply_to_message_id: card.originalMessageId,
+        prompt_message_id: card.promptMessageId,
+        observed_revision: card.revision,
+        relation: "natural",
+      },
+    });
+    const existing = this.#cards.supplements(card, MAX_SUPPLEMENTS + 1);
+    if (existing.length >= MAX_SUPPLEMENTS)
+      throw new ConversationError("context_limit");
+    const requirements = [card.originalText, ...existing, input.text].some(
+      (part) => hasRequirements(part) || /只改报告|仅改报告/u.test(part),
+    );
+    this.#cards.update(card, {
+      status: "resolved",
+      candidates: [],
+      subjects: [],
+      truncated: false,
+      selected: null,
+      entry: null,
+      materialMessageId: user.id,
+      latestReplyId: user.id,
+      awaiting: requirements ? null : "requirements",
+      promptMessageId: card.promptMessageId,
+    });
+    const updated = this.#cards.get(card.id);
+    if (requirements)
+      return this.#forMaterialMessage(updated, user.id, user.id);
+    const result = this.#publish(
+      input.requestId,
+      user.id,
+      { kind: "clarification", clarificationId: card.id },
+      "已收到这段原文。你希望怎么改？",
+      { kind: "task_clarification_result", clarification_id: card.id },
+    );
+    this.#cards.update(updated, {
+      status: "resolved",
+      candidates: [],
+      subjects: [],
+      truncated: false,
+      selected: null,
+      entry: null,
+      materialMessageId: user.id,
+      latestReplyId: user.id,
+      awaiting: "requirements",
+      promptMessageId: result.assistantMessageId,
+    });
+    return result;
+  }
+  #forMaterialMessage(
+    card: StoredClarification,
+    materialMessageId: string,
+    userMessageId: string,
+  ): NaturalAdmission {
+    const source = this.#cards.materialMessage(card);
+    const body = source === undefined ? undefined : materialText(source.text);
+    if (source === undefined || body === undefined)
+      throw new ConversationError("stale");
+    const supplements = this.#cards.supplements(card, MAX_SUPPLEMENTS + 1);
+    if (supplements.length > MAX_SUPPLEMENTS)
+      throw new ConversationError("context_limit");
+    return {
+      userMessageId,
+      fence: {
+        memoryRevision: this.#cards.memoryRevision(),
+        card: {
+          id: card.id,
+          revision: card.revision,
+          selectedMessageId: materialMessageId,
+        },
+        work: null,
+      },
+      context: {
+        original: card.originalText,
+        supplements,
+        target: null,
+        operation: "rewrite",
+        materialSources: [{ messageId: source.id, text: body }],
+      },
+      entryIds: [],
+      allowTitleSearch: false,
+    };
+  }
   #refreshNaturalSubjects(
     input: Utterance,
     card: StoredClarification,
@@ -892,7 +1201,11 @@ export class MainConversationService {
       userMessageId,
       fence: {
         memoryRevision: this.#cards.memoryRevision(),
-        card: { id: card.id, revision: card.revision },
+        card: {
+          id: card.id,
+          revision: card.revision,
+          selectedMessageId: card.selectedMessageId,
+        },
         work:
           target === null
             ? null
@@ -917,7 +1230,7 @@ export class MainConversationService {
     };
   }
   async #answerNatural(
-    input: Utterance,
+    input: { readonly requestId: string },
     admitted: NaturalAdmission,
     signal?: AbortSignal,
   ): Promise<ConversationReceipt> {
@@ -926,6 +1239,8 @@ export class MainConversationService {
       (admitted.fence.work === null ||
         this.#items.hasAvailableScopeSources(admitted.fence.work.id));
     let result: GroundedResult;
+    let retryableFailure = false;
+    let knownFailure = false;
     try {
       result = admitted.immediate ??
         (await this.#grounding?.answer(
@@ -939,6 +1254,11 @@ export class MainConversationService {
       throwIfAborted(signal);
       if (!(error instanceof LlmError) && !(error instanceof HarnessError))
         throw error;
+      knownFailure = true;
+      retryableFailure =
+        error instanceof LlmError
+          ? error.retryable
+          : error.code !== "context_limit";
       result = { text: "暂时无法处理资料，可从对应卡片重试。", citations: [] };
     }
     throwIfAborted(signal);
@@ -953,7 +1273,11 @@ export class MainConversationService {
         needsMaterial && card !== null
           ? {
               ...admitted.fence,
-              card: { id: card.id, revision: card.revision + 1 },
+              card: {
+                id: card.id,
+                revision: card.revision + 1,
+                selectedMessageId: card.selectedMessageId,
+              },
             }
           : admitted.fence;
       const content = !valid
@@ -991,6 +1315,8 @@ export class MainConversationService {
                 materialMessageIds: result.materialMessageIds ?? [],
                 clarification_id: card?.id,
                 workItemId: fence.work?.id,
+                retryable: retryableFailure,
+                failed: knownFailure,
               }
             : {}),
         },
@@ -1114,7 +1440,11 @@ export class MainConversationService {
     let original: string;
     if (input.action === "continue") {
       const { card, item } = this.#resolved(input);
-      cardRef = { id: card.id, revision: card.revision };
+      cardRef = {
+        id: card.id,
+        revision: card.revision,
+        selectedMessageId: card.selectedMessageId,
+      };
       work = { id: item.id, scopeRevision: item.scopeRevision };
       const {
         id,
@@ -1214,6 +1544,8 @@ export class MainConversationService {
         (entry.fence.work !== null &&
           this.#items.hasAvailableScopeSources(entry.fence.work.id)));
     let result: GroundedResult;
+    let retryableFailure = false;
+    let knownFailure = false;
     try {
       result = entry.immediate ??
         (await this.#grounding?.answer(
@@ -1230,6 +1562,11 @@ export class MainConversationService {
       if (signal?.aborted) throwIfAborted(signal);
       if (!(error instanceof HarnessError) && !(error instanceof LlmError))
         throw error;
+      knownFailure = true;
+      retryableFailure =
+        error instanceof LlmError
+          ? error.retryable
+          : error.code !== "context_limit";
       result = { text: "暂时无法从资料生成答案，请稍后重试。", citations: [] };
     }
     throwIfAborted(signal);
@@ -1249,6 +1586,8 @@ export class MainConversationService {
               citations: result.citations,
               workItemId: entry.fence.work?.id,
               clarification_id: entry.fence.card?.id,
+              retryable: retryableFailure,
+              failed: knownFailure,
             }
           : { kind: "conversation_context_result", fence: entry.fence },
       );

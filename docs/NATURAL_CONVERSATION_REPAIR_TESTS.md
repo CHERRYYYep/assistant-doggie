@@ -1,6 +1,6 @@
 # C4 前：自然对话修复测试与交接
 
-**待执行的测试规格，不是验收结果。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)的 F1–F9；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
+**F1–F9 自动化验收已执行；浏览器 smoke、真实模型质量评估和 C4 默认入口决策仍未执行。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
 
 ## 环境与判定方法
 
@@ -37,6 +37,19 @@
   ~~~
 
 - 浏览器 smoke：使用临时库和 loopback 假模型服务，打开预览，在主输入完成 F1 → 选 UDP → 核对来源；空库走 F4；两个标签分别做 F7；制造一次回答失败，刷新、重启隔离服务、点击 F8，核对 F9。记录页面观察与服务端回执 ID；DOM 单测不代替这次人工操作。不要指向默认数据库或加载真实凭据。
+
+本轮已执行的自动化命令：
+
+~~~sh
+npm run typecheck
+node --test src/domain/chat-purpose.test.ts src/application/main-chat.test.ts src/storage/store.test.ts src/http/natural-conversation.test.ts src/http/main-conversation.test.ts src/runtime/local-web.test.ts
+npm run test:web
+npm run openapi:generate
+npm run openapi:check
+git diff --check
+~~~
+
+结果：完整 TypeScript 门禁通过（`npm test` 619 项、`npm run test:web` 70 项），类型检查、OpenAPI 漂移检查和 diff 检查通过。F8 服务端与网页回归已加入；浏览器 smoke 标记为未测。
 
 ## 放行与 C4 交接
 

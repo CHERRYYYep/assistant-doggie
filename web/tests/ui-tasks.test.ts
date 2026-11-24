@@ -992,6 +992,104 @@ test("C3 renders escaped sources and results, and removes stale output", () => {
   assert.doesNotMatch(sourced, /<img|来源 2/);
 });
 
+test("F8 renders a persisted retry anchor and hides it after completion", () => {
+  const resultMessageId = randomUUID();
+  const retryable = renderClarification({
+    ...resolvedCard,
+    promptMessageId: randomUUID(),
+    awaiting: null,
+    truncated: false,
+    contextResult: {
+      messageId: resultMessageId,
+      status: "retryable_failure",
+      text: "暂时无法从资料生成答案，请稍后重试。",
+    },
+    retryResultMessageId: resultMessageId,
+  });
+  assert.match(retryable, /暂时无法从资料生成答案/);
+  assert.match(retryable, /重试回答/);
+  assert.match(retryable, new RegExp(`data-retry-result-message-id="${resultMessageId}"`));
+  const completed = renderClarification({
+    ...resolvedCard,
+    promptMessageId: randomUUID(),
+    awaiting: null,
+    truncated: false,
+    contextResult: {
+      messageId: resultMessageId,
+      status: "completed",
+      text: "TCP 报告草稿",
+    },
+  });
+  assert.match(completed, /TCP 报告草稿/);
+  assert.doesNotMatch(completed, /重试回答|clarification-(reply|cancel|none)/);
+});
+
+test("F8 a refreshed in-progress retry reconciles with the same request ID", async () => {
+  const resultMessageId = randomUUID();
+  const retryRequestId = randomUUID();
+  const retryCard: ConversationInteraction = {
+    ...naturalCard,
+    status: "resolved",
+    revision: 4,
+    candidates: [],
+    selected: entryCandidate,
+    awaiting: null,
+    promptMessageId: randomUUID(),
+    truncated: false,
+    contextResult: {
+      messageId: resultMessageId,
+      status: "unknown",
+      text: "暂时无法从资料生成答案，请稍后重试。",
+    },
+    retryResultMessageId: resultMessageId,
+    retryRequestId,
+  };
+  const sent: unknown[] = [];
+  state.preview = true;
+  state.interactions = [retryCard];
+  globalThis.fetch = async (input, init) => {
+    switch (String(input)) {
+      case "/api/conversation/turns": {
+        const body: unknown = JSON.parse(String(init?.body));
+        sent.push(body);
+        return json({
+          ok: true,
+          result: {
+            kind: "clarification",
+            clarificationId: retryCard.id,
+            userMessageId: randomUUID(),
+            assistantMessageId: randomUUID(),
+          },
+        });
+      }
+      case "/api/chat/history?limit=40":
+        return json({ ok: true, messages: [] });
+      case "/api/conversation/interactions":
+        return json(interactionView([retryCard]));
+      default:
+        throw new Error(`Unexpected request ${String(input)}`);
+    }
+  };
+  const button = new StubElement();
+  Object.assign(button.dataset, {
+    action: "clarification-retry",
+    clarificationId: retryCard.id,
+    revision: String(retryCard.revision),
+    retryResultMessageId: resultMessageId,
+    retryRequestId,
+  });
+  assert.match(renderClarification(retryCard), /核对重试结果/);
+  await views.actOnClarification(button as unknown as HTMLButtonElement);
+  assert.equal(sent.length, 1);
+  assert.deepEqual(sent[0], {
+    action: "retry_context",
+    requestId: retryRequestId,
+    clarificationId: retryCard.id,
+    expectedRevision: retryCard.revision,
+    resultMessageId,
+  });
+});
+
 test("C3 continuing a selected target uses its exact card revision and loads the evidence links", async () => {
   let response: ChatMessageDto | undefined;
   const writes: unknown[] = [];

@@ -1,6 +1,6 @@
 # C4 前：自然对话修复实施计划
 
-状态：**A 已实施并提交；B–D 待实施**。基线为 2026-11-20 的 `36e90ae`（schema v12，预览默认关闭）。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文回答“随后审查发现什么、下一步改哪里”。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
+状态：**A–D 已实施，待阶段提交与浏览器 smoke**。当前工作区将 schema 从 v12 升至 v13，预览仍默认关闭；真实模型质量评估与 C4 默认入口决策不在本轮范围。[N0–N3 验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)回答“当时哪些样本通过”；本文记录修复范围与证据。逐项验收见[测试文档](NATURAL_CONVERSATION_REPAIR_TESTS.md)。
 
 ## 用户应得到什么
 
@@ -11,11 +11,14 @@
 | A：安全选择 | F1 首分句覆盖改口或追加选择（P1） | [回复解析](../src/domain/natural-reply.ts)、[主对话服务](../src/application/main-conversation.ts) | 冲突停在原问题，确定选择仍能一次完成。优先独立提交。 |
 | B：用途与原文 | F2 带引号的问题变改写；F3 引号截断原文；F5 显式归档被裸原文拦截 | [用途解析](../src/domain/chat-purpose.ts)、主对话服务、既有 ChatService | 每次解析产出用途与原文范围；按用途调用既有服务。 |
 | C：缺对象与并发 | F4 零候选补充丢失；F6 指代被清成空串返回 400；F7 无关快照变化阻塞独立问题 | [对象定位](../src/application/conversation-subjects.ts)、主对话服务、[交互存储](../src/storage/clarifications.ts) | 无材料时能问，有补充时接回；独立问题不修改等待记录。 |
-| D：结果与恢复 | F8 提示重试却无法操作；F9 已出草稿仍显示旧问题 | 交互存储、主对话服务、[网页渲染](../web/assets/render-chat.ts)及[操作入口](../web/assets/views.ts) | 网页重开后反映真实结果，重试有可验证的目标。 |
+| D：结果与恢复 | F8 提示重试却无法操作；F9 已出草稿仍显示旧问题 | 交互存储、主对话服务、[网页渲染](../web/assets/render-chat.ts)及[操作入口](../web/assets/views.ts) | 网页重开后反映真实结果；重试绑定失败结果消息并只允许消费一次；结果未知时不提供安全重试。 |
 
 ### 执行记录
 
 - **A / F1（`codex/natural-conversation`）**：`candidateSelection()` 扫描整条回复的明确选择分句，区分唯一选择、冲突和非选择；冲突回复作为普通澄清答复呈现，不更新原卡、不进入回答器。保留“不是 TCP，是 UDP”的纠正；编辑要求中顺带提及 TCP 不会覆盖 UDP 选择。回归：`src/http/natural-conversation.test.ts` 的 F1 测试。定向 HTTP 测试与 TypeScript 类型检查通过；浏览器 smoke 尚未测。提交号见 Git 历史。
+- **B / F2、F3、F5**：用途解析与材料区间提取保留原始引文、数字、换行和多段顺序；带引号的问题走普通问答，显式归档继续走既有归档门控，裸材料只询问用途。回归：`src/domain/chat-purpose.test.ts`、`src/application/main-chat.test.ts`、`src/http/natural-conversation.test.ts`。
+- **C / F4、F6、F7**：零候选澄清可在同一交互接收本轮材料；空指代不再传入空查询；独立问题不消费新提示；schema v13 以互斥 `selected_message_id` 保存材料消息，并拒绝跨交互消息。回归：`src/http/natural-conversation.test.ts`、`src/storage/store.test.ts`。
+- **D / F8、F9**：失败结果写入 `retryable`/`failed` 标记，交互投影提供失败结果消息 ID；`retry_context` 只接受同一交互、revision 和失败消息，数据库请求幂等与已消费检查防止双击/跨页重复调用。结果已完成、已取消、来源失效或结果未知时不显示可消费重试。网页卡片显示完成/失败/未知状态并提供受绑定的重试按钮。回归：`src/http/natural-conversation.test.ts` F8、`web/tests/ui-tasks.test.ts` F8。
 
 ## 决策规则与实现边界
 

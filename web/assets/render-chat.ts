@@ -109,6 +109,10 @@ export function renderClarification(
   const prompt = "promptMessageId" in card ? card.promptMessageId : null;
   const selected = card.selected;
   const binding = `data-clarification-id="${escapeHtml(card.id)}" data-revision="${card.revision}"${prompt ? ` data-prompt-message-id="${escapeHtml(prompt)}"` : ""}`;
+  const retryBinding =
+    "retryResultMessageId" in card && card.retryResultMessageId
+      ? ` data-retry-result-message-id="${escapeHtml(card.retryResultMessageId)}"`
+      : "";
   const button = (action: string, label: string) =>
     `<button type="button" data-action="clarification-${action}" ${binding}>${label}</button>`;
   const candidates = card.candidates
@@ -139,15 +143,17 @@ export function renderClarification(
   return `<article class="clarification-card"><strong>${prompt ? "对话续接" : "任务澄清"}</strong>
     <p>原请求：${escapeHtml(card.originalText)}</p>
     ${card.latestReply === null ? "" : `<p>最新补充：${escapeHtml(card.latestReply)}</p>`}
-    <p>${escapeHtml(card.question)}</p>
+    ${"contextResult" in card && card.contextResult ? `<p class="conversation-result ${escapeHtml(card.contextResult.status)}">${escapeHtml(card.contextResult.text)}${card.contextResult.status === "unknown" ? "（结果尚未确认；可核对同一次请求状态。）" : ""}</p>` : `<p>${escapeHtml(card.question)}</p>`}
     ${selected === null ? "" : `<p>${selectedEntry ? "已关联材料" : "已选目标"}：<strong>${escapeHtml(selected.title)}</strong>${renderCandidateSource(selected)}</p>`}
+    ${"selectedMaterial" in card && card.selectedMaterial ? `<details class="conversation-supplied-material"><summary>本轮提供的原文</summary><pre>${escapeHtml(card.selectedMaterial.text)}</pre></details>` : ""}
     ${active && candidates ? `<ul>${candidates}</ul>${button("none", "都不是")}` : ""}
     ${active && "truncated" in card && card.truncated ? '<p class="muted">只显示部分候选，可补充更具体的名称。</p>' : ""}
     ${active ? button("reply", "补充这条请求") : ""}
     ${legacyContinue ? button("continue", "查阅本地资料并继续") : ""}
     ${canDelegate ? button("prepare", showOptions ? "关闭只读检查选项" : "准备只读检查") : ""}
     ${canDelegate && showOptions ? renderDelegateOptions(options, button("delegate", "提交只读检查提案")) : ""}
-    ${card.status !== "cancelled" ? button("cancel", "取消澄清") : ""}
+    ${active ? button("cancel", "取消澄清") : ""}
+    ${"retryResultMessageId" in card && card.retryResultMessageId ? `<button type="button" data-action="clarification-retry" ${binding}${retryBinding}${"retryRequestId" in card && card.retryRequestId ? ` data-retry-request-id="${escapeHtml(card.retryRequestId)}"` : ""}>${"retryRequestId" in card && card.retryRequestId ? "核对重试结果" : "重试回答"}</button>` : ""}
     ${card.execution ? renderExecution(card.status === "stale" || card.status === "cancelled" ? { ...card.execution, status: "stale" } : card.execution) : ""}
   </article>`;
 }
