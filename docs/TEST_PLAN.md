@@ -176,6 +176,6 @@ B2：134 项定向回归；550 后端 + 60 前端完整门禁通过。覆盖双 
 
 `node --test src/http/main-conversation.test.ts` 验证临时库迁移和回滚、原文与补充恢复、候选和过期范围、真实 loopback 重放及旧确认边界；`npm run test:web` 验证同一前端模块图上的选择、显式回复、重试和转义。运行完整门禁后才提交。详见 [C2 验收记录](MAIN_CONVERSATION_C2_ACCEPTANCE.md)。
 
-## 自然对话：N0–N3 已验收，C4 前修复待实施
+## 自然对话：N0–N3 与 A–D 自动化验收及隔离 smoke 已完成，待进入 C4
 
-保留[N0–N3 历史验收](NATURAL_CONVERSATION_ACCEPTANCE.md)及其合成回归。按[修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)和[九项回归矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md)先复现、再修复；在临时库用替身验证绑定、原文、归档、版本和重试，另用隔离浏览器验证恢复。修复通过后才进入 C4 质量评估与默认入口决策。
+保留[N0–N3 历史验收](NATURAL_CONVERSATION_ACCEPTANCE.md)及其合成回归。按[修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)和[九项回归矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md)，A–D（F1–F9，schema v13）已完成实现，并通过完整门禁（619 项后端 + 70 项前端）以及 F1、F2/F3、F4、F7、F8、F9 隔离浏览器 smoke。下一步在显式冻结模型、端点、API mode、prompt 版本与预算后，进入 C4 真实模型质量评估与默认入口决策。

@@ -8,9 +8,9 @@
 
 ### 当前阶段与产品边界
 
-截至 2026-11-20，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 与后续修复 **A1–A3** 已交付；历史验收见 [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)。后端前置阶段 **B0–B3 已完成**，Agent 终态合同和结构化模型重试已验收。索引/分页 D1 和模块收敛 D2 仍按设计门/渐进批次处理，不阻塞主对话实施。后端验收见 [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)，[C0 行为基线](docs/MAIN_CONVERSATION_C0_ACCEPTANCE.md)、[C1 用途分流](docs/MAIN_CONVERSATION_C1_ACCEPTANCE.md)、[C2 澄清预览](docs/MAIN_CONVERSATION_C2_ACCEPTANCE.md)、[C3 本地取证](docs/MAIN_CONVERSATION_C3_ACCEPTANCE.md) 和 [N0–N3 自然续接](docs/NATURAL_CONVERSATION_ACCEPTANCE.md) 均通过自动化验收。当前 schema 为 v12；自然续接仍处于默认关闭的网页预览，真实模型质量评估与 C4 默认入口决策待完成。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
+截至 2026-11-25，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 与后续修复 **A1–A3** 已交付；历史验收见 [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)。后端前置阶段 **B0–B3 已完成**，Agent 终态合同和结构化模型重试已验收。索引/分页 D1 和模块收敛 D2 仍按设计门/渐进批次处理，不阻塞主对话实施。后端验收见 [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)，[C0 行为基线](docs/MAIN_CONVERSATION_C0_ACCEPTANCE.md)、[C1 用途分流](docs/MAIN_CONVERSATION_C1_ACCEPTANCE.md)、[C2 澄清预览](docs/MAIN_CONVERSATION_C2_ACCEPTANCE.md)、[C3 本地取证](docs/MAIN_CONVERSATION_C3_ACCEPTANCE.md) 和 [N0–N3 自然续接](docs/NATURAL_CONVERSATION_ACCEPTANCE.md) 均通过自动化验收；自然对话审查修复 **A–D（F1–F9）** 也已完成代码实现、自动化验收与隔离浏览器 smoke（F1、F2/F3、F4、F7、F8、F9，见 [修复计划](docs/NATURAL_CONVERSATION_REPAIR_PLAN.md) 与 [测试与交接](docs/NATURAL_CONVERSATION_REPAIR_TESTS.md)）。当前 schema 为 v13；自然续接仍处于默认关闭的网页预览，真实模型质量评估与 C4 默认入口决策待完成。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
 
-- R0–R5 修复、A1–A3 后续修复的提交与测试证据见 `docs/BACKEND_REPAIR_ACCEPTANCE.md`。B1 终态合同和 B2 重试治理已独立实施并验收。C0 已固定旧入口及新场景基线，C1 已在 ChatService 上增加内部用途分流，旧入口行为不变；C2 可恢复澄清、C3 本地取证/受批准执行、N0–N3 自然续接与 Entry 定位均已自动化验收。下一步先完成自然对话审查修复 A–D，再进入 C4 质量/体验对照与默认入口决策。
+- R0–R5 修复、A1–A3 后续修复的提交与测试证据见 `docs/BACKEND_REPAIR_ACCEPTANCE.md`。B1 终态合同和 B2 重试治理已独立实施并验收。C0 已固定旧入口及新场景基线，C1 已在 ChatService 上增加内部用途分流，旧入口行为不变；C2 可恢复澄清、C3 本地取证/受批准执行、N0–N3 自然续接与 Entry 定位、以及自然对话修复 A–D（F1–F9，schema v13）均已完成自动化验收，并已补齐 F1、F2/F3、F4、F7、F8、F9 隔离浏览器 smoke。下一步冻结真实模型配置/预算，进入 C4 质量/体验对照与默认入口决策。
 - 保留统一主对话入口、多个工作目标、按需隔离的执行会话与 Bucket；普通聊天不自动拆成隐藏会话。
 - 腾讯记忆仍是 D3 隔离实验，完整 D3 未验收，D4b 生产接入暂缓。C0–C4 不引入自动历史捕获、向量库、全历史检索或自动摘要。
 - 保持 Hono、单机 SQLite 和单个队列执行所有者。更换框架、拆分布式服务、远程接入、多人协作、全面视觉改版及 T15–T17 均需各自需求与验收依据，不自动纳入本阶段。
@@ -50,7 +50,7 @@
 - [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)：B1/B2 实施边界、验收结果及 D1/D2 后续设计门；
 - [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)：R0–R5 与 A1–A3 的历史提交、实现边界和测试证据；
 - [主对话实施计划](docs/MAIN_CONVERSATION_PLAN.md)：C0–C4、拟议接口、澄清规则与验收样例；
-- [自然对话修复计划](docs/NATURAL_CONVERSATION_REPAIR_PLAN.md)、[专项测试方案](docs/NATURAL_CONVERSATION_REPAIR_TESTS.md)及[验收记录](docs/NATURAL_CONVERSATION_ACCEPTANCE.md)：N0–N3 已完成自动化验收；C4 真实质量/体验评估与默认入口决定待进行；
+- [自然对话修复计划](docs/NATURAL_CONVERSATION_REPAIR_PLAN.md)、[专项测试方案](docs/NATURAL_CONVERSATION_REPAIR_TESTS.md)及[验收记录](docs/NATURAL_CONVERSATION_ACCEPTANCE.md)：N0–N3 与审查修复 A–D（F1–F9，schema v13）已完成自动化验收与隔离浏览器 smoke；C4 真实质量/体验评估与默认入口决定待进行；
 - [本地任务实施记录](docs/LOCAL_TASK_IMPLEMENTATION.md)：已交付的目标、来源与执行关联；
 - [架构决策](docs/ARCHITECTURE_DECISIONS.md) 与 [API 契约](docs/API_CONTRACT.md)：分层、部署边界和 OpenAPI；
 - [Entry 撤销](docs/ENTRY_REVOCATION.md) 与 [Agent 控制面](docs/AGENT_CONTROL.md)：有效来源、上下文失效、批准与执行；
@@ -151,9 +151,9 @@ npm start
 
 ## 主对话与上下文规则（C0–C4 实施约束）
 
-以下是阶段验收约束；C2 已完成显式澄清预览，C3 已完成本地取证与受批准只读执行，N0–N3 已完成自然续接实现，C4 质量/体验对照和默认入口决策仍待完成。详细状态、字段与新接口以 [实施计划](docs/MAIN_CONVERSATION_PLAN.md) 为准。
+以下是阶段验收约束；C2 已完成显式澄清预览，C3 已完成本地取证与受批准只读执行，N0–N3 自然续接与审查修复 A–D（F1–F9，schema v13）已完成自动化验收，C4 质量/体验对照和默认入口决策仍待完成。详细状态、字段与新接口以 [实施计划](docs/MAIN_CONVERSATION_PLAN.md) 为准。
 
-2026-11-20 补充：N0–N3 已增加自然输入、已观察快照和有效 Entry 定位，固定合成场景自动验收通过；网页预览默认关闭，旧客户端保持兼容。当前绑定使用确定性规则，不宣称通用语义理解；自然续接不得充当归档/执行批准，不得按最新对象、页面焦点或模型置信度猜测绑定。C4 完成真实质量与操作体验评估后再决定是否默认切换。
+2026-11-25 补充：N0–N3 与 A–D 修复已增加自然输入、已观察快照、有效 Entry 定位、本轮材料消息引用（schema v13）和受绑定失败重试，固定合成场景自动验收与隔离浏览器 smoke（F1、F2/F3、F4、F7、F8、F9）均已通过；网页预览默认关闭，旧客户端保持兼容。当前绑定使用确定性规则，不宣称通用语义理解；自然续接不得充当归档/执行批准，不得按最新对象、页面焦点或模型置信度猜测绑定。在 C4 完成真实质量与操作体验评估后再决定是否默认切换。
 
 - 先处理显式原请求/回复关联，再区分问答、取证、澄清、归档与执行提案。澄清补充不作为独立归档记录；独立工作记录仍遵守既有归档与低信息门控。
 - 复用确定性目标解析；模糊匹配只生成服务端候选。不能按全局最新目标、UI 焦点或模型 confidence 静默绑定；一个弱候选仍允许「都不是」。明确的通用问答和材料改写不强制创建目标。
