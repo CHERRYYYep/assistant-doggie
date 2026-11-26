@@ -1547,10 +1547,15 @@ test("N21 a completed WorkItem is readable history and choosing Entry never crea
   const historical = await f.send(
     utterance(`修改「${done.title}」，只改报告，改成一句正式表述`),
   );
-  assert.equal(historical.kind, "answer");
+  assert.equal(historical.kind, "clarification");
   assert.equal(f.work.get(done.id).status, "done");
   assert.equal(f.work.get(done.id).revision, done.revision);
   assert.equal(f.seen.length, 1);
+  assert.equal(f.seen[0]?.target?.id, done.id);
+  assert.deepEqual(
+    f.seen[0]?.evidence.map(({ entryId }) => entryId),
+    [tcp.entryId],
+  );
   assert.deepEqual(f.business(), baseline);
   // A separate source selection is a reading choice, never a WorkItem/approval creation.
   const next = await f.opened("帮我修改那个 UDP 实验");
@@ -1617,4 +1622,82 @@ test("N16 a scope update while a sourced WorkItem draft is in flight suppresses 
     ),
   );
   assert.equal(f.count("agent_tasks"), 0);
+});
+
+test("C4-1 quoted exact Entry title resolves the stored Entry instead of rewriting the title words as raw material", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  const raw =
+    "TCP 抓包与三次握手：客户端发送 SYN 后服务端回复 SYN-ACK，RTT 为 18ms。";
+  const seeded = await f.seed(raw);
+  const baseline = f.business();
+  const res = await f.send(
+    utterance("把「TCP 抓包与三次握手」改成一句正式报告表述，不新增事实"),
+  );
+  assert.equal(res.kind, "clarification");
+  const card = (await f.interactions()).interactions.find(
+    ({ id }) => id === res.clarificationId,
+  );
+  assert.equal(card?.selected?.id, seeded.entryId);
+  assert.equal(card?.awaiting, null);
+  assert.equal(f.seen.length, 1);
+  assert.deepEqual(
+    f.seen[0]?.evidence.map(({ entryId }) => entryId),
+    [seeded.entryId],
+  );
+  assert.deepEqual(f.seen[0]?.material, []);
+  assert.deepEqual(f.business(), baseline);
+
+  // Explicit material marker still treats the body as user-supplied text.
+  const explicitMaterial = await f.send(
+    utterance("原文：TCP 抓包与三次握手。请改写成正式表述。"),
+  );
+  assert.equal(explicitMaterial.kind, "answer");
+  assert.equal(f.seen.length, 2);
+  assert.deepEqual(f.seen[1]?.evidence, []);
+  assert.deepEqual(f.seen[1]?.material, ["TCP 抓包与三次握手。"]);
+});
+
+test("C4-2 leading continuation phrasing disambiguates same-title WorkItems", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  f.goal("计网实验报告");
+  f.goal("计网实验报告");
+  const baseline = f.business();
+  const res = await f.send(utterance("接着改计网实验报告"));
+  assert.equal(res.kind, "clarification");
+  const card = (await f.interactions()).interactions.find(
+    ({ id }) => id === res.clarificationId,
+  );
+  assert.equal(card?.candidates.length, 2);
+  assert.equal(card?.selected, null);
+  assert.equal(card?.awaiting, "subject");
+  assert.deepEqual(f.business(), baseline);
+});
+
+test("C4-4 explicit replyTo on a zero-candidate card binds supplied material and resumes the original request", async () => {
+  using db = openDatabase(":memory:");
+  const f = fixture(db);
+  const baseline = f.business();
+  const opened = await f.opened("帮我把那个计网实验改成一句正式说明");
+  const prompt = opened.snapshot.prompts.find(
+    ({ interactionId }) => interactionId === opened.card.id,
+  );
+  assert.ok(prompt);
+  const resumed = await f.send({
+    ...utterance("原文：客户端先发 SYN，收到 SYN-ACK 后延迟为 14ms。"),
+    replyTo: prompt,
+  });
+  assert.equal(resumed.kind, "clarification");
+  assert.equal(resumed.clarificationId, opened.card.id);
+  const card = (await f.interactions()).interactions.find(
+    ({ id }) => id === opened.card.id,
+  );
+  assert.equal(card?.awaiting, null);
+  assert.ok(card?.selectedMaterialMessageId);
+  assert.equal(f.seen.length, 1);
+  assert.deepEqual(f.seen[0]?.material, [
+    "客户端先发 SYN，收到 SYN-ACK 后延迟为 14ms。",
+  ]);
+  assert.deepEqual(f.business(), baseline);
 });

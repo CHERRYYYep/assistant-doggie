@@ -481,3 +481,34 @@ test("T13 stateless Responses carries encrypted reasoning without model role aut
   });
   assert.equal(input.filter((item) => item["role"] === "system").length, 1);
 });
+
+test("C4-5 answer and lookup payloads omit null archive field while archive turns preserve it", async () => {
+  const s = setup();
+  s.replies.push(
+    text("responses", "直接答复"),
+    text("responses", "带归档上下文"),
+  );
+  await s.harness.run({
+    sourceText: "SYN-ACK 是什么？",
+    purpose: "answer",
+    context: null,
+  });
+  const answerBody = s.requests[0]?.body as {
+    input: { role?: string; content?: string }[];
+  };
+  const answerUser = answerBody.input.at(-1)?.content ?? "";
+  assert.deepEqual(JSON.parse(answerUser), { request: "SYN-ACK 是什么？" });
+
+  await s.harness.run({
+    sourceText: "记一下：延迟 31ms",
+    context: { archive_state: "archived" },
+  });
+  const archiveBody = s.requests[1]?.body as {
+    input: { role?: string; content?: string }[];
+  };
+  const archiveUser = archiveBody.input.at(-1)?.content ?? "";
+  assert.deepEqual(JSON.parse(archiveUser), {
+    request: "记一下：延迟 31ms",
+    archive: { archive_state: "archived" },
+  });
+});

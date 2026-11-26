@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C3、N0–N3 与自然对话修复 A–D（schema v13）已完成自动化验收与隔离 smoke；C4 首轮真实模型对照已完成（暂缓默认切换，待修复实测边界问题后复验）
+> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C3、N0–N3、自然对话修复 A–D（schema v13）及 C4 真实模型对照与 C4-1～C4-5 复验均已通过；待用户确认默认入口切换
 
 ---
 
@@ -9,7 +9,7 @@
 | | 数量 |
 |---|---|
 | TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TypeScript 后端测试 | **619 通过**（2026-11-25，A–D 修复与 schema v13 当前门禁） |
+| TypeScript 后端测试 | **626 通过**（2026-11-26，A–D + C4-1～C4-5 修复与 schema v13 当前门禁） |
 | 前端测试 | **70 通过**（同一门禁） |
 | 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
@@ -61,7 +61,7 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步 | 修复首轮 C4 真实模型实测暴露的 5 项规则/边界问题（C4-1～C4-5）并做定向复验，再决定是否默认启用自然对话预览 | [C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)、[C4 计划](MAIN_CONVERSATION_PLAN.md) |
+| 下一步 | 由用户确认是否将自然对话预览设为默认入口，随后推进 UI 信息架构与视觉方案设计（C4 真实模型对照与 C4-1～C4-5 复验已通过） | [C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)、[C4 计划](MAIN_CONVERSATION_PLAN.md) |
 | 待评估 | 真实模型质量、全面浏览器体验及是否切换默认入口；真实自用验收按此前决定延后 | [专项测试方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)、[主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |

@@ -134,7 +134,9 @@ export class AgentHarness {
         request: input.sourceText,
         ...(input.purpose === "grounded"
           ? { taskContext: input.context ?? null }
-          : { archive: input.context ?? null }),
+          : input.context !== undefined && input.context !== null
+            ? { archive: input.context }
+            : {}),
       }),
     };
     const conversation: unknown[] = [

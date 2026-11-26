@@ -24,7 +24,11 @@ import {
 } from "../domain/main-conversation.ts";
 import { AgentError, HarnessError } from "../domain/agent.ts";
 import { LlmError } from "../llm/structured-output.ts";
-import { chatMaterialText, decideChatPurpose } from "../domain/chat-purpose.ts";
+import {
+  chatMaterialText,
+  decideChatPurpose,
+  hasExplicitMaterialMarker,
+} from "../domain/chat-purpose.ts";
 import {
   resolveWorkItem,
   WorkItemError,
@@ -547,7 +551,9 @@ export class MainConversationService {
       const material =
         purpose.kind === "answer" ? chatMaterialText(input.text) : null;
       const quotedObject =
-        material !== null && this.#looksLikeNamedObject(material);
+        material !== null &&
+        (this.#looksLikeNamedObject(material) ||
+          this.#matchesKnownSubjectTitle(input.text, material));
       const independent =
         purpose.kind === "archive" ||
         purpose.kind === "lookup" ||
@@ -649,7 +655,7 @@ export class MainConversationService {
           }
         }
       }
-      if (material !== null && !this.#looksLikeNamedObject(material)) {
+      if (material !== null && !quotedObject) {
         const user = this.#cards.append({
           role: "user",
           content: input.text,
@@ -715,6 +721,20 @@ export class MainConversationService {
       text.length <= 120 &&
       !/[，。；;、!?？\n:：]/u.test(text) &&
       /(?:实验|报告|任务|项目|记录|作业|文件)$/u.test(text)
+    );
+  }
+  #matchesKnownSubjectTitle(rawText: string, material: string): boolean {
+    if (
+      hasExplicitMaterialMarker(rawText) ||
+      material.length > 120 ||
+      /[，。；;!?？\n]/u.test(material)
+    )
+      return false;
+    const located = this.#naturalTarget(rawText);
+    if (located.exact !== undefined) return true;
+    const needle = normalized(material);
+    return located.candidates.some(
+      (candidate) => normalized(candidate.title) === needle,
     );
   }
   #naturalMessage(input: Utterance, content: string): ConversationReceipt {
@@ -846,7 +866,11 @@ export class MainConversationService {
       throw new ConversationError("stale");
     if (
       command === undefined &&
-      card.awaiting === "material" &&
+      picked === undefined &&
+      (card.awaiting === "material" ||
+        (card.awaiting === "subject" &&
+          (card.subjects.length === 0 ||
+            /^都不是[。！!]?$/u.test(normalized(card.latestReply ?? ""))))) &&
       materialText(input.text) !== undefined
     )
       return this.#bindNaturalMaterial(input, card);
@@ -1190,12 +1214,20 @@ export class MainConversationService {
       card,
       MAX_SUPPLEMENTS + 1,
     );
+    const subjectTitle = this.#subject(ref)?.title;
     const materialSources = [
       { id: card.originalMessageId, text: card.originalText },
       ...supplements,
     ].flatMap(({ id, text }) => {
       const value = materialText(text);
-      return value === undefined ? [] : [{ messageId: id, text: value }];
+      if (value === undefined) return [];
+      if (
+        !hasExplicitMaterialMarker(text) &&
+        subjectTitle !== undefined &&
+        normalized(value) === normalized(subjectTitle)
+      )
+        return [];
+      return [{ messageId: id, text: value }];
     });
     return {
       userMessageId,

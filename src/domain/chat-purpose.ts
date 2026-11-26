@@ -25,7 +25,7 @@ const UNASSERTED_REPORT =
 const DELIMITED_MATERIAL =
   /\x60{3}[^\r\n\x60]*\r?\n(?<code>[\s\S]*?)\x60{3}|\x60{3}[\s\S]*|「(?<corner>[^」]*)」|『(?<doubleCorner>[^』]*)』|“(?<curly>[^”]*)”|‘(?<single>[^’]*)’|"(?<straight>[^"\r\n]*)"/gu;
 const PERSONAL_CONTEXT =
-  /(?:上次|上回|之前的?记录|先前的?记录|(?:我|我们)(?:的|之前|曾经|最新).{0,200}?(?:记录|保存|归档|审批|报告)|我(?:记|存|写)过|我的(?:报告|项目|工作记忆)|\b(?:my|our)\s+(?:(?:last|previous|saved)\s+)?(?:notes?|records?|report|approval)\b|\bwhat did (?:i|we) (?:save|record|decide)\b)/iu;
+  /(?:上次|上回|之前的?记录|先前的?记录|(?:记录|备忘|归档)(?:里|中)|当时的|发布审批|审批(?:单号|人|时间|结果|联系人)|联系人(?:手机|电话|号码|邮箱)|(?:压测|实验|上线|迁移)(?:当时|结果|记录|预算)|(?:我|我们)(?:的|之前|曾经|最新).{0,200}?(?:记录|保存|归档|审批|报告)|我(?:记|存|写)过|我的(?:报告|项目|工作记忆)|\b(?:my|our)\s+(?:(?:last|previous|saved)\s+)?(?:notes?|records?|report|approval)\b|\bwhat did (?:i|we) (?:save|record|decide)\b)/iu;
 const SEARCH_REQUEST =
   /^(?:请\s*)?(?:帮我\s*)?(?:查一下|查找|检索|搜索|翻一下|回顾|look up|find my|search (?:my|our))/iu;
 const DEFINITION = /(?:是什么|什么意思(?:啊)?|有何区别)[?？。！!]?\s*$/u;
@@ -42,7 +42,7 @@ const DEICTIC_REWRITE =
 const MATERIAL_LABEL =
   /(?:^|[\s：:。！？!?；;，,])(?:原文|正文|材料|报告片段|以下内容|如下内容|这段内容)[ \t]*[:：]/u;
 const MATERIAL_TRAILING_INSTRUCTION = new RegExp(
-  String.raw`[。！？!?；;\r\n]\s*(?=(?:(?:请\s*)?(?:帮我\s*)?(?:(?:合并|合在一起|一起|并|merge|combine)\s*)?` +
+  String.raw`[。！？!?；;）)\r\n]\s*(?=(?:(?:请\s*)?(?:帮我\s*)?(?:(?:(?:只|仅)?(?:把|将)[^。！？!?；;\r\n]{1,20}|(?:合并|合在一起|一起|并|merge|combine)\s*))?` +
     TRANSFORM.source +
     String.raw`|(?:然后|同时|另外|并且|顺便|and then)\s*(?:请\s*)?(?:帮我\s*)?(?:保存|保存下来|存下来|记下来|归档|执行|检查|运行|打开|查找|检索|save\b|run\b|edit\b|check\b)))`,
   "iu",
@@ -64,7 +64,15 @@ const WORKSPACE_CHECK =
 const BARE_APPROVAL =
   /^(?:好(?:的)?|行|可以|确认|批准|同意|就(?:这个|那个)|执行吧|保存吧|yes|ok(?:ay)?|approved|go ahead)[\s。！!.]*$/iu;
 const SECOND_REQUEST =
-  /(?:然后|接着|同时|并且|另外|顺便|[；;]|\band then\b)\s*(?:请\s*)?(?:帮我\s*)?(?:记(?:录)?一下|归档|保存|存下来|查|改|运行|执行|检查|打开|find\b|save\b|run\b|edit\b)/iu;
+  /(?:然后|接着|同时|并且|另外|顺便|[；;]|\band then\b)\s*(?:请\s*)?(?:帮我\s*)?(?:记(?:录)?一下|归档|保存|存下来|查|改|运行|执行|检查|打开|find\b|save\b|run\b|edit\b)/giu;
+
+function hasSecondRequest(wording: string): boolean {
+  for (const match of wording.matchAll(SECOND_REQUEST)) {
+    if (match.index > 0 && wording.slice(0, match.index).trim() !== "")
+      return true;
+  }
+  return false;
+}
 
 function nonemptyMaterial(text: string): string | null {
   const trimmed = text.trim();
@@ -232,6 +240,16 @@ function combineMaterial(parts: readonly (string | null)[]): string | null {
 // Preserve punctuation inside a marked body. Unwrap a quote only when it
 // encloses the entire body by itself.
 
+/** Whether the input explicitly labels or fences supplied source text. */
+export function hasExplicitMaterialMarker(text: string): boolean {
+  const input = text.trim();
+  if (/```/u.test(input)) return true;
+  const masked = input.replace(DELIMITED_MATERIAL, (data) =>
+    "\uE000".repeat(data.length),
+  );
+  return MATERIAL_LABEL.test(masked) || MATERIAL_COLON_INSTRUCTION.test(masked);
+}
+
 /** Read explicitly provided source text without normalizing its characters. */
 export function chatMaterialText(text: string): string | null {
   const parsed = splitMaterial(text.trim());
@@ -246,7 +264,7 @@ export function decideChatPurpose(text: string): ChatPurpose {
     return { kind: "clarify", reason: "explicit_confirmation" };
   if (SAVE_WITHOUT_TARGET.test(wording))
     return { kind: "clarify", reason: "archive_content" };
-  if (SECOND_REQUEST.test(wording)) return { kind: "clarify", reason: "mixed" };
+  if (hasSecondRequest(wording)) return { kind: "clarify", reason: "mixed" };
   if (ambiguous && TRANSFORM.test(wording))
     return { kind: "clarify", reason: "mixed" };
 

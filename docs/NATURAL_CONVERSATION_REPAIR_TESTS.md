@@ -1,6 +1,6 @@
 # C4 前：自然对话修复测试与交接
 
-**F1–F9 自动化验收与隔离浏览器 smoke 已完成；首轮 C4 真实模型对照已完成（见[C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)），默认入口暂保持关闭，待修复实测边界问题 C4-1～C4-5 并复验后决策。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
+**F1–F9 自动化验收与隔离浏览器 smoke 已完成；C4 真实模型对照及 C4-1～C4-5 修复后 7/7 定向复验均已通过（见[C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)），已满足 C4 放行条件，待用户确认是否切换默认入口。** 对应[实施计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)；原有 [N0–N3 验收](NATURAL_CONVERSATION_ACCEPTANCE.md)继续作为兼容基线。
 
 ## 环境与判定方法
 

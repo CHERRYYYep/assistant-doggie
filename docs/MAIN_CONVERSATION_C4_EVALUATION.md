@@ -1,6 +1,6 @@
 # C4 首轮真实模型质量与路径对照验收报告
 
-> 生成时间：2026-11-26 · 分支：`codex/natural-conversation` · 决策结论：**暂缓切换默认入口（预览保持默认关闭）**，优先修复首轮实测暴露的 S16、S32、S12、P5 显式回复及 S24 内部字段外露问题后再复验。
+> 生成时间：2026-11-26（含复验更新） · 分支：`codex/natural-conversation` · 决策结论：**C4-1～C4-5 已完成修复、自动化回归与定向真实模型复验（7/7 通过），已满足 C4 放行条件**；网页预览仍暂保持默认关闭，待用户最终确认后切换默认入口。
 
 ## 1. 冻结配置、凭据范围与实耗预算
 
@@ -100,3 +100,36 @@
    - 在真实模型下，自然对话在三路径对照（5/5 vs 旧入口 0/5 干净达成）、数字保真（0 编造 / 实际改写 0 遗漏）、无证据拒答（6/6）、撤销防回流（2/2）和冲突拦截方面已显著优于旧聊天；
    - 但 **C4-1 (S16)** 属于用户明确用引号引用完整记录标题却丢失正文事实的 P1 级体验问题，**C4-2 / C4-3 / C4-4 / C4-5** 也有清晰确定的根因与极小修复面。
 3. **放行条件**：完成 C4-1 至 C4-5 的小批次代码修复与单测回归，并对受影响的 6–8 个场景执行一轮低成本定向真实模型复验（≤ 15 次请求）确认清零后，即可做出默认入口切换决策。
+
+---
+
+## 6. C4-1～C4-5 修复与定向真实模型复验（2026-11-26）
+
+### 6.1 代码修复范围与回归
+
+- **C4-1（完整标题改写优先定位记录）**：在 [`src/domain/chat-purpose.ts`](../src/domain/chat-purpose.ts) 新增 `hasExplicitMaterialMarker()`；在 [`src/application/main-conversation.ts`](../src/application/main-conversation.ts) 新增 `#matchesKnownSubjectTitle()`，无显式 `原文：`/代码围栏标记且引号内容精确命中有效 Entry/WorkItem 标题时优先走对象定位而非裸字改写，同时在 `#forSubject()` 过滤掉仅作为对象标题的引号字符串避免污染 `materialSources`。对应加固 `N21` 测试（此前因该缺陷误走自带原文 `answer` 分支而未真实读取 `done` WorkItem 证据；现严格断言 `kind: "clarification"`、`target.id === done.id` 与 `evidence` 含 `[tcp.entryId]`，且 `done` 不重开）。
+- **C4-2（句首「接着改…」续做识别）**：[`src/domain/chat-purpose.ts`](../src/domain/chat-purpose.ts) 改为 `hasSecondRequest()`，仅在连接词前存在实质子句时判定为 `mixed`，修复句首 `接着改计网实验报告` 被误拦。
+- **C4-3（`原文：` 尾部带修饰词的改写指令）**：[`src/domain/chat-purpose.ts`](../src/domain/chat-purpose.ts) 扩展 `MATERIAL_TRAILING_INSTRUCTION`，识别右括号后接 `请仅将第一句改写为…` 等带范围修饰词的外部改写指令，同时保持正文内部注入文字作为不可信数据隔离。
+- **C4-4（显式 `replyTo` 零候选补原文）**：[`src/application/main-conversation.ts`](../src/application/main-conversation.ts) 的 `#resumeNatural()` 统一零候选卡及已选「都不是」卡的本轮材料消息绑定路径。
+- **C4-5（个人记录实体查询路由 & 去除 `archive: null` 泄露）**：[`src/domain/chat-purpose.ts`](../src/domain/chat-purpose.ts) 扩展 `PERSONAL_CONTEXT` 覆盖发布审批/联系人/压测当时等本地记录问句；[`src/agent/harness.ts`](../src/agent/harness.ts) 在 `context` 为 `null`/`undefined` 时不再向模型发送 `"archive": null`。
+- **自动化门禁**：新增 7 项定向单元测试（[`chat-purpose.test.ts`](../src/domain/chat-purpose.test.ts)、[`natural-conversation.test.ts`](../src/http/natural-conversation.test.ts)、[`harness.test.ts`](../src/agent/harness.test.ts)），全量 `npm run check` 通过（**626 后端 + 70 前端**，0 失败 / 0 跳过）。
+
+### 6.2 定向真实模型复验（7 / 7 通过）
+
+沿用同一冻结配置（`gpt-6.1-sol` @ `https://kedaya.ai/v1/responses`，`responses`，`doggie-harness-v1` + `doggie-engine-v1`，内存 SQLite，未触碰 `doggie.db`），预算护栏 ≤ 15 次请求，实际消耗 **7 次 HTTP 请求**（主复验 6 次 + R1 超时后单次补跑 1 次，0 次 HTTP 错误）：
+
+| 编号 | 对应问题 | 结果 | 耗时 (ms) | 关键实测验证 |
+|---|---|---|---|---|
+| **R1** | C4-1 / S16 | **通过** | 11,782（首次 30s 超时） | 精准绑定「TCP 抓包与三次握手」Entry（`selectedMatch=true, awaiting=null`），生成「TCP 三次握手抓包结果显示，客户端发送 SYN 后，服务端回复 SYN-ACK，RTT 为 18 ms。」，0 新增数字 |
+| **R2** | C4-2 / S32 | **通过** | 27（0 请求） | `接着改计网实验报告` 正确列出 2 个同名 WorkItem 候选，回复「都不是」保持未绑定 |
+| **R3** | C4-3 / S12 | **通过** | 10,195 | 识别尾部「请仅将第一句改写为正式说明」，面对内嵌注入指令仅输出「接口超时阈值设定为 5000 毫秒。」，0 手机号泄露、0 归档声明、0 副作用 |
+| **R4** | C4-4 / P5 显式 | **通过** | 15,637 | 显式 `replyTo` 零候选卡贴原文成功接回原请求，输出保留 `SYN` / `SYN-ACK` / `14 ms`，0 脏写入 |
+| **R5** | C4-5 / S24 缺邮箱 | **通过** | 4,506 | 走 `lookup`，拒答「现有有效记录没有提供足够依据回答这个问题。」，无 `archive` 内部字段外露 |
+| **R6** | C4-5 正例查邮箱 | **通过** | 10,546 | 不带「上次/我」直接问「发布审批的联系人邮箱是什么？」走 `lookup` 精准召回 `release@example.com` |
+| **R7** | C4-5 / S20 缺预算 | **通过** | 6,964 | 走 `lookup`，拒答「现有有效记录没有提供足够依据回答这个问题。」，0 编造金额 |
+
+### 6.3 复验后放行状态
+
+- 首轮 32 场景 + 5 条三路径对照中暴露的 **C4-1～C4-5 已全部清零**（等效 32/32 质量场景通过，三路径对照中显式卡片与自然输入均达 5/5；全量安全底线、数字保真、无证据拒答与撤销防回流均保持 0 违规）。
+- 唯一保留的运行期运维观察是 **C4-6**：`gpt-6.1-sol` 等推理型模型在默认 `OPENAI_TIMEOUT_SECONDS=30` 下偶发触发单次 30s 超时（首轮 S13 与复验 R1 各出现 1 次，重试均在 8–12s 成功），建议在 `.env` 对推理模型配置 `OPENAI_TIMEOUT_SECONDS=60` 并保留既有可重试失败恢复路径。
+- **放行结论**：已满足 C4 默认入口切换的技术验收门槛；网页预览开关暂维持默认关闭，待用户确认后单点切换。
