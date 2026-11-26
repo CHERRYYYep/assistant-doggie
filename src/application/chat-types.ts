@@ -34,6 +34,36 @@ export type ChatResponder = {
   readonly respond: (request: ChatResponderInput) => Promise<ChatResponse>;
 };
 
+export type MainTurnClarifyReason =
+  | "purpose"
+  | "target"
+  | "mixed"
+  | "explicit_confirmation"
+  | "archive_content"
+  | "rewrite_material";
+
+export type MainTurnDecision =
+  | { readonly intent: "answer"; readonly reason: string }
+  | { readonly intent: "lookup"; readonly reason: string }
+  | {
+      readonly intent: "archive";
+      readonly archiveText: string;
+      readonly reason: string;
+    };
+
+export type MainTurnRouterInput = {
+  readonly text: string;
+  readonly history: readonly ChatMessageRow[];
+  readonly fallbackReason: MainTurnClarifyReason;
+  readonly signal?: AbortSignal;
+};
+
+export type MainTurnRouter = {
+  readonly route: (
+    input: MainTurnRouterInput,
+  ) => Promise<MainTurnDecision | null>;
+};
+
 /** A failure after accepting a user message. Adapters project the saved rows. */
 export class ChatFailure extends Error {
   readonly userMessage: ChatMessageRow;

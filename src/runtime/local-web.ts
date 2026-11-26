@@ -17,8 +17,12 @@ import { AgentService } from "../agent/service.ts";
 import { WorkspacePolicy } from "../agent/workspace.ts";
 import { CliAgentRunner, type AgentProcessRunner } from "../agent/process.ts";
 import { AgentStore } from "../storage/agents.ts";
-import type { ChatResponder } from "../application/chat-types.ts";
+import type {
+  ChatResponder,
+  MainTurnRouter,
+} from "../application/chat-types.ts";
 import { ChatService } from "../application/chat.ts";
+import { StructuredMainTurnRouter } from "../application/main-turn-router.ts";
 /** Composition root for the local TypeScript Web application. */
 
 import { once } from "node:events";
@@ -55,6 +59,7 @@ export type LocalWebDependencies = {
   readonly agentRunner?: AgentProcessRunner;
   readonly chatResponder?: ChatResponder;
   readonly groundedResponder?: GroundedResponder;
+  readonly mainTurnRouter?: MainTurnRouter;
 };
 
 export class DoggieLocalWeb {
@@ -136,9 +141,18 @@ export async function startDoggieLocalWeb(
   });
   try {
     const store = new Store(database);
+    const productionAdapter =
+      dependencies.model === undefined
+        ? new StructuredOutputAdapter(
+            config.endpoint,
+            config.createTransport(
+              dependencies.fetchImplementation,
+              shutdownController.signal,
+            ),
+          )
+        : undefined;
     const model =
-      dependencies.model ??
-      createProductionModel(config, dependencies, shutdownController.signal);
+      dependencies.model ?? createProductionModel(config, productionAdapter);
     const runtime = new ArchiveRuntime(store, model);
     const harness =
       dependencies.model === undefined
@@ -155,6 +169,11 @@ export async function startDoggieLocalWeb(
     const chatResponder =
       dependencies.chatResponder ??
       (harness === undefined ? undefined : createHarnessChatResponder(harness));
+    const mainTurnRouter =
+      dependencies.mainTurnRouter ??
+      (productionAdapter === undefined
+        ? undefined
+        : new StructuredMainTurnRouter(productionAdapter, config.model));
     const grounding = new ConversationContextService(
       store,
       dependencies.groundedResponder ??
@@ -162,7 +181,12 @@ export async function startDoggieLocalWeb(
           ? undefined
           : createHarnessGroundedResponder(harness)),
     );
-    const chatService = new ChatService(store, runtime, chatResponder);
+    const chatService = new ChatService(
+      store,
+      runtime,
+      chatResponder,
+      mainTurnRouter,
+    );
     const api = new ConcreteDoggieHttpApi(store, runtime, { chatService });
     const agents = new AgentService({
       store: new AgentStore(database),
@@ -238,14 +262,11 @@ export async function startDoggieLocalWeb(
 
 function createProductionModel(
   config: DoggieRuntimeConfig,
-  dependencies: LocalWebDependencies,
-  shutdownSignal: AbortSignal,
+  adapter: StructuredOutputAdapter | undefined,
 ): StructuredMemoryModel {
-  const transport = config.createTransport(
-    dependencies.fetchImplementation,
-    shutdownSignal,
-  );
-  const adapter = new StructuredOutputAdapter(config.endpoint, transport);
+  if (adapter === undefined) {
+    throw new Error("missing production structured output adapter");
+  }
   return new StructuredMemoryModel(adapter, config.model);
 }
 

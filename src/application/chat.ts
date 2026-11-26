@@ -36,6 +36,8 @@ import {
   type ChatResponderInput,
   type ChatResponse,
   type ChatToolMessage,
+  type MainTurnClarifyReason,
+  type MainTurnRouter,
 } from "./chat-types.ts";
 
 type ArchiveSnapshot = ReturnType<typeof decorateChatArchive>;
@@ -78,16 +80,19 @@ export class ChatService {
   readonly #conversation: ConversationStore;
   readonly #runtime: ArchiveRuntime;
   readonly #chatResponder: ChatResponder | undefined;
+  readonly #turnRouter: MainTurnRouter | undefined;
 
   constructor(
     store: Store,
     runtime: ArchiveRuntime,
     responder?: ChatResponder,
+    turnRouter?: MainTurnRouter,
   ) {
     this.#store = store;
     this.#conversation = store.conversation;
     this.#runtime = runtime;
     this.#chatResponder = responder;
+    this.#turnRouter = turnRouter;
   }
 
   chat(request: ChatInput, signal?: AbortSignal) {
@@ -119,10 +124,20 @@ export class ChatService {
   ) {
     throwIfAborted(signal);
     const text = requiredText(rawText, "text");
-    const purpose = decideChatPurpose(text);
+    let purpose = decideChatPurpose(text);
+    let archiveText = text;
+    if (purpose.kind === "clarify" && this.#turnRouter !== undefined) {
+      const routed = await this.#routeClarifiedTurn(
+        text,
+        purpose.reason,
+        signal,
+      );
+      purpose = routed.purpose;
+      archiveText = routed.archiveText;
+    }
     if (purpose.kind === "archive")
       return {
-        ...(await this.#chat({ text }, signal, publish)),
+        ...(await this.#chat({ text }, signal, publish, archiveText)),
         purpose,
       } as const;
 
@@ -160,6 +175,85 @@ export class ChatService {
     return { ...result, purpose, chatError } as const;
   }
 
+  async #routeClarifiedTurn(
+    text: string,
+    reason: MainTurnClarifyReason,
+    signal?: AbortSignal,
+  ): Promise<{ readonly purpose: ChatPurpose; readonly archiveText: string }> {
+    // Hard safety boundary: bare approvals ("好", "批准", "执行吧", "保存吧")
+    // can never trigger archive writes or grant execution/confirmation authority.
+    if (reason === "explicit_confirmation") {
+      return {
+        purpose:
+          this.#chatResponder !== undefined
+            ? { kind: "answer" }
+            : { kind: "clarify", reason },
+        archiveText: text,
+      };
+    }
+    const router = this.#turnRouter;
+    if (router === undefined) {
+      return { purpose: { kind: "clarify", reason }, archiveText: text };
+    }
+    const history = this.#conversation.listModelChatMessages(12);
+    let decision;
+    try {
+      decision = await withCancellation(signal, () =>
+        router.route({
+          text,
+          history,
+          fallbackReason: reason,
+          ...(signal === undefined ? {} : { signal }),
+        }),
+      );
+    } catch (error) {
+      if (signal?.aborted || isAbortError(error)) {
+        throw new DOMException("operation cancelled", "AbortError");
+      }
+      // Fail closed on writes if the router fails: fall back to read-only answer.
+      return {
+        purpose:
+          this.#chatResponder !== undefined
+            ? { kind: "answer" }
+            : { kind: "clarify", reason },
+        archiveText: text,
+      };
+    }
+    if (decision === null) {
+      return {
+        purpose:
+          this.#chatResponder !== undefined
+            ? { kind: "answer" }
+            : { kind: "clarify", reason },
+        archiveText: text,
+      };
+    }
+    if (decision.intent === "archive") {
+      const candidateText = decision.archiveText.trim();
+      const hasPriorUserContext = history.some((m) => m.role === "user");
+      if (
+        candidateText === "" ||
+        (reason === "archive_content" && !hasPriorUserContext)
+      ) {
+        return {
+          purpose:
+            this.#chatResponder !== undefined
+              ? { kind: "answer" }
+              : { kind: "clarify", reason },
+          archiveText: text,
+        };
+      }
+      return {
+        purpose: { kind: "archive" },
+        archiveText: candidateText,
+      };
+    }
+    if (decision.intent === "lookup") {
+      return { purpose: { kind: "lookup" }, archiveText: text };
+    }
+    return { purpose: { kind: "answer" }, archiveText: text };
+  }
+
   #acceptInput(request: ChatInput, signal?: AbortSignal): AcceptedTurn {
     throwIfAborted(signal);
     const contextRevision = this.#conversation.getMemoryContextRevision();
@@ -178,23 +272,25 @@ export class ChatService {
     request: ChatInput,
     signal?: AbortSignal,
     publish?: TurnPublished,
+    archiveSourceText?: string,
   ) {
     const turn = this.#acceptInput(request, signal);
     const { userMessage } = turn;
+    const sourceText = archiveSourceText ?? request.text;
 
     let execution: ArchiveExecution;
     try {
       // Focus is recorded for UX/audit, but chat auto-classification
       // still uses the server-owned candidate set rather than a UI hint.
       execution = await this.#runtime.archiveText(
-        request.text,
+        sourceText,
         undefined,
         signal,
       );
     } catch (error) {
       if (signal?.aborted)
         throw new DOMException("operation cancelled", "AbortError");
-      this.#throwChatFailure(request.text, userMessage, error);
+      this.#throwChatFailure(sourceText, userMessage, error);
     }
 
     let archive: ChatArchive = decorateChatArchive(
@@ -222,7 +318,7 @@ export class ChatService {
             : (answer.response?.toolMessages ?? []),
           details: {
             kind: "archive_result",
-            source_text: request.text,
+            source_text: sourceText,
             archive,
             pending_confirmation: pending,
             chat_error: chatError,
