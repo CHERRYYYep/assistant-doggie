@@ -1,8 +1,8 @@
 # Doggie UI 信息架构与视觉重设计方案
 
-> 状态：**设计已定稿（采用方案 B：React 19 + Vite + Tailwind CSS v4 + `lucide-react`），进入编码实施** · 日期：2026-11-26 · 前置基线：C4 已签收，自然对话已设为网页默认入口（schema v13，`a3480ec`）
+> 状态：**方案 B 已实施并通过全量门禁与隔离浏览器 7/7 验收** · 日期：2026-11-26 · 前置基线：C4 已签收，自然对话已设为网页默认入口（schema v13，`a3480ec`）
 >
-> 约束声明：本方案严格遵循 [AGENTS.md](../AGENTS.md) 产品与安全边界——保留统一主对话入口、独立领域对象（主对话 / WorkItem / Entry & Memory / Bucket / AgentTask & AgentSession / TODO）、既有归档确认与执行审批合同、无 `unsafe-inline` 的 CSP 及零打包器 TypeScript 前端架构；**不引入多 session 拆分、自动历史捕获、腾讯记忆生产接入或大规模后端重写**。
+> 约束声明：本方案严格遵循 [AGENTS.md](../AGENTS.md) 产品与安全边界——保留统一主对话入口、独立领域对象（主对话 / WorkItem / Entry & Memory / Bucket / AgentTask & AgentSession / TODO）、既有归档确认与执行审批合同、无 `unsafe-inline` / `unsafe-eval` 的严格 CSP 及纯 TS 协议/校验层（`web/assets/api.ts` + `validate-response.ts` + `response-contracts.ts`）；**不引入多 session 拆分、自动历史捕获、腾讯记忆生产接入或大规模后端重写**。
 
 ---
 
@@ -261,13 +261,24 @@ Doggie 当前现状：`package.json` 仅 3 个运行依赖（`hono`、`zod`、`@
 
 - **目录与分层**：
   - `web/assets/api.ts`、`web/assets/validate-response.ts`、`web/assets/response-contracts.ts`、`web/assets/markdown.ts`：保持为**框架无关的纯 TypeScript 协议/安全层**，`scripts/openapi.ts` 继续生成 `web/assets/response-contracts.ts`，OpenAPI 漂移检查零改动。
-  - `web/src/`：全新 React 19 UI 源码（`main.tsx`、`index.css`、`App.tsx`、`store/useDoggieApp.ts`、`components/{Sidebar,ChatTopBar,ChatView,ContextInspector,MemoryView,WorkItemsView,AgendaView,SearchView,AgentsView}.tsx`）。
+  - `web/src/`：全新 React 19 UI 源码（`main.tsx`、`vite-env.d.ts`、`index.css`、`App.tsx`、`store/useDoggieApp.ts`、`components/{MarkdownContent,Sidebar,ChatView,ContextInspector,MemoryView,WorkItemsView,AgendaView,SearchView,AgentsView}.tsx`）。
   - `web/vite.config.ts` & `web/app.html`：Vite 构建产出静态 `web/dist/`（加入 `.gitignore` 与 `.prettierignore`，绝不提交构建产物）。
 - **单机单进程托管与 CSP**：
-  - [`src/http/app.ts`](../src/http/app.ts) 的 `loadFrontendAssets()` 优先加载 `web/dist/` 静态产物（`/`、`/index.html`、`/assets/*`），保持 loopback 绑定与全部安全响应头；
-  - 静态产物仅含外链 `.js`/`.css`，**零 `<style>`、零内联 `style=`、零 `on*=`**，继续通过 `src/http/security.test.ts` 的无 `unsafe-inline` / `unsafe-eval` 门禁。
+  - [`src/http/app.ts`](../src/http/app.ts) 的 `loadFrontendAssets()` 优先加载 `web/dist/` 静态产物（`/`、`/index.html`、`/assets/*`），若未构建则回退旧版 `web/index.html` + `web/assets/`，保持 loopback 绑定与全部安全响应头；
+  - 静态产物仅含外链 `.js`/`.css`，**零 `<style>`、零内联 `style=`、零 `on*=`**，继续通过 `src/http/security.test.ts` 与 `src/http/app.test.ts` 的无 `unsafe-inline` / `unsafe-eval` 门禁。
 - **构建与门禁脚本**：
   - `npm run build:web`：构建 `web/dist/`；
   - `npm run typecheck:web`：独立 `web/tsconfig.json` 严格校验 `web/src/**/*.ts(x)`；
   - `npm run check`：依次执行 `format:check`、`typecheck`、`typecheck:web`、`build:web`、`openapi:check`、`npm test`、`npm run test:web`。
+
+### 9.5 实施验收记录（2026-11-26）
+
+- **自动化门禁（`npm run check`）**：全部通过——Prettier 格式检查、`typecheck`、`typecheck:web`、`build:web`（`web/dist/app.html` + 哈希 `.js`/`.css`）、`openapi:check`、**627 项后端测试**（含 `app.test.ts` 静态 CSP 校验与 `local-web.test.ts` 实服务构建脚本校验）及 **70 项前端测试**。
+- **隔离浏览器端到端验收（临时 SQLite `/tmp/doggie-smoke-f1-f9/smoke.db` + loopback + fake responder，未接触 `.env` 或真实库）**：**7/7 全部通过**，全程 **0 控制台错误、0 未捕获异常、0 CSP 违规**：
+  1. 首屏加载与默认入口：`#root` 正常挂载，`主对话模式` 默认勾选，左栏 6 个独立导航视图完整，主对话底部无 WorkItem 挤压表单；
+  2. F1 冲突保护 + F9 终态折叠 + 右侧 Portal 抽屉：歧义输入弹出待澄清卡，冲突回复保持待决，明确选择后生成带 `来源 1` 徽标的草稿且卡片折叠为单行 `<details>` 审计条（无残留候选按钮）；点击 `来源 1` 原位打开右侧 380px `上下文检视抽屉`（左 210px + 中 690px + 右 380px = 1280px）展示原文与「在记忆空间打开」入口；
+  3. F8 失败重试与刷新恢复 + 自动滚动：触发临时失败后显示红色重试条并自动滚入视口，整页刷新后仍持久化恢复，点击「重试回答」后恢复为正文 + `来源 1` + 折叠审计条；
+  4. 旧聊天回退开关持久化：取消勾选 `主对话模式` 刷新后保持回退状态，重新勾选恢复主对话模式；
+  5. 全部二级视图（`记忆空间` / `工作目标` / `待办计划` / `检索记忆` / `Agent 与任务`）切换渲染正常；
+  6. 移动端 `390×844` 窄屏响应式布局：侧栏收起为菜单按钮，30 个可见元素实测 0 横向溢出。
 

@@ -16,7 +16,7 @@ import {
 } from "../domain/agent.ts";
 /** Hono routing surface for the local Doggie HTTP service. */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { stripTypeScriptTypes } from "node:module";
 
 import { Hono } from "hono";
@@ -194,7 +194,7 @@ const FRONTEND_FILES = [
   ],
 ] as const;
 
-export function loadFrontendAssets(): readonly StaticAsset[] {
+export function loadLegacyFrontendAssets(): readonly StaticAsset[] {
   return FRONTEND_FILES.map(([path, relativePath, contentType]) => {
     const source = readFileSync(
       new URL(`../../web/${relativePath}`, import.meta.url),
@@ -208,6 +208,41 @@ export function loadFrontendAssets(): readonly StaticAsset[] {
         : source,
     };
   });
+}
+
+function builtAssetContentType(name: string): string | null {
+  if (name.endsWith(".js")) return "text/javascript; charset=utf-8";
+  if (name.endsWith(".css")) return "text/css; charset=utf-8";
+  if (name.endsWith(".svg")) return "image/svg+xml; charset=utf-8";
+  return null;
+}
+
+export function loadFrontendAssets(): readonly StaticAsset[] {
+  const distDir = new URL("../../web/dist/", import.meta.url);
+  const entryHtmlUrl = new URL("app.html", distDir);
+  if (!existsSync(entryHtmlUrl)) return loadLegacyFrontendAssets();
+  const html = readFileSync(entryHtmlUrl, "utf8");
+  const assets: StaticAsset[] = [
+    { path: "/", contentType: "text/html; charset=utf-8", body: html },
+    {
+      path: "/index.html",
+      contentType: "text/html; charset=utf-8",
+      body: html,
+    },
+  ];
+  const assetsDir = new URL("assets/", distDir);
+  if (existsSync(assetsDir)) {
+    for (const entry of readdirSync(assetsDir).sort()) {
+      const contentType = builtAssetContentType(entry);
+      if (contentType === null) continue;
+      assets.push({
+        path: `/assets/${entry}`,
+        contentType,
+        body: readFileSync(new URL(entry, assetsDir), "utf8"),
+      });
+    }
+  }
+  return assets;
 }
 
 export function createDoggieApp(

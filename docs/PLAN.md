@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C4、N0–N3 与自然对话修复 A–D（schema v13）均已验收，自然对话已设为网页默认入口
+> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C4、N0–N3 与自然对话修复 A–D（schema v13）及 React 19 UI 重设计（方案 B）均已验收，自然对话已设为网页默认入口
 
 ---
 
@@ -8,9 +8,9 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试和 Unicode 映射） |
-| TypeScript 后端测试 | **626 通过**（2026-11-26，A–D + C4-1～C4-5 修复与 schema v13 当前门禁） |
-| 前端测试 | **70 通过**（同一门禁） |
+| TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试、React UI 源码与 Unicode 映射） |
+| TypeScript 后端测试 | **627 通过**（2026-11-26，A–D + C4-1～C4-5 修复、方案 B 静态产物 CSP 校验与 schema v13 当前门禁） |
+| 前端测试 | **70 通过**（同一门禁，另含 `typecheck:web` 与 `build:web`） |
 | 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
 | 已覆盖 | **85 条**（§1–§8 全部，§7 已由 T13 补齐） |
@@ -61,11 +61,10 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步 | 起草 UI 信息架构与视觉方案设计文档（不急于一次性替换前端状态管理；C4 已签收并切换自然对话为默认入口） | [C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)、[FRONTEND_DESIGN.md](FRONTEND_DESIGN.md) |
-| 待评估 | 真实模型质量、全面浏览器体验及是否切换默认入口；真实自用验收按此前决定延后 | [专项测试方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)、[主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
+| 已完成 | React 19 + Vite + Tailwind CSS v4（方案 B）三栏 UI 实施并通过 `npm run check`（627 后端 + 70 前端）与隔离浏览器 7/7 验收 | [UI 架构设计](UI_ARCHITECTURE_DESIGN.md)、[C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
-| 明确延后 | 真实自用验收、全面视觉改版、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
+| 明确延后 | 真实自用长周期验收、深色模式视觉细化、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 | 尚无本阶段实施设计 | T15–T17 的后续功能 | 保留后续规划；开始前另行确定目标、范围和验收条件 |
 
 C0 已固定旧入口行为并整理 11 组样本。C1 验收后的完整门禁为 561 项后端和 60 项前端通过；当前 A–D 修复后门禁为 619 项后端和 70 项前端通过。详细设计见 [主对话实施计划](MAIN_CONVERSATION_PLAN.md)。

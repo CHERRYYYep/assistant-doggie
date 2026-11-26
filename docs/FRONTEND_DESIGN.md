@@ -1,4 +1,6 @@
-# 前端初版改版
+# 前端初版改版（历史记录）
+
+> 说明（2026-11-26）：本文档记录 2026-11-12 的第一版原生 TS 前端改版（`web/index.html` + `web/assets/`）。当前默认网页界面已升级为 **React 19 + Vite + Tailwind CSS v4 + `lucide-react` 方案 B（`web/src/` -> `web/dist/`）**，最新信息架构、组件边界、严格 CSP 约束与隔离浏览器验收记录见 [UI_ARCHITECTURE_DESIGN.md](UI_ARCHITECTURE_DESIGN.md)；旧版 `web/assets/` 中的协议/校验/Markdown 模块继续作为共享基础层被复用，未构建 `web/dist/` 时亦作为回退静态资源。
 
 日期：2026-11-12。范围是已有 MVP 的信息结构与视觉改进，不新增业务权限、远程访问或多人会话。
 

@@ -18,8 +18,9 @@ work_memory.db
 # Coverage and reports
 coverage/
 
-# Frontend tooling (Prettier + node --test only; no build output is committed)
+# Frontend tooling & build output (never committed)
 node_modules/
+web/dist/
 
 # OS and editors
 .DS_Store

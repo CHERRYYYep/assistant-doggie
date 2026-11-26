@@ -8,9 +8,9 @@
 
 ### 当前阶段与产品边界
 
-截至 2026-11-26，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 与后续修复 **A1–A3** 已交付；历史验收见 [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)。后端前置阶段 **B0–B3 已完成**，Agent 终态合同和结构化模型重试已验收。索引/分页 D1 和模块收敛 D2 仍按设计门/渐进批次处理，不阻塞主对话实施。后端验收见 [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)，[C0 行为基线](docs/MAIN_CONVERSATION_C0_ACCEPTANCE.md)、[C1 用途分流](docs/MAIN_CONVERSATION_C1_ACCEPTANCE.md)、[C2 澄清预览](docs/MAIN_CONVERSATION_C2_ACCEPTANCE.md)、[C3 本地取证](docs/MAIN_CONVERSATION_C3_ACCEPTANCE.md) 和 [N0–N3 自然续接](docs/NATURAL_CONVERSATION_ACCEPTANCE.md) 均通过自动化验收；自然对话审查修复 **A–D（F1–F9）** 与 **C4 真实模型质量/三路径对照及 C4-1～C4-5 修复复验**均已通过（见 [修复计划](docs/NATURAL_CONVERSATION_REPAIR_PLAN.md)、[测试与交接](docs/NATURAL_CONVERSATION_REPAIR_TESTS.md) 与 [C4 评估报告](docs/MAIN_CONVERSATION_C4_EVALUATION.md)）。当前 schema 为 v13，门禁为 626 后端 + 70 前端通过；**C4 已完成签收，自然对话已切换为网页默认入口**（保留手动取消勾选回退旧聊天的开关，旧 `/api/chat` 与确认接口保持兼容）。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
+截至 2026-11-26，T14 TODO/Agenda、schema v8 的本地 WorkItem 基础、后端修缮 **R0–R5** 与后续修复 **A1–A3** 已交付；历史验收见 [后端修缮验收记录](docs/BACKEND_REPAIR_ACCEPTANCE.md)。后端前置阶段 **B0–B3 已完成**，Agent 终态合同和结构化模型重试已验收。索引/分页 D1 和模块收敛 D2 仍按设计门/渐进批次处理，不阻塞主对话实施。后端验收见 [C0 前后端修缮计划](docs/PRE_C0_BACKEND_PLAN.md)，[C0 行为基线](docs/MAIN_CONVERSATION_C0_ACCEPTANCE.md)、[C1 用途分流](docs/MAIN_CONVERSATION_C1_ACCEPTANCE.md)、[C2 澄清预览](docs/MAIN_CONVERSATION_C2_ACCEPTANCE.md)、[C3 本地取证](docs/MAIN_CONVERSATION_C3_ACCEPTANCE.md) 和 [N0–N3 自然续接](docs/NATURAL_CONVERSATION_ACCEPTANCE.md) 均通过自动化验收；自然对话审查修复 **A–D（F1–F9）** 与 **C4 真实模型质量/三路径对照及 C4-1～C4-5 修复复验**均已通过（见 [修复计划](docs/NATURAL_CONVERSATION_REPAIR_PLAN.md)、[测试与交接](docs/NATURAL_CONVERSATION_REPAIR_TESTS.md) 与 [C4 评估报告](docs/MAIN_CONVERSATION_C4_EVALUATION.md)）。UI 架构与视觉重设计 **方案 B（React 19 + Vite + Tailwind CSS v4 + `lucide-react`）** 已完成实施并通过全量门禁与隔离浏览器 7/7 端到端验收（见 [UI 架构设计](docs/UI_ARCHITECTURE_DESIGN.md)）。当前 schema 为 v13，门禁为 627 后端 + 70 前端通过；**自然对话已为网页默认入口**（保留手动取消勾选回退旧聊天的开关，旧 `/api/chat` 与确认接口保持兼容）。修改时更新阶段状态，不把拟议接口、表或模型能力写成已经可用。
 
-- R0–R5 修复、A1–A3 后续修复的提交与测试证据见 `docs/BACKEND_REPAIR_ACCEPTANCE.md`。B1 终态合同和 B2 重试治理已独立实施并验收。C0 已固定旧入口及新场景基线，C1 已在 ChatService 上增加内部用途分流，旧入口行为不变；C2 可恢复澄清、C3 本地取证/受批准执行、N0–N3 自然续接与 Entry 定位、以及自然对话修复 A–D（F1–F9，schema v13）均已完成自动化验收与隔离浏览器 smoke。C4 真实模型对照（`gpt-6.1-sol`，32 场景 + 5 条三路径对照）及 C4-1～C4-5 修复后的 7/7 定向复验均已通过，自然对话已设为网页默认入口（可随时切回旧聊天），下一步进入 UI 信息架构与视觉方案设计。
+- R0–R5 修复、A1–A3 后续修复的提交与测试证据见 `docs/BACKEND_REPAIR_ACCEPTANCE.md`。B1 终态合同和 B2 重试治理已独立实施并验收。C0 已固定旧入口及新场景基线，C1 已在 ChatService 上增加内部用途分流，旧入口行为不变；C2 可恢复澄清、C3 本地取证/受批准执行、N0–N3 自然续接与 Entry 定位、以及自然对话修复 A–D（F1–F9，schema v13）均已完成自动化验收与隔离浏览器 smoke。C4 真实模型对照（`gpt-6.1-sol`，32 场景 + 5 条三路径对照）及 C4-1～C4-5 修复后的 7/7 定向复验均已通过，自然对话已设为网页默认入口（可随时切回旧聊天）；新版 React 19 + Vite + Tailwind CSS v4 三栏 UI（左侧 6 视图导航、中栏沉浸式对话流与折叠审计条、右侧 Portal 上下文检视抽屉）已交付并通过隔离浏览器 7/7 验收（0 控制台错误、0 CSP 违规）。
 - 保留统一主对话入口、多个工作目标、按需隔离的执行会话与 Bucket；普通聊天不自动拆成隐藏会话。
 - 腾讯记忆仍是 D3 隔离实验，完整 D3 未验收，D4b 生产接入暂缓。C0–C4 不引入自动历史捕获、向量库、全历史检索或自动摘要。
 - 保持 Hono、单机 SQLite 和单个队列执行所有者。更换框架、拆分布式服务、远程接入、多人协作、全面视觉改版及 T15–T17 均需各自需求与验收依据，不自动纳入本阶段。
@@ -39,7 +39,7 @@
 - `src/runtime/`：配置和生产组装。
 - `src/evaluation/`：分类与提取评测；真实模型评测不得进入普通测试链。
 - `scripts/d3/`：腾讯记忆隔离实验与故障验证；不作为生产对话路径的依赖。
-- `web/`：独立浏览器 TypeScript UI，复用 `src/http/` 的共享 DTO；生产资源与日常测试不依赖 Rust 目录。
+- `web/`：`web/src/` 为 React 19 + Vite + Tailwind CSS v4 浏览器 UI 源码（通过 `npm run build:web` 构建静态产物至不提交的 `web/dist/`，由 Hono 单进程托管）；`web/assets/` 保留框架无关的协议客户端、OpenAPI 响应校验与 Markdown 安全渲染（以及未构建时的回退静态入口），复用 `src/http/` 的共享 DTO。
 - `bin/doggie-mcp`：本地 MCP 可执行入口。
 - `tests/fixtures/`：从历史实现固化的 parity fixture。
 - `docs/`：架构、不变量、数据模型、MCP、迁移边界和测试计划。
@@ -62,7 +62,7 @@
 
 ## 运行环境与常用命令
 
-需要 Node.js 24 或更新版本。项目依赖 Node 原生 TypeScript type stripping 和 `node:sqlite`，不生成 JavaScript 构建产物。
+需要 Node.js 24 或更新版本。后端依赖 Node 原生 TypeScript type stripping 和 `node:sqlite`，不生成后端构建产物；前端 `web/src/` 通过 Vite 打包到 `web/dist/`（不提交，由本地 Hono 服务托管，未构建时自动回退旧版静态资源）。
 
 首次安装依赖：
 
@@ -75,13 +75,15 @@ npm ci
 ```bash
 npm run format:check
 npm run typecheck
+npm run typecheck:web
+npm run build:web
 npm run openapi:check
 npm test
 npm run test:web
 npm run check
 ```
 
-`npm run check` 是 TypeScript 主路径的完整门禁，依次执行 Prettier、类型检查、OpenAPI 漂移检查、后端测试和前端测试。CI 也只以该命令作为目标实现门禁。修改契约后用 `npm run openapi:generate` 再生文档；命令定义以 `package.json` 为准。
+`npm run check` 是 TypeScript 主路径的完整门禁，依次执行 Prettier、后端类型检查、前端类型检查、Vite 构建、OpenAPI 漂移检查、后端测试和前端测试。CI 也只以该命令作为目标实现门禁。修改契约后用 `npm run openapi:generate` 再生文档；命令定义以 `package.json` 为准。
 
 启动 MCP server：
 

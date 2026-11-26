@@ -29,5 +29,5 @@
     "isolatedModules": true
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "web/**/*.ts", "scripts/**/*.ts"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "web/src", "web/dist", "web/vite.config.ts"]
 }

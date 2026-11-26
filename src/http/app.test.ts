@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { DoggieHttpApi } from "./app.ts";
-import { createDoggieApp, loadFrontendAssets } from "./app.ts";
+import {
+  createDoggieApp,
+  loadFrontendAssets,
+  loadLegacyFrontendAssets,
+} from "./app.ts";
 import { HttpBoundaryError } from "./contracts.ts";
 
 function localRequest(
@@ -47,8 +51,8 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
   assert.equal(await head.text(), "");
 });
 
-test("frontend TypeScript assets are stripped into browser JavaScript", () => {
-  const scripts = loadFrontendAssets().filter(({ path }) =>
+test("legacy frontend TypeScript assets are stripped into browser JavaScript", () => {
+  const scripts = loadLegacyFrontendAssets().filter(({ path }) =>
     path.endsWith(".ts"),
   );
 
@@ -60,6 +64,26 @@ test("frontend TypeScript assets are stripped into browser JavaScript", () => {
     assert.doesNotMatch(script.body, /\b(?:import|export)\s+type\b/u);
     assert.doesNotMatch(script.body, /\bsatisfies\s+[A-Za-z_$]/u);
     assert.match(script.body, /\S/u);
+  }
+});
+
+test("default frontend bundle serves external static assets with strict CSP compatibility", () => {
+  const assets = loadFrontendAssets();
+  const root = assets.find(({ path }) => path === "/");
+  assert.ok(root);
+  assert.equal(root.contentType, "text/html; charset=utf-8");
+  assert.doesNotMatch(root.body, /<style\b/iu);
+  assert.doesNotMatch(root.body, /\s(?:style|on\w+)\s*=/iu);
+  const scripts = assets.filter(({ contentType }) =>
+    contentType.startsWith("text/javascript"),
+  );
+  const styles = assets.filter(({ contentType }) =>
+    contentType.startsWith("text/css"),
+  );
+  assert.ok(scripts.length >= 1);
+  assert.ok(styles.length >= 1);
+  for (const asset of [...scripts, ...styles]) {
+    assert.match(asset.body, /\S/u);
   }
 });
 

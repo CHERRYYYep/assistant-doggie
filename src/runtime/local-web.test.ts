@@ -568,7 +568,14 @@ test("T13 real HTTP runtime composes approved CLI task queue, SSE and persisted 
     assert.match(await stream.text(), /succeeded/);
     assert.equal(runs, 1);
     assert.equal(runtime.agents.get(task.id).output, "Runtime result");
-    const asset = await fetch(new URL("assets/agents.ts", runtime.url));
+    const indexResponse = await fetch(new URL("/", runtime.url));
+    assert.equal(indexResponse.status, 200);
+    const indexHtml = await indexResponse.text();
+    const scriptMatch = indexHtml.match(/<script\b[^>]*src="([^"]+)"/iu);
+    assert.ok(scriptMatch?.[1]);
+    const asset = await fetch(
+      new URL(scriptMatch[1].replace(/^\//u, ""), runtime.url),
+    );
     assert.equal(asset.status, 200);
     assert.doesNotMatch(await asset.text(), /\bimport type\b/);
   } finally {
