@@ -38,7 +38,6 @@ import {
   postChatConfirmation,
   postConversationTurn,
   postEntryMove,
-  postTask,
   postTaskCancel,
   postTodoAdvance,
   postTodoPlan,
@@ -85,16 +84,6 @@ export type StatusBanner = {
   readonly tone: "neutral" | "warning" | "success" | "danger";
 };
 
-const PREVIEW_KEY = "doggie.mainConversationPreview";
-
-function readInitialMainMode(): boolean {
-  try {
-    return sessionStorage.getItem(PREVIEW_KEY) !== "false";
-  } catch {
-    return true;
-  }
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -104,7 +93,6 @@ export function useDoggieApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const [mainMode, setMainModeState] = useState<boolean>(readInitialMainMode);
   const [status, setStatusState] = useState<StatusBanner | null>(null);
 
   const [history, setHistory] = useState<readonly UiChatMessageDto[]>([]);
@@ -197,36 +185,30 @@ export function useDoggieApp() {
     }
   }, [setBanner]);
 
-  const loadHistory = useCallback(
-    async (modeOverride?: boolean) => {
-      const useMain = modeOverride ?? mainMode;
-      const rev = ++historyRevisionRef.current;
-      try {
-        const [histRes, interRes] = await Promise.all([
-          fetchChatHistory(),
-          useMain
-            ? fetchConversationInteractions().catch((error: unknown) => ({
-                error,
-              }))
-            : Promise.resolve(undefined),
-        ]);
-        if (rev !== historyRevisionRef.current) return;
-        setHistory(histRes.messages);
-        if (interRes && "interactions" in interRes) {
-          setInteractions(interRes.interactions);
-          setObservedConversation(interRes.snapshot);
-        } else if (interRes && "error" in interRes) {
-          setInteractions([]);
-          setObservedConversation(null);
-          setBanner(`无法恢复待回复问题，请刷新对话：${errorMessage(interRes.error)}`, "warning");
-        }
-      } catch (error) {
-        if (rev !== historyRevisionRef.current) return;
-        setBanner(errorMessage(error), "warning");
+  const loadHistory = useCallback(async () => {
+    const rev = ++historyRevisionRef.current;
+    try {
+      const [histRes, interRes] = await Promise.all([
+        fetchChatHistory(),
+        fetchConversationInteractions().catch((error: unknown) => ({
+          error,
+        })),
+      ]);
+      if (rev !== historyRevisionRef.current) return;
+      setHistory(histRes.messages);
+      if ("interactions" in interRes) {
+        setInteractions(interRes.interactions);
+        setObservedConversation(interRes.snapshot);
+      } else {
+        setInteractions([]);
+        setObservedConversation(null);
+        setBanner(`无法恢复待回复问题，请刷新对话：${errorMessage(interRes.error)}`, "warning");
       }
-    },
-    [mainMode, setBanner],
-  );
+    } catch (error) {
+      if (rev !== historyRevisionRef.current) return;
+      setBanner(errorMessage(error), "warning");
+    }
+  }, [setBanner]);
 
   const observeBackgroundTask = useCallback(
     (initial: TaskSnapshot) => {
@@ -282,7 +264,7 @@ export function useDoggieApp() {
 
   useEffect(() => {
     void Promise.all([
-      loadHistory(mainMode),
+      loadHistory(),
       refreshBuckets(),
       refreshAgenda(false),
       refreshWorkItems(),
@@ -297,28 +279,6 @@ export function useDoggieApp() {
     // Initial mount bootstrap only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const setMainMode = useCallback(
-    async (enabled: boolean) => {
-      if (!enabled && replyTarget !== null && chatInput.trim() !== "") {
-        setBanner("请先发送或退出当前卡片回复草稿。", "warning");
-        return;
-      }
-      setMainModeState(enabled);
-      try {
-        sessionStorage.setItem(PREVIEW_KEY, String(enabled));
-      } catch {
-        // Storage may be unavailable in restricted contexts.
-      }
-      if (!enabled) {
-        setInteractions([]);
-        setObservedConversation(null);
-        setReplyTarget(null);
-      }
-      await loadHistory(enabled);
-    },
-    [chatInput, loadHistory, replyTarget, setBanner],
-  );
 
   const submitConversationTurn = useCallback(
     async (request: ConversationTurnRequest) => {
@@ -348,11 +308,11 @@ export function useDoggieApp() {
         } else {
           setStatusState(null);
         }
-        await loadHistory(true);
+        await loadHistory();
       } catch (error) {
         const known = error instanceof ApiRequestError && error.status < 500;
         setRetryTurn(known ? null : request);
-        await loadHistory(true);
+        await loadHistory();
         setBanner(
           known
             ? isConflictError(error) && request.action === "utterance"
@@ -375,72 +335,48 @@ export function useDoggieApp() {
       setBanner("请先核对或重试上次发送结果。", "warning");
       return;
     }
-    if (mainMode) {
-      if (text.length > 4000) {
-        setBanner("主对话每条消息最多 4000 字符。", "warning");
-        return;
-      }
-      if (observedConversation === null) {
-        setBanner("请先刷新对话以恢复当前状态，再发送消息。", "warning");
-        return;
-      }
-      const requestId = crypto.randomUUID();
-      if (replyTarget !== null && replyTarget.promptMessageId === null) {
-        await submitConversationTurn({
-          action: "reply",
-          text,
-          requestId,
-          clarificationId: replyTarget.interactionId,
-          expectedRevision: replyTarget.revision,
-        });
-      } else {
-        await submitConversationTurn({
-          action: "utterance",
-          text,
-          requestId,
-          snapshot: {
-            throughSequence: observedConversation.throughSequence,
-            prompts: [...observedConversation.prompts],
-          },
-          ...(replyTarget !== null && replyTarget.promptMessageId !== null
-            ? {
-                replyTo: {
-                  interactionId: replyTarget.interactionId,
-                  revision: replyTarget.revision,
-                  promptMessageId: replyTarget.promptMessageId,
-                },
-              }
-            : {}),
-        });
-      }
+    if (text.length > 4000) {
+      setBanner("每条消息最多 4000 字符。", "warning");
       return;
     }
-
-    // Legacy background queue chat fallback
-    setSending(true);
-    setBanner("已提交旧聊天后台任务…", "neutral");
-    try {
-      const { task } = await postTask({
-        message: text,
-        ...(selectedBucketId ? { focus_bucket_id: selectedBucketId } : {}),
+    if (observedConversation === null) {
+      setBanner("请先刷新对话以恢复当前状态，再发送消息。", "warning");
+      return;
+    }
+    const requestId = crypto.randomUUID();
+    if (replyTarget !== null && replyTarget.promptMessageId === null) {
+      await submitConversationTurn({
+        action: "reply",
+        text,
+        requestId,
+        clarificationId: replyTarget.interactionId,
+        expectedRevision: replyTarget.revision,
       });
-      setChatInput("");
-      setTasks((prev) => [task, ...prev.filter((t) => t.id !== task.id)]);
-      observeBackgroundTask(task);
-      setStatusState(null);
-    } catch (error) {
-      setBanner(errorMessage(error), "warning");
-    } finally {
-      setSending(false);
+    } else {
+      await submitConversationTurn({
+        action: "utterance",
+        text,
+        requestId,
+        snapshot: {
+          throughSequence: observedConversation.throughSequence,
+          prompts: [...observedConversation.prompts],
+        },
+        ...(replyTarget !== null && replyTarget.promptMessageId !== null
+          ? {
+              replyTo: {
+                interactionId: replyTarget.interactionId,
+                revision: replyTarget.revision,
+                promptMessageId: replyTarget.promptMessageId,
+              },
+            }
+          : {}),
+      });
     }
   }, [
     chatInput,
-    mainMode,
     observedConversation,
-    observeBackgroundTask,
     replyTarget,
     retryTurn,
-    selectedBucketId,
     sending,
     setBanner,
     submitConversationTurn,
@@ -962,8 +898,6 @@ export function useDoggieApp() {
     setSidebarCollapsed,
     mobileMenuOpen,
     setMobileMenuOpen,
-    mainMode,
-    setMainMode,
     status,
     setBanner,
     clearBanner: () => setStatusState(null),

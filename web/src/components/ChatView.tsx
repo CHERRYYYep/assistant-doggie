@@ -2,15 +2,17 @@ import {
   AlertTriangle,
   Archive,
   ArrowUp,
+  Check,
   CheckCircle2,
   ChevronRight,
   Clock,
+  Copy,
   FileText,
+  FolderKanban,
   Info,
-  RefreshCw,
+  Plus,
   RotateCcw,
   ShieldAlert,
-  Sparkles,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -74,7 +76,14 @@ function ArchiveCard({
   const bucketId = asString(archive["bucket_id"]);
   const entryId = asString(archive["entry_id"]);
   const reason = asString(archive["reason"]);
-  const recommendedTitle = asString(archive["recommended_bucket_title"]);
+  const bucketObj = isRecord(archive["bucket"]) ? archive["bucket"] : null;
+  const recommendedObj = isRecord(archive["recommended_bucket"])
+    ? archive["recommended_bucket"]
+    : null;
+  const bucketTitle =
+    (bucketObj ? asString(bucketObj["title"]) : "") || asString(archive["bucket_title"]);
+  const recommendedTitle =
+    (recommendedObj ? asString(recommendedObj["title"]) : "") || asString(archive["bucket_title"]);
   const recommendedId = asString(archive["recommended_bucket_id"]);
 
   const [selectedOtherBucket, setSelectedOtherBucket] = useState("");
@@ -220,9 +229,7 @@ function ArchiveCard({
           <span className="flex items-center gap-1.5 font-medium">
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
             <span>
-              {isRevoked
-                ? "记录已撤销（历史保留）"
-                : `已归档至「${asString(archive["bucket_title"]) || "Bucket"}」`}
+              {isRevoked ? "记录已撤销（历史保留）" : `已归档至「${bucketTitle || "Bucket"}」`}
             </span>
           </span>
           <span className="flex items-center gap-1 text-[11px] opacity-80">
@@ -720,13 +727,14 @@ function MessageRow({
   readonly card: ConversationInteraction | undefined;
   readonly app: DoggieAppController;
 }) {
+  const [copied, setCopied] = useState(false);
   const highlighted = app.highlightedMessageId === message.id;
 
   if (message.role === "tool") {
     return (
-      <div className="my-1 flex justify-start pl-10">
-        <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--panel-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--muted)]">
-          <span>工具：{message.tool_name || "memory"}（只读结果已记录）</span>
+      <div className="my-0.5 flex justify-start">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--panel-subtle)] px-2.5 py-0.5 text-[11px] text-[var(--muted)]">
+          <span>已查本地记忆（{message.tool_name || "memory"}）</span>
         </span>
       </div>
     );
@@ -743,76 +751,226 @@ function MessageRow({
       : null;
   const citations = details ? extractCitations(details) : { entries: [], materialMessageIds: [] };
 
+  const handleCopy = () => {
+    if (!message.content) return;
+    void navigator.clipboard?.writeText(message.content).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    });
+  };
+
+  if (isUser) {
+    return (
+      <div
+        id={`msg-${message.id}`}
+        className={[
+          "flex justify-end rounded-2xl py-1 transition-colors",
+          highlighted ? "bg-[var(--accent-soft)] px-2" : "",
+        ].join(" ")}
+      >
+        <div className="max-w-[78%] rounded-[22px] bg-[var(--user-bubble)] px-4 py-2.5 text-[15px] leading-relaxed text-[var(--user-text)]">
+          <MarkdownContent content={message.content || ""} />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       id={`msg-${message.id}`}
       className={[
-        "group flex gap-3 rounded-xl px-2 py-1.5 transition-colors",
-        isUser ? "justify-end" : "justify-start",
-        highlighted ? "bg-[var(--accent-soft)]" : "",
+        "group rounded-2xl py-2 transition-colors",
+        highlighted ? "bg-[var(--accent-soft)] px-3" : "",
       ].join(" ")}
     >
-      {!isUser ? (
-        <div
-          aria-hidden="true"
-          className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[var(--text)] text-xs font-semibold text-[var(--panel)]"
-        >
-          D
+      <div className="min-w-0 text-[15px] leading-[1.72] text-[var(--text)]">
+        <MarkdownContent content={message.content || ""} />
+
+        {citations.entries.length > 0 || citations.materialMessageIds.length > 0 ? (
+          <div aria-label="本地证据" className="mt-3 flex flex-wrap gap-1.5">
+            {citations.entries.map((citation, index) => (
+              <button
+                key={`${citation.entryId}-${index}`}
+                type="button"
+                onClick={() => void app.inspectEntrySource(citation.bucketId, citation.entryId)}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--line-strong)] bg-[var(--panel-subtle)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--text-2)] hover:border-[var(--text)] hover:text-[var(--text)]"
+              >
+                <FileText className="h-3 w-3" />
+                <span>来源 {index + 1}</span>
+              </button>
+            ))}
+            {citations.materialMessageIds.map((messageId) => (
+              <button
+                key={messageId}
+                type="button"
+                onClick={() => app.inspectMessageSource(messageId)}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--info-line)] bg-[var(--info-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--info)] hover:opacity-90"
+              >
+                <FileText className="h-3 w-3" />
+                <span>本轮提供（未归档）</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {archive !== null ? (
+          <ArchiveCard
+            archive={archive}
+            sourceText={details ? asString(details["source_text"]) : ""}
+            app={app}
+          />
+        ) : null}
+
+        {card !== undefined ? <InteractionCard card={card} app={app} /> : null}
+
+        {message.content ? (
+          <div className="mt-2 flex items-center gap-1 text-[var(--muted)] opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+            <button
+              type="button"
+              onClick={handleCopy}
+              aria-label="复制回答"
+              title="复制回答"
+              className="inline-flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]"
+            >
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? <span>已复制</span> : null}
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ChatComposer({
+  app,
+  inputRef,
+  centered,
+}: {
+  readonly app: DoggieAppController;
+  readonly inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  readonly centered: boolean;
+}) {
+  const [plusOpen, setPlusOpen] = useState(false);
+
+  return (
+    <div className="relative mx-auto w-full max-w-[760px]">
+      {app.replyTarget !== null ? (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs text-[var(--accent)]">
+          <span className="truncate">正在回复：{app.replyTarget.label}</span>
+          <button
+            type="button"
+            onClick={() => {
+              app.setChatInput("");
+              app.setReplyTarget(null);
+            }}
+            className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--panel)]"
+          >
+            <X className="h-3.5 w-3.5" />
+            <span>退出回复</span>
+          </button>
         </div>
       ) : null}
 
-      <div className={["min-w-0", isUser ? "max-w-[80%]" : "max-w-[88%] flex-1"].join(" ")}>
-        <div
-          className={[
-            "rounded-2xl px-4 py-2.5 text-[14px] leading-relaxed",
-            isUser
-              ? "bg-[var(--user-bubble)] text-[var(--user-text)]"
-              : "border border-[var(--line)] bg-[var(--panel)] text-[var(--text)]",
-          ].join(" ")}
+      {app.retryTurn !== null ? (
+        <div className="mb-2 flex items-center justify-between gap-2 rounded-xl border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-1.5 text-xs text-[var(--warn)]">
+          <span>上次发送结果尚未确认，请使用同一请求核对。</span>
+          <button
+            type="button"
+            disabled={app.sending}
+            onClick={() => void app.retryPendingTurn()}
+            className="rounded-md bg-[var(--warn)] px-2.5 py-1 font-medium text-white disabled:opacity-50"
+          >
+            核对或重试上次发送
+          </button>
+        </div>
+      ) : null}
+
+      {plusOpen ? (
+        <div className="absolute bottom-full left-0 z-20 mb-2 w-56 rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-1.5 text-xs shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              app.setChatInput((prev) => (prev ? `${prev}\n原文：\n` : "原文：\n"));
+              setPlusOpen(false);
+              inputRef.current?.focus();
+            }}
+            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[var(--text)] hover:bg-[var(--panel-subtle)]"
+          >
+            <FileText className="h-4 w-4 text-[var(--muted)]" />
+            <span>粘贴要改写或处理的原文</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPlusOpen(false);
+              app.setActiveTab("work-items");
+            }}
+            className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-[var(--text)] hover:bg-[var(--panel-subtle)]"
+          >
+            <FolderKanban className="h-4 w-4 text-[var(--muted)]" />
+            <span>管理工作目标</span>
+          </button>
+        </div>
+      ) : null}
+
+      <div className="doggie-composer-pill flex items-end gap-2 rounded-[26px] border border-[var(--line)] bg-[var(--composer-bg)] px-3 py-2 focus-within:border-[var(--line-strong)]">
+        <button
+          type="button"
+          onClick={() => setPlusOpen((open) => !open)}
+          aria-label="更多操作"
+          title="更多操作"
+          className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--text-2)] transition-colors hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]"
         >
-          <MarkdownContent content={message.content || ""} />
+          <Plus className="h-4 w-4" />
+        </button>
 
-          {citations.entries.length > 0 || citations.materialMessageIds.length > 0 ? (
-            <div
-              aria-label="本地证据"
-              className="mt-2.5 flex flex-wrap gap-1.5 border-t border-[var(--line)] pt-2"
-            >
-              {citations.entries.map((citation, index) => (
-                <button
-                  key={`${citation.entryId}-${index}`}
-                  type="button"
-                  onClick={() => void app.inspectEntrySource(citation.bucketId, citation.entryId)}
-                  className="inline-flex items-center gap-1 rounded-full border border-[var(--line-strong)] bg-[var(--panel-subtle)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--text-2)] hover:border-[var(--accent)] hover:text-[var(--accent)]"
-                >
-                  <FileText className="h-3 w-3" />
-                  <span>来源 {index + 1}</span>
-                </button>
-              ))}
-              {citations.materialMessageIds.map((messageId) => (
-                <button
-                  key={messageId}
-                  type="button"
-                  onClick={() => app.inspectMessageSource(messageId)}
-                  className="inline-flex items-center gap-1 rounded-full border border-[var(--info-line)] bg-[var(--info-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--info)] hover:opacity-90"
-                >
-                  <FileText className="h-3 w-3" />
-                  <span>本轮提供（未归档）</span>
-                </button>
-              ))}
-            </div>
-          ) : null}
-
-          {archive !== null ? (
-            <ArchiveCard
-              archive={archive}
-              sourceText={details ? asString(details["source_text"]) : ""}
-              app={app}
-            />
-          ) : null}
+        <div className="min-w-0 flex-1 py-1">
+          <label htmlFor="doggie-chat-input" className="sr-only">
+            询问 Doggie
+          </label>
+          <textarea
+            id="doggie-chat-input"
+            ref={inputRef}
+            rows={centered ? 1 : 1}
+            value={app.chatInput}
+            onChange={(e) => app.setChatInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void app.sendMessage();
+              }
+            }}
+            placeholder={
+              app.replyTarget ? "输入对上述问题的回复或贴出原文…" : "询问 Doggie，或直接记下一件事…"
+            }
+            className="max-h-44 w-full resize-none bg-transparent text-[15px] leading-6 text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+          />
         </div>
 
-        {card !== undefined ? <InteractionCard card={card} app={app} /> : null}
+        <div className="mb-0.5 flex shrink-0 items-center gap-2">
+          {app.chatInput.length > 3500 ? (
+            <span className="text-[11px] text-[var(--warn)]">{app.chatInput.length} / 4000</span>
+          ) : null}
+          <button
+            id="chat-send"
+            type="button"
+            disabled={app.sending || !app.chatInput.trim()}
+            onClick={() => void app.sendMessage()}
+            aria-label="发送"
+            title="发送"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[var(--send-bg)] text-[var(--send-text)] transition-opacity hover:opacity-85 disabled:opacity-25"
+          >
+            <ArrowUp className="h-4 w-4" />
+          </button>
+        </div>
       </div>
+
+      {!centered ? (
+        <div className="mt-2 text-center text-[11px] text-[var(--muted)]">
+          Doggie 仅在本地运行，不确定的归档与只读执行均需你确认。
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -823,7 +981,7 @@ export function ChatView({ app }: Props) {
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const { cardByMessageId, orphanCards } = useMemo(() => {
-    const cards = app.mainMode ? app.interactions : [];
+    const cards = app.interactions;
     const historyIds = new Set(app.history.map((m) => m.id));
     const map = new Map<string, ConversationInteraction>();
     const orphans: ConversationInteraction[] = [];
@@ -836,7 +994,7 @@ export function ChatView({ app }: Props) {
       }
     }
     return { cardByMessageId: map, orphanCards: orphans.reverse() };
-  }, [app.history, app.interactions, app.mainMode]);
+  }, [app.history, app.interactions]);
 
   const interactionVersionKey = useMemo(
     () =>
@@ -861,9 +1019,43 @@ export function ChatView({ app }: Props) {
     }
   }, [app.replyTarget]);
 
+  const isEmpty = app.history.length === 0 && orphanCards.length === 0;
+
+  if (isEmpty) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 pb-16 sm:px-6">
+        <div className="w-full max-w-[760px]">
+          <h2 className="mb-7 text-center text-[28px] font-semibold tracking-tight text-[var(--text)]">
+            我们先从哪里开始呢？
+          </h2>
+          <ChatComposer app={app} inputRef={inputRef} centered />
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            {[
+              "明天早上8点完成计网作业",
+              "帮我制定一个三天的 Mutex 学习计划",
+              "帮我修改那个计网实验",
+            ].map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => {
+                  app.setChatInput(prompt);
+                  inputRef.current?.focus();
+                }}
+                className="rounded-full border border-[var(--line)] bg-[var(--bg)] px-3.5 py-1.5 text-xs text-[var(--text-2)] transition-colors hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]"
+              >
+                {prompt}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Scrollable timeline */}
+    <div className="flex min-h-0 flex-1 flex-col bg-[var(--bg)]">
+      {/* Scrollable ChatGPT-style single-column timeline */}
       <div
         ref={scrollRef}
         aria-label="对话记录"
@@ -871,182 +1063,33 @@ export function ChatView({ app }: Props) {
           const el = event.currentTarget;
           stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
-        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6"
+        className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-6 sm:px-6"
       >
-        <div className="mx-auto max-w-[760px] space-y-3">
-          {app.history.length === 0 && orphanCards.length === 0 ? (
-            <div className="mx-auto max-w-xl py-12 text-center">
-              <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[var(--accent-soft)] text-[var(--accent)]">
-                <Sparkles className="h-5 w-5" />
+        <div className="mx-auto max-w-[760px] space-y-4">
+          {app.history.map((message) => (
+            <MessageRow
+              key={message.id}
+              message={message}
+              card={cardByMessageId.get(message.id)}
+              app={app}
+            />
+          ))}
+          {orphanCards.length > 0 ? (
+            <div className="space-y-2 border-t border-[var(--line)] pt-3">
+              <div className="text-[11px] font-medium text-[var(--muted)]">
+                历史窗口外的活跃续接
               </div>
-              <h2 className="text-2xl font-semibold tracking-tight text-[var(--text)]">
-                从这里，接着想。
-              </h2>
-              <p className="mt-2 text-sm text-[var(--muted)]">
-                统一主对话入口：直接提问、贴原文改写、续做已有实验，或说「记一下」归档到长期记忆。
-              </p>
-              <div className="mt-6 grid gap-3 text-left sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => app.setChatInput("记一下：接口 A 的 p99 延迟已降到 31ms。")}
-                  className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3.5 transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
-                >
-                  <div className="text-[11px] font-semibold text-[var(--accent)]">
-                    01 / 记录进展
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--text-2)]">
-                    记一下：接口 A 的 p99 延迟已降到 31ms。
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => app.setChatInput("帮我修改那个计网实验")}
-                  className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-3.5 transition-colors hover:border-[var(--accent-line)] hover:bg-[var(--accent-soft)]"
-                >
-                  <div className="text-[11px] font-semibold text-[var(--accent)]">
-                    02 / 接着改记录
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--text-2)]">
-                    帮我修改那个计网实验（自动定位或列出候选）
-                  </div>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <>
-              {app.history.map((message) => (
-                <MessageRow
-                  key={message.id}
-                  message={message}
-                  card={cardByMessageId.get(message.id)}
-                  app={app}
-                />
+              {orphanCards.map((card) => (
+                <InteractionCard key={card.id} card={card} app={app} />
               ))}
-              {orphanCards.length > 0 ? (
-                <div className="space-y-2 border-t border-[var(--line)] pt-3">
-                  <div className="text-[11px] font-medium text-[var(--muted)]">
-                    历史窗口外的活跃续接
-                  </div>
-                  {orphanCards.map((card) => (
-                    <InteractionCard key={card.id} card={card} app={app} />
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {/* Floating bottom composer (Open WebUI MessageInput pattern) */}
-      <div className="shrink-0 border-t border-[var(--line)] bg-[var(--bg)] px-4 py-3 sm:px-6">
-        <div className="mx-auto max-w-[760px]">
-          {app.replyTarget !== null ? (
-            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--accent-line)] bg-[var(--accent-soft)] px-3 py-1.5 text-xs text-[var(--accent)]">
-              <span className="truncate">正在回复：{app.replyTarget.label}</span>
-              <button
-                type="button"
-                onClick={() => {
-                  app.setChatInput("");
-                  app.setReplyTarget(null);
-                }}
-                className="inline-flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-[var(--panel)]"
-              >
-                <X className="h-3.5 w-3.5" />
-                <span>退出回复</span>
-              </button>
-            </div>
-          ) : null}
-
-          {app.retryTurn !== null ? (
-            <div className="mb-2 flex items-center justify-between gap-2 rounded-lg border border-[var(--warn-line)] bg-[var(--warn-soft)] px-3 py-1.5 text-xs text-[var(--warn)]">
-              <span>上次发送结果尚未确认，请使用同一请求核对。</span>
-              <button
-                type="button"
-                disabled={app.sending}
-                onClick={() => void app.retryPendingTurn()}
-                className="rounded-md bg-[var(--warn)] px-2.5 py-1 font-medium text-white disabled:opacity-50"
-              >
-                核对或重试上次发送
-              </button>
-            </div>
-          ) : null}
-
-          <div className="rounded-2xl border border-[var(--line-strong)] bg-[var(--panel)] p-3 shadow-xs focus-within:border-[var(--accent)]">
-            <label htmlFor="doggie-chat-input" className="sr-only">
-              输入工作事实或消息
-            </label>
-            <textarea
-              id="doggie-chat-input"
-              ref={inputRef}
-              rows={2}
-              value={app.chatInput}
-              onChange={(e) => app.setChatInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void app.sendMessage();
-                }
-              }}
-              placeholder={
-                app.replyTarget
-                  ? "输入对上述问题的回复或贴出原文…"
-                  : "记下一个想法、提问，或直接回复上方澄清…"
-              }
-              className="max-h-44 w-full resize-none bg-transparent text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
-            />
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] pt-2">
-              <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
-                <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-[var(--panel-subtle)]">
-                  <input
-                    id="conversation-preview"
-                    type="checkbox"
-                    checked={app.mainMode}
-                    disabled={app.sending || app.retryTurn !== null}
-                    onChange={(e) => void app.setMainMode(e.target.checked)}
-                    className="accent-[var(--accent)]"
-                  />
-                  <span>主对话模式</span>
-                </label>
-                {app.mainMode ? (
-                  <button
-                    id="conversation-refresh"
-                    type="button"
-                    disabled={app.sending}
-                    onClick={() => void app.loadHistory(true)}
-                    className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 hover:bg-[var(--panel-subtle)] hover:text-[var(--text)] disabled:opacity-50"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                    <span>刷新对话</span>
-                  </button>
-                ) : (
-                  <span className="text-[11px] text-[var(--warn)]">已回退旧聊天队列模式</span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                {app.mainMode && app.chatInput.length > 3500 ? (
-                  <span className="text-[11px] text-[var(--warn)]">
-                    {app.chatInput.length} / 4000
-                  </span>
-                ) : null}
-                <button
-                  id="chat-send"
-                  type="button"
-                  disabled={app.sending || !app.chatInput.trim()}
-                  onClick={() => void app.sendMessage()}
-                  className="inline-flex items-center gap-1 rounded-lg bg-[var(--accent)] px-3.5 py-1.5 text-xs font-medium text-[var(--panel)] hover:bg-[var(--accent-hover)] disabled:opacity-50"
-                >
-                  <span>发送</span>
-                  <ArrowUp className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </div>
-          </div>
-          <div className="mt-1.5 flex items-center justify-between px-1 text-[11px] text-[var(--muted)]">
-            <span>Enter 发送 · Shift + Enter 换行</span>
-            <span>不确定的归档与只读执行均需你显式确认</span>
-          </div>
-        </div>
+      {/* Bottom floating pill composer */}
+      <div className="shrink-0 bg-[var(--bg)] px-4 pt-2 pb-3 sm:px-6">
+        <ChatComposer app={app} inputRef={inputRef} centered={false} />
       </div>
     </div>
   );

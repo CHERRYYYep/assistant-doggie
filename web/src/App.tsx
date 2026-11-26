@@ -1,4 +1,4 @@
-import { Menu, PanelRightClose, PanelRightOpen, X } from "lucide-react";
+import { Menu, PanelLeftOpen, PanelRightClose, PanelRightOpen, RefreshCw, X } from "lucide-react";
 import { AgentsView } from "./components/AgentsView.tsx";
 import { AgendaView } from "./components/AgendaView.tsx";
 import { ChatView } from "./components/ChatView.tsx";
@@ -10,7 +10,7 @@ import { WorkItemsView } from "./components/WorkItemsView.tsx";
 import { useDoggieApp, type WorkspaceTab } from "./store/useDoggieApp.ts";
 
 const TAB_TITLES: Record<WorkspaceTab, string> = {
-  chat: "主对话",
+  chat: "Doggie",
   memory: "记忆空间",
   "work-items": "工作目标",
   agenda: "待办计划",
@@ -26,10 +26,15 @@ export function App() {
     <div className="flex h-full w-full overflow-hidden bg-[var(--bg)] text-[var(--text)]">
       <Sidebar app={app} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* Compact 48px single-row top bar */}
-        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-[var(--line)] bg-[var(--panel)] px-3 sm:px-4">
-          <div className="flex min-w-0 items-center gap-2">
+      <div className="flex min-w-0 flex-1 flex-col bg-[var(--bg)]">
+        {/* Ultra-minimal ChatGPT-style top header */}
+        <header
+          className={[
+            "flex h-12 shrink-0 items-center justify-between gap-2 bg-[var(--bg)] px-3 sm:px-4",
+            app.activeTab === "chat" ? "" : "border-b border-[var(--line)]",
+          ].join(" ")}
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
             <button
               type="button"
               onClick={() => app.setMobileMenuOpen(true)}
@@ -38,17 +43,23 @@ export function App() {
             >
               <Menu className="h-4 w-4" />
             </button>
-            <h1 className="truncate text-sm font-semibold text-[var(--text)]">
+            {app.sidebarCollapsed ? (
+              <button
+                type="button"
+                onClick={() => app.setSidebarCollapsed(false)}
+                aria-label="展开侧栏"
+                title="展开侧栏"
+                className="hidden h-8 w-8 items-center justify-center rounded-lg text-[var(--text-2)] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)] md:inline-flex"
+              >
+                <PanelLeftOpen className="h-4 w-4" />
+              </button>
+            ) : null}
+            <h1 className="truncate px-1 text-[15px] font-semibold text-[var(--text)]">
               {TAB_TITLES[app.activeTab]}
             </h1>
-            {app.activeTab === "chat" && !app.mainMode ? (
-              <span className="rounded-full border border-[var(--warn-line)] bg-[var(--warn-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--warn)]">
-                旧聊天模式
-              </span>
-            ) : null}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {pendingTotal > 0 ? (
               <button
                 type="button"
@@ -58,21 +69,35 @@ export function App() {
                 <span>待决 {pendingTotal}</span>
               </button>
             ) : null}
+            {app.activeTab === "chat" ? (
+              <button
+                id="conversation-refresh"
+                type="button"
+                disabled={app.sending}
+                onClick={() => void app.loadHistory()}
+                aria-label="刷新对话"
+                title="刷新对话"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--muted)] transition-colors hover:bg-[var(--panel-subtle)] hover:text-[var(--text)] disabled:opacity-50"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => app.setInspectorOpen(!app.inspectorOpen)}
               aria-label={app.inspectorOpen ? "收起检视抽屉" : "打开检视抽屉"}
+              title={app.inspectorOpen ? "收起检视抽屉" : "打开检视抽屉"}
               className={[
-                "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
+                "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors",
                 app.inspectorOpen
-                  ? "border-[var(--accent-line)] bg-[var(--accent-soft)] text-[var(--accent)]"
-                  : "border-[var(--line)] bg-[var(--panel)] text-[var(--text-2)] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]",
+                  ? "bg-[var(--panel-subtle)] text-[var(--text)]"
+                  : "text-[var(--muted)] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]",
               ].join(" ")}
             >
               {app.inspectorOpen ? (
-                <PanelRightClose className="h-3.5 w-3.5" />
+                <PanelRightClose className="h-4 w-4" />
               ) : (
-                <PanelRightOpen className="h-3.5 w-3.5" />
+                <PanelRightOpen className="h-4 w-4" />
               )}
               <span className="hidden sm:inline">检视</span>
             </button>
@@ -85,7 +110,7 @@ export function App() {
             role="status"
             aria-live="polite"
             className={[
-              "flex shrink-0 items-center justify-between gap-2 border-b px-4 py-2 text-xs",
+              "flex shrink-0 items-center justify-between gap-2 border-y px-4 py-2 text-xs",
               app.status.tone === "warning"
                 ? "border-[var(--warn-line)] bg-[var(--warn-soft)] text-[var(--warn)]"
                 : app.status.tone === "danger"
