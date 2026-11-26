@@ -136,9 +136,9 @@ detail.addEventListener("click", async (event: MouseEvent) => {
 const previewKey = "doggie.mainConversationPreview";
 function rememberedPreview(): boolean {
   try {
-    return sessionStorage.getItem(previewKey) === "true";
+    return sessionStorage.getItem(previewKey) !== "false";
   } catch {
-    return false;
+    return true;
   }
 }
 conversationPreview.checked = rememberedPreview();
@@ -193,7 +193,7 @@ taskRefresh.addEventListener("click", () => void resumeTasks());
 void Promise.all([
   refreshBuckets(),
   refreshAgenda(),
-  conversationPreview.checked ? setConversationPreview(true) : loadHistory(),
+  setConversationPreview(conversationPreview.checked),
   resumeTasks(),
   refreshWorkItems(),
 ]);

@@ -222,6 +222,12 @@ function mockServer(tasks: readonly TaskSnapshot[] = []): string[] {
         : json({ ok: true, tasks });
     if (url.startsWith("/api/chat/history"))
       return json({ ok: true, messages: [message("server-message")] });
+    if (url === "/api/conversation/interactions")
+      return json({
+        ok: true,
+        interactions: [],
+        snapshot: { throughSequence: 0, prompts: [] },
+      });
     if (url.startsWith("/api/buckets/active")) return json({ ok: true, buckets: [] });
     throw new Error(`Unexpected request ${method} ${url}`);
   };
@@ -591,10 +597,24 @@ test("real entry point binds task controls and bootstraps recovery", async () =>
   const calls = mockServer();
   await import("../assets/app.ts");
   await setImmediate();
+  assert.equal(element("conversation-preview").checked, true);
+  assert.equal(state.preview, true);
+  assert.equal(element("conversation-refresh").hidden, false);
+  assert.ok(calls.includes("GET /api/conversation/interactions"));
   assert.ok(calls.includes("GET /api/tasks"));
   assert.ok(element("task-list").listeners.has("click"));
   assert.ok(element("task-refresh").listeners.has("click"));
   assert.ok(element("conversation-refresh").listeners.has("click"));
+  element("conversation-preview").checked = false;
+  element("conversation-preview").trigger("change", {});
+  await setImmediate();
+  assert.equal(state.preview, false);
+  assert.equal(element("conversation-refresh").hidden, true);
+  element("conversation-preview").checked = true;
+  element("conversation-preview").trigger("change", {});
+  await setImmediate();
+  assert.equal(state.preview, true);
+  assert.equal(element("conversation-refresh").hidden, false);
   element("task-refresh").trigger("click", {});
   await setImmediate();
   assert.equal(calls.filter((call) => call === "GET /api/tasks").length, 2);

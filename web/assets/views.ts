@@ -654,7 +654,7 @@ export async function sendMessage(): Promise<void> {
   }
   if (state.preview) {
     if (text.length > 4000) {
-      setStatus("主对话预览每条消息最多 4000 字符。", "warning");
+      setStatus("主对话每条消息最多 4000 字符。", "warning");
       return;
     }
     const snapshot = state.observedConversation;

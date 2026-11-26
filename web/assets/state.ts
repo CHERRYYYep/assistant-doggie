@@ -62,7 +62,7 @@ export const state: FrontendState = {
   agenda: [],
   selectedBucketId: null,
   history: [],
-  preview: false,
+  preview: true,
   interactions: [],
   observedConversation: null,
   delegateOptions: null,

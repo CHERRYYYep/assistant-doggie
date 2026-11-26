@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C3、N0–N3、自然对话修复 A–D（schema v13）及 C4 真实模型对照与 C4-1～C4-5 复验均已通过；待用户确认默认入口切换
+> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C4、N0–N3 与自然对话修复 A–D（schema v13）均已验收，自然对话已设为网页默认入口
 
 ---
 
@@ -61,7 +61,7 @@ Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉�
 
 | 状态 | 未完成事项 | 后续依据 |
 |---|---|---|
-| 下一步 | 由用户确认是否将自然对话预览设为默认入口，随后推进 UI 信息架构与视觉方案设计（C4 真实模型对照与 C4-1～C4-5 复验已通过） | [C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)、[C4 计划](MAIN_CONVERSATION_PLAN.md) |
+| 下一步 | 起草 UI 信息架构与视觉方案设计文档（不急于一次性替换前端状态管理；C4 已签收并切换自然对话为默认入口） | [C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md)、[FRONTEND_DESIGN.md](FRONTEND_DESIGN.md) |
 | 待评估 | 真实模型质量、全面浏览器体验及是否切换默认入口；真实自用验收按此前决定延后 | [专项测试方案](NATURAL_CONVERSATION_REPAIR_TESTS.md)、[主对话实施计划](MAIN_CONVERSATION_PLAN.md) |
 | 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
 | 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
@@ -79,7 +79,7 @@ C0 已固定旧入口行为并整理 11 组样本。C1 验收后的完整门禁�
 | `dev_rust` | 纯 Rust workspace | **Rust 参考**，124 测试 |
 | `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5、A1–A3、B0–B3 和 C0 开工前交接 |
 | `codex/main-conversation-backend` | 主对话实施基线 | 包含 C0–C3 自动化验收 |
-| `codex/natural-conversation` | ← **当前实施分支** | 包含 N0–N3 与 A–D 修复（schema v13）、自动化验收及隔离浏览器 smoke；C4 真实模型对照与默认入口待决定 |
+| `codex/natural-conversation` | ← **当前实施分支** | 包含 N0–N3、A–D（schema v13）、C4 真实模型对照/复验与默认入口切换（可随时切回旧聊天） |
 
 ---
 
