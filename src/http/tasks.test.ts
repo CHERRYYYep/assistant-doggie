@@ -117,13 +117,23 @@ test("T12 HTTP background cancellation preserves user evidence but cannot commit
   const began = new Promise<void>((resolve) => {
     started = resolve;
   });
+  let aborted = () => {};
+  const signalAborted = new Promise<void>((resolve) => {
+    aborted = resolve;
+  });
   let release = () => {};
   const delayed = new Promise<void>((resolve) => {
     release = resolve;
   });
   const model: MemoryModel = {
     modelName: "noncooperative-fake",
-    async classify() {
+    async classify(_text, _buckets, signal) {
+      assert.ok(signal !== undefined);
+      if (signal.aborted) {
+        aborted();
+      } else {
+        signal.addEventListener("abort", aborted, { once: true });
+      }
       started();
       await delayed;
       return createNew(BucketType.Task, "late", 0.99, "明确事实");
@@ -142,11 +152,11 @@ test("T12 HTTP background cancellation preserves user evidence but cannot commit
     const task = taskSnapshotSchema.parse(body.task);
     await began;
     const cancelling = request(`/api/tasks/${task.id}/cancel`, {});
+    await signalAborted;
     release();
     const cancel = await cancelling;
     assert.equal(cancel.status, 200);
     assert.equal(tasks.get(task.id).status, "cancelled");
-    release();
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(store.listBuckets().length, 0);
     assert.equal(
@@ -155,6 +165,7 @@ test("T12 HTTP background cancellation preserves user evidence but cannot commit
       1,
     );
   } finally {
+    aborted();
     release();
     await tasks.close();
     db.close();
