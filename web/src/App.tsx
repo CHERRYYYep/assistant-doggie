@@ -13,7 +13,7 @@ const TAB_TITLES: Record<WorkspaceTab, string> = {
   chat: "Doggie",
   memory: "记忆空间",
   "work-items": "工作目标",
-  agenda: "待办计划",
+  agenda: "时间轴与待办",
   search: "检索记忆",
   agents: "Agent 与任务",
 };

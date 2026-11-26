@@ -1,5 +1,5 @@
 import {
-  CalendarCheck2,
+  CalendarClock,
   FolderKanban,
   Library,
   PanelLeftClose,
@@ -34,8 +34,8 @@ export function Sidebar({ app }: Props) {
     },
     {
       id: "agenda",
-      label: "待办计划",
-      icon: CalendarCheck2,
+      label: "时间轴与待办",
+      icon: CalendarClock,
       ...(app.counts.openTodos > 0 ? { badge: app.counts.openTodos } : {}),
     },
     {

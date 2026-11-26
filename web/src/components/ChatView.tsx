@@ -85,6 +85,9 @@ function ArchiveCard({
   const recommendedTitle =
     (recommendedObj ? asString(recommendedObj["title"]) : "") || asString(archive["bucket_title"]);
   const recommendedId = asString(archive["recommended_bucket_id"]);
+  const extractionObj = isRecord(archive["extraction"]) ? archive["extraction"] : null;
+  const extractedTodoCount =
+    extractionObj && Array.isArray(extractionObj["todos"]) ? extractionObj["todos"].length : 0;
 
   const [selectedOtherBucket, setSelectedOtherBucket] = useState("");
   const [newBucketTitle, setNewBucketTitle] = useState(recommendedTitle);
@@ -229,7 +232,11 @@ function ArchiveCard({
           <span className="flex items-center gap-1.5 font-medium">
             <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
             <span>
-              {isRevoked ? "记录已撤销（历史保留）" : `已归档至「${bucketTitle || "Bucket"}」`}
+              {isRevoked
+                ? "记录已撤销（历史保留）"
+                : extractedTodoCount > 0
+                  ? `已归档至「${bucketTitle || "Bucket"}」· 已纳入时间轴待办`
+                  : `已归档至「${bucketTitle || "Bucket"}」`}
             </span>
           </span>
           <span className="flex items-center gap-1 text-[11px] opacity-80">
@@ -238,6 +245,15 @@ function ArchiveCard({
           </span>
         </summary>
         <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-[var(--success-line)] pt-2 text-[var(--text-2)]">
+          {!isRevoked && extractedTodoCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => app.setActiveTab("agenda")}
+              className="rounded-md border border-[var(--accent-line)] bg-[var(--accent-soft)] px-2 py-1 font-medium text-[var(--accent)] hover:opacity-90"
+            >
+              查看时间轴
+            </button>
+          ) : null}
           {bucketId && entryId ? (
             <button
               type="button"

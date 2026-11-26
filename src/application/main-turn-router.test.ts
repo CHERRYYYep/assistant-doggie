@@ -358,6 +358,11 @@ test("MainConversationService natural utterance uses MainTurnRouter for natural 
   });
   assert.equal(todoReceipt.kind, "archive");
   assert.equal(store.listBuckets().length, 1);
+  const agenda = store.listAgenda();
+  assert.equal(agenda.length, 1);
+  assert.equal(agenda[0]?.text, "明天早上8点完成计网作业");
+  assert.ok(agenda[0]?.scheduledAt);
+  assert.equal(agenda[0]?.todoRawTime?.scheduledText, "明天早上8点");
 
   const chatReceipt = await conversation.turn({
     requestId: crypto.randomUUID(),

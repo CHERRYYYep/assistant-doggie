@@ -9,7 +9,12 @@ import {
   type ConfidencePolicy,
 } from "../domain/classification.ts";
 import { requiredText } from "../domain/errors.ts";
-import type { ExtractionResult } from "../domain/memory.ts";
+import { createExtraction, type ExtractionResult } from "../domain/memory.ts";
+import {
+  localTimeZone,
+  parseNaturalTodoPlan,
+  shouldAutoPromoteTodo,
+} from "../domain/todo-time.ts";
 import {
   BucketStatus,
   createBucketView,
@@ -48,7 +53,8 @@ export const CLASSIFICATION_SYSTEM_PROMPT =
 
 export const EXTRACTION_SYSTEM_PROMPT =
   "你是工作记忆提取器。只返回符合 ExtractionResult schema 的 JSON。" +
-  "完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。";
+  "完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。" +
+  "如果用户输入包含待完成的个人任务、作业、会议、提醒或日程安排（例如「明天早上写计网作业」「下周一前交报告」），必须将其放入 todos 数组并保留原始时间表达。";
 
 export type MemoryModel = {
   readonly modelName: string;
@@ -99,7 +105,11 @@ export class StructuredMemoryModel implements MemoryModel {
       extractionContract,
       this.modelName,
       EXTRACTION_SYSTEM_PROMPT,
-      JSON.stringify({ text }),
+      JSON.stringify({
+        current_time: new Date().toISOString(),
+        time_zone: localTimeZone(),
+        text,
+      }),
       this.#maxRetries,
       signal,
     );
@@ -178,11 +188,19 @@ export class ArchiveRuntime {
       candidates,
       this.#policy,
     );
-    const extraction =
+    const rawExtraction =
       classification.action === "ask_user"
         ? undefined
         : await withCancellation(signal, () =>
             this.#model.extract(text, signal),
+          );
+    const extraction =
+      rawExtraction === undefined
+        ? undefined
+        : enrichAutoTodoExtraction(
+            text,
+            classification.bucketType,
+            rawExtraction,
           );
     this.#assertMemoryRevision(memoryRevision);
     return this.#execute(text, classification, extraction, candidates, {
@@ -334,13 +352,22 @@ export class ArchiveRuntime {
       };
     }
 
-    if (request.action === "append")
-      this.#requireActiveBucket(request.targetBucketId);
-    const extraction =
+    let targetBucketType: BucketType | undefined;
+    if (request.action === "append") {
+      targetBucketType = this.#requireActiveBucket(request.targetBucketId).kind;
+    } else {
+      targetBucketType = request.bucketType;
+    }
+    const rawExtraction =
       preparedExtraction ??
       (await withCancellation(signal, () =>
         this.#model.extract(request.rawText, signal),
       ));
+    const extraction = enrichAutoTodoExtraction(
+      request.rawText,
+      targetBucketType,
+      rawExtraction,
+    );
     let result: ArchiveResult;
     if (request.action === "append") {
       throwIfAborted(signal);
@@ -457,6 +484,26 @@ export function toBucketView(bucket: BucketRow): BucketView {
     summary: bucket.summary,
     tags: bucket.tags,
     lastActiveAtUnixMs: Date.parse(bucket.lastActiveAt),
+  });
+}
+
+function enrichAutoTodoExtraction(
+  text: string,
+  bucketType: BucketType | undefined,
+  extraction: ExtractionResult,
+): ExtractionResult {
+  if (extraction.todos.length > 0) return extraction;
+  const plan = parseNaturalTodoPlan(text, new Date());
+  if (!shouldAutoPromoteTodo(text, bucketType, plan)) return extraction;
+  return createExtraction({
+    summary: extraction.summary,
+    todos: [text],
+    evidences: [...extraction.evidences],
+    timelineEvents: [...extraction.timelineEvents],
+    decisions: [...extraction.decisions],
+    hypotheses: [...extraction.hypotheses],
+    entities: [...extraction.entities],
+    tags: [...extraction.tags],
   });
 }
 

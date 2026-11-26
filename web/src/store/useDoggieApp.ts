@@ -115,6 +115,7 @@ export function useDoggieApp() {
 
   const [workItems, setWorkItems] = useState<readonly WorkItem[]>([]);
   const [agenda, setAgenda] = useState<readonly TodoDto[]>([]);
+  const [agendaNow, setAgendaNow] = useState<string | null>(null);
   const [agendaIncludeHistory, setAgendaIncludeHistory] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -153,6 +154,7 @@ export function useDoggieApp() {
       try {
         const res = await fetchAgenda(includeHistory);
         setAgenda(res.todos);
+        setAgendaNow(res.now);
         setAgendaIncludeHistory(includeHistory);
       } catch (error) {
         setBanner(errorMessage(error), "warning");
@@ -918,6 +920,7 @@ export function useDoggieApp() {
     bucketDetailError,
     workItems,
     agenda,
+    agendaNow,
     agendaIncludeHistory,
     searchQuery,
     setSearchQuery,

@@ -38,6 +38,7 @@ import {
   type TodoRawTime,
   type TodoStatus,
 } from "../domain/todo.ts";
+import { parseNaturalTodoPlan } from "../domain/todo-time.ts";
 import {
   extractionToMemoryRows,
   type ExtractionResult,
@@ -385,7 +386,14 @@ export class Store {
         extraction,
         timestamp,
       );
-      this.#insertMemories(bucketId, entryId, extraction, timestamp);
+      this.#insertMemories(
+        bucketId,
+        entryId,
+        extraction,
+        timestamp,
+        false,
+        text,
+      );
       this.#applyExtractionToBucket(bucketId, extraction, timestamp);
       this.#insertAttempt(attemptId, text, decision, audit, {
         archiveState: "archived",
@@ -503,6 +511,7 @@ export class Store {
         request.extraction,
         timestamp,
         true,
+        entry.rawText,
       );
       this.#database
         .prepare("UPDATE entries SET summary = ? WHERE id = ?")
@@ -597,6 +606,7 @@ export class Store {
     extraction: ExtractionResult,
     timestamp: string,
     dedupeExisting = false,
+    rawSourceText?: string,
   ): string[] {
     const seen = dedupeExisting
       ? this.#existingMemoryKeys(entryId)
@@ -610,21 +620,29 @@ export class Store {
     const insert = this.#database.prepare(
       hasTodoPlanColumns
         ? `INSERT INTO memory_items
-             (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
+             (id, bucket_id, entry_id, kind, text, status, due_at, occurred_at, source,
               scheduled_at, todo_rule_json, todo_raw_time_json, todo_occurrence,
               created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         : `INSERT INTO memory_items
              (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
               created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const referenceNow = new Date(timestamp);
     const insertedIds: string[] = [];
     for (const row of extractionToMemoryRows(extraction)) {
       const key = this.#memoryKey(row);
       if (seen.has(key)) continue;
       const id = newId();
       if (hasTodoPlanColumns) {
+        const plan =
+          row.kind === "todo"
+            ? (parseNaturalTodoPlan(row.text, referenceNow) ??
+              (rawSourceText === undefined
+                ? null
+                : parseNaturalTodoPlan(rawSourceText, referenceNow)))
+            : null;
         insert.run(
           id,
           bucketId,
@@ -632,8 +650,16 @@ export class Store {
           row.kind,
           row.text,
           row.status,
+          plan?.dueAt ?? null,
           row.occurredAt,
           row.source,
+          plan?.scheduledAt ?? null,
+          plan?.repeatRule === null || plan?.repeatRule === undefined
+            ? null
+            : JSON.stringify(plan.repeatRule),
+          plan?.rawTime === null || plan?.rawTime === undefined
+            ? null
+            : JSON.stringify(plan.rawTime),
           row.kind === "todo" ? 1 : null,
           timestamp,
           timestamp,
