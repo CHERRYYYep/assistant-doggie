@@ -4,16 +4,16 @@
 
 它不是设计文档，而是从**两份已存在的可运行实现**里提取出来的行为清单：
 
-- **Rust**（`dev_ts` 分支现存代码）：124 个测试
+- **Rust**（Git 历史中的参考实现）：124 个测试
 - **Python**（`dev` 分支 `app/` + `tests/`）：79 个测试，`128 passed in 6.18s`
 
 重写的最大风险是"忘了当初为什么那样写"。这份清单存在的意义是：**每一条都对应至少一个已通过的测试**，所以 TS 实现不是凭印象再写一遍，而是有一份可勾选的验收表。
 
 标记说明：
 
-- `[R]` 只有 Rust 覆盖
-- `[P]` 只有 Python 覆盖
-- `[RP]` 两边都覆盖 —— **优先级最高，两次独立实现都认为必要**
+- `[R]` 规格来源于 Rust 历史测试
+- `[P]` 规格来源于 Python 历史测试
+- `[RP]` 两边历史测试都覆盖 —— **优先级最高，两次独立实现都认为必要**
 - `[!]` **在 Rust 重写中丢失的能力**，见第 9 节
 
 ---
@@ -85,6 +85,8 @@
 | 4.14 | 追加 Entry 刷新 Bucket 活动时间；缺失 Bucket 类型化拒绝 | `[P]` `test_append_entry_updates_bucket_activity_and_detail` / `test_append_entry_rejects_missing_bucket` |
 | 4.15 | 活跃列表排除非 active Bucket | `[P]` `test_list_active_buckets_excludes_non_active_buckets` |
 
+Q2 增补（新产品合同，不改写历史 fixture）：普通 Entry 删除是逻辑撤销，原文/外键/审计保留，退出有效读取与派生上下文；同事务更新依赖与审计，重复操作稳定，失败回滚。历史空来源 Memory 不推测清理。撤销/删桶使旧模型历史与 CLI session 失效，拒绝并发晚结果回流。可执行验收见 `src/storage/entry-revocation.test.ts`、`src/http/entry-revocation.test.ts`、`src/agent/control.test.ts` 和 `web/tests/ui-tasks.test.ts`，完整行为见 [撤销合同](ENTRY_REVOCATION.md)。
+
 ## 5. 自然语言查询
 
 | # | 不变量 | 来源 |
@@ -132,9 +134,19 @@
 | 7.8 | 同一轮 `archive` 返回 needs_confirmation 后，**不得再执行写工具** | `[P]` `test_harness_blocks_same_turn_write_after_archive_needs_confirmation` — Rust 用「写工具不在回答阶段 allow-list」从结构上解决 |
 | 7.9 | Responses 和 Chat Completions 两条路径行为一致 | `[RP]` parity tests |
 
-**T10 当前覆盖（不是 §7 全部完成）**：`src/mcp/server.test.ts` 已验证官方 MCP server 的显式工具列表、未知直接写工具拒绝和未知字段在执行前拒绝；`src/mcp/tools.test.ts` 已验证三个读取工具无写副作用、`propose_entry` 只能产生 `needs_confirmation` attempt、参数上限和 64 KiB 输出上限。7.4 的多轮循环、7.7 的上下文/历史预算以及 7.9 的双模型 API Harness parity 仍由 T13 完成。
+**T13 已完成全部九条（2026-11-03）**。`src/agent/harness.test.ts` 的实际测试组对应如下；历史来源名称保留用于追溯，不代表当前依赖 Rust 测试。
 
-## 8. HTTP 边界（S1 已在 Rust 侧实现，需在 TS 重建）
+| 条目 | TS 可执行验收 |
+|---|---|
+| 7.1 / 7.2 / 7.3 / 7.5 / 7.8 | `unknown/hidden write tools and invalid args are data, never executed`，两种 API；传入 needs_confirmation 上下文，即使显式请求写工具也不执行 |
+| 7.4 | `hard round cap terminates a repeating model`，两种 API |
+| 7.6 / 7.9 | `tool output stays data, assistant continuation cannot inject system role`，两种 API；另有 encrypted reasoning 保留测试 |
+| 7.7 | `argument/result/context/history budgets are enforced`，两种 API |
+| 实际工具表 | `actual memory tool registry is exactly read-only and produces evidence without database writes` |
+
+另由 MCP 协议测试验证未知工具/字段拒绝及 CLI 子服务器只注册三个读取工具。回答阶段根本不开放写工具，因此结构上实现 7.8，不让模型自行批准归档。
+
+## 8. HTTP 边界（S1 已在 TS 重建并持续回归）
 
 | # | 不变量 | 来源 |
 | --- | --- | --- |
@@ -148,6 +160,10 @@
 | 8.8 | UTF-8 query 参数正确解码 | `[R]` `encoded_utf8_natural_language_query_is_decoded_before_search` |
 | 8.9 | 错误响应是稳定的 JSON 形状 `{ok:false, error}` | `[R]` `read_routes_and_store_failures_have_stable_json_errors` |
 | 8.10 | 分类或聊天模型失败时，**已接收的 user 消息仍要保留** | `[R]` chat failure tests |
+
+Q3 增补（现有协议的质量约束，不改变原 85 条计数）：每个业务 method/path 对应唯一 operationId 与请求/成功响应 schema；未知或重复 query、非法 path 和 DELETE body 在 dispatch 前拒绝，内部非法输出返回脱敏 500。DTO、OpenAPI 3.1 和浏览器验证规则来自同一 schema，生成漂移进入门禁；SSE 保持真实流语义。可执行证据为 `src/http/openapi.test.ts`、`browser-contracts.test.ts`、`app.test.ts` 与 `web/tests/api.test.ts`。
+
+Q4 的真实 socket 与实际浏览器 API 模块联合验证见 `src/runtime/core-flow.test.ts`，人工/真实模型验证边界见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)。
 
 ## 9. 评测能力（T9 已恢复）
 
@@ -189,3 +205,61 @@ git show dev_rust:crates/doggie-domain/tests/classification.rs
 # Python 行为（可直接运行）
 git stash && git checkout dev && .venv/bin/python -m pytest tests -q
 ```
+
+
+## 11. T11 增量批准契约（2026-10-08）
+
+这组验收独立于原有 85 条规格，**不表示 §7 Harness 已全部完成**。
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 11.1 | 所有待批准动作有 durable ID、严格 payload、来源和不可修改的原文 binding | `src/storage/pending-actions.test.ts` proposal / immutable / reopen |
+| 11.2 | 未批准不得完成；rejected / executed / failed 不能再次批准或执行 | generic action kinds / terminal tests |
+| 11.3 | archive 通用批准不可旁路；确认选择与正式数据在同一事务内记录 | archive rejection / choice / injected rollback tests |
+| 11.4 | MCP proposal 与 Web/User 归档共用批准权威，不获得直接写入能力 | MCP / explicit use cases tests + `src/runtime/local-web.test.ts` |
+| 11.5 | v2 pending/resolved IDs、原文和审计迁移后可重开且不能重放 | v2 migration test |
+| 11.6 | 并发确认只有一次正式写入；不保证提取调用去重 | concurrent confirmations test |
+
+`pending_actions` 是通用批准权威；`archive_attempts` 仍是归档审计/HTTP projection。两者任何 pending/binding 不一致均拒绝 archive 确认。非归档动作的 approve/finish 是供后续应用服务使用的存储操作，不是 HTTP/MCP 工具，也不自行调用 executor。
+
+
+## 12. T12 后台执行与取消契约（2026-10-08）
+
+此增量章节不计入原有 85 条；§7 Harness 已由 T13 完成。
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 12.1 | 严格任务 payload、稳定 ID、容量/历史上限；无新增批准权限 | `src/application/task-queue.test.ts` bounded / retention，`src/http/tasks.test.ts` contracts |
+| 12.2 | 同毫秒 FIFO、原子 claim、终态 CAS；持久化重开不重放 running | queue FIFO / restart / one-shot tests |
+| 12.3 | 单机 worker ownership 冲突 fail closed，正常关闭释放 ownership | queue restart / cancellation tests |
+| 12.4 | queued 取消不执行，running 取消传播；晚 model 结果不能归档 | queue cancellation，HTTP late model，`src/application/archive-runtime.cancellation.test.ts` |
+| 12.5 | 请求和进程 abort 不重试、不泄露 reason；timeout 仍按既有策略分类 | `src/llm/cancellation.test.ts` |
+| 12.6 | 已提交的效果不被伪报为取消，终态持久化故障停止 worker，关闭报告故障 | queue committed-effect / terminal-storage-failure tests，HTTP post-archive responder test |
+| 12.7 | SSE 有界 coalesce，早期帧即时发送/backpressure；断线 unsubscribe 不取消后台工作 | queue SSE，`src/http/server-stream.test.ts`，runtime disconnect tests |
+| 12.8 | HTTP disconnect/deadline/shutdown 提供 signal；正常 body close 不取消；HEAD/安全边界不回退 | server-stream + existing server/security tests |
+| 12.9 | 等 worker/handler 实际返回后才关 SQLite；启动清理失败也不遗漏数据库 | `src/runtime/local-web.test.ts` shutdown/drain/startup fault tests |
+| 12.10 | 客户端只 GET 恢复，不自动重复 POST；严格 SSE 和递增 revision，有界观察 | `web/tests/tasks.test.ts` + `ui-tasks.test.ts` |
+| 12.11 | 增量历史渲染保持未改变确认表单和用户滚动位置，仍防 XSS/CSP | `web/tests/ui-tasks.test.ts` + markdown/module-contract tests |
+
+T12 原始范围是后台聊天；T13 新增经显式批准、绑定 `agent_tasks` 的只读 CLI 分派，不执行任意 generic `agent_task` / `scheduled_run` / `bulk_mutation`。完整规则和限制见 [TASK_QUEUE.md](TASK_QUEUE.md)。
+
+
+## 13. T13 CLI 与控制面增量验收
+
+`src/agent/control.test.ts` 覆盖六项工作区/会话检查、批准和队列原子事务、单次执行/恢复会话、重开、运行中断/取消及终态存储故障；`src/agent/process.test.ts` 覆盖两种 CLI JSONL、固定只读 argv/stdin、秘密环境隔离、输出限制、进程组取消和私有 cwd；`src/storage/agents.test.ts` 覆盖真实 v4→v5 数据保留；runtime/HTTP/MCP/web 测试覆盖实际入口及原文批准/XSS。
+
+这不等于任意恶意代码隔离，也不承诺真实模型的准确率或账号可用性。详见 [AGENT_CONTROL.md](AGENT_CONTROL.md) 与 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。
+
+
+## 14. 主对话前后端修缮增量验收（2026-11-18）
+
+| # | 不变量 | TypeScript 可执行测试 |
+|---|---|---|
+| 14.1 | COMMIT 失败会清理事务；清理失败隔离连接并关闭 Web/worker，BEGIN 失败不回滚外层 | `src/storage/transactions.test.ts`、`src/runtime/local-web.test.ts` |
+| 14.2 | 模型历史先筛选后取 limit，限定 throughSequence；完整标题唯一性不依赖展示窗口 | `src/storage/store.test.ts`、`src/application/work-items.test.ts` |
+| 14.3 | 直接/后台/确认共享有界轮次 FIFO；等待取消不写入，终结消息组原子提交并绑定来源消息 | `src/application/chat.test.ts`、`src/runtime/local-web.test.ts` |
+| 14.4 | 聊天/只读记忆/Harness/队列不传递依赖 HTTP/MCP adapter，包括类型 import | `tests/architecture/backend-dependencies.test.ts` |
+| 14.5 | Entry 候选批量读取，保持 SQL 字面与 Unicode 规则、有效性和全局排序；不逐 Entry filter 整桶 Memory | `src/storage/store.test.ts`、`src/application/query.test.ts`、撤销回归；合成基准单独运行 |
+| 14.6 | queue 终态与关联失败/取消投影原子提交；GET 不开写事务；启动恢复不重放 interrupted，拒绝不可能成功 | `src/agent/control.test.ts`、`src/storage/work-items.test.ts`、原队列/runtime 测试 |
+
+检索仍有同步线性扫描，R5 通过不等于已交付主对话澄清或索引检索。详细限制见 [BACKEND_REPAIR_ACCEPTANCE.md](BACKEND_REPAIR_ACCEPTANCE.md)。

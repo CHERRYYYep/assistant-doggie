@@ -1,0 +1,1110 @@
+{
+  "upstreamCommit": "42d4cde50c5a83182fced8c584f9ddb32a620615",
+  "upstreamLockSha256": "3567e5ca72eb724122540c2474492d90175483222a8d63d3300e71eb8bd8e958",
+  "doggieBaseCommit": "834dc03f5126bb21fdc7443b5e300026a99a0308",
+  "harnessSha256": {
+    "run.ts": "ae9bb1fe1d5fa2ef6c8fea9a38ea0861a913209e883c8a4261f367b161e50523",
+    "source-guard.ts": "17ca698f2c37d4162b92a4cb87ae696ad3901d676fdfa52f8cb7d478740c5d35",
+    "client.ts": "dc4e36db9e858a83b687c47af6c5f011f7c01525aea0555f76445c26b0f087c7",
+    "retrieval-probe.ts": "7c8bd7404b086a83bb1b8b1777e7aca0a7d7347b5e682bf57932286cafe695f3",
+    "retrieval-fixtures.ts": "5e53234362e54faa03638412d8e6b5f65823de2db278254dbd4f3e55bc5cd9f9"
+  },
+  "node": "v24.18.0",
+  "modelRequests": 0,
+  "index": "Core L0 SQLite FTS/BM25; Doggie local lexical query; embedding disabled",
+  "startedAt": "2026-11-18T11:09:34.987Z",
+  "fixtureVersion": "l0-language-v1",
+  "failedAt": null,
+  "rows": [
+    {
+      "iteration": 1,
+      "queryId": "q01",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r05", "r02"],
+        "negativePassed": null,
+        "top": ["r01", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r01"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q02",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r11", "r04"],
+        "negativePassed": null,
+        "top": ["r03", "r11", "r04"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r03"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q03",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r12", "r08"],
+        "negativePassed": null,
+        "top": ["r09", "r12", "r08"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r09"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q04",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.5,
+        "unexpected": ["r06"],
+        "negativePassed": null,
+        "top": ["r07", "r06"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r07"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q05",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r04"],
+        "negativePassed": null,
+        "top": ["r04"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q06",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r12", "r01", "r03"],
+        "negativePassed": null,
+        "top": ["r12", "r01", "r03", "r06"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q07",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r08"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q08",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q09",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r02"],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q10",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.4,
+        "unexpected": ["r11", "r03", "r02"],
+        "negativePassed": null,
+        "top": ["r05", "r04", "r11", "r03", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r05", "r04"]
+      },
+      "coreCandidates": 2,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q11",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r11", "r03", "r05", "r02"],
+        "negativePassed": null,
+        "top": ["r04", "r11", "r03", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r03", "r11", "r05"],
+        "negativePassed": null,
+        "top": ["r04", "r03", "r11", "r05"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q12",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r04", "r11"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r04", "r11"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r11", "r04"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r11", "r04"]
+      },
+      "coreCandidates": 5,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q13",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q14",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q15",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 1,
+      "queryId": "q16",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r12", "r09", "r02"],
+        "negativePassed": false,
+        "top": ["r12", "r09", "r02"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q01",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r05", "r02"],
+        "negativePassed": null,
+        "top": ["r01", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r01"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q02",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r11", "r04"],
+        "negativePassed": null,
+        "top": ["r03", "r11", "r04"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r03"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q03",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r12", "r08"],
+        "negativePassed": null,
+        "top": ["r09", "r12", "r08"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r09"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q04",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.5,
+        "unexpected": ["r06"],
+        "negativePassed": null,
+        "top": ["r07", "r06"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r07"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q05",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r04"],
+        "negativePassed": null,
+        "top": ["r04"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q06",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r12", "r01", "r03"],
+        "negativePassed": null,
+        "top": ["r12", "r01", "r03", "r06"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q07",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r08"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q08",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q09",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r02"],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q10",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.4,
+        "unexpected": ["r11", "r03", "r02"],
+        "negativePassed": null,
+        "top": ["r05", "r04", "r11", "r03", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r05", "r04"]
+      },
+      "coreCandidates": 2,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q11",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r11", "r03", "r05", "r02"],
+        "negativePassed": null,
+        "top": ["r04", "r11", "r03", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r03", "r11", "r05"],
+        "negativePassed": null,
+        "top": ["r04", "r03", "r11", "r05"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q12",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r04", "r11"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r04", "r11"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r11", "r04"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r11", "r04"]
+      },
+      "coreCandidates": 5,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q13",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q14",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q15",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 2,
+      "queryId": "q16",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r12", "r09", "r02"],
+        "negativePassed": false,
+        "top": ["r12", "r09", "r02"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q01",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r05", "r02"],
+        "negativePassed": null,
+        "top": ["r01", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r01"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q02",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r11", "r04"],
+        "negativePassed": null,
+        "top": ["r03", "r11", "r04"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r03"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q03",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.3333333333333333,
+        "unexpected": ["r12", "r08"],
+        "negativePassed": null,
+        "top": ["r09", "r12", "r08"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r09"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q04",
+      "group": "literal",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.5,
+        "unexpected": ["r06"],
+        "negativePassed": null,
+        "top": ["r07", "r06"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r07"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q05",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r04"],
+        "negativePassed": null,
+        "top": ["r04"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q06",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r12", "r01", "r03"],
+        "negativePassed": null,
+        "top": ["r12", "r01", "r03", "r06"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q07",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r08"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q08",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q09",
+      "group": "paraphrase",
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": []
+      },
+      "core": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpected": ["r02"],
+        "negativePassed": null,
+        "top": ["r02"]
+      },
+      "coreCandidates": 1,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q10",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.4,
+        "unexpected": ["r11", "r03", "r02"],
+        "negativePassed": null,
+        "top": ["r05", "r04", "r11", "r03", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpected": [],
+        "negativePassed": null,
+        "top": ["r05", "r04"]
+      },
+      "coreCandidates": 2,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q11",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r11", "r03", "r05", "r02"],
+        "negativePassed": null,
+        "top": ["r04", "r11", "r03", "r05", "r02"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.25,
+        "unexpected": ["r03", "r11", "r05"],
+        "negativePassed": null,
+        "top": ["r04", "r03", "r11", "r05"]
+      },
+      "coreCandidates": 4,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q12",
+      "group": "disambiguation",
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r04", "r11"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r04", "r11"]
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": ["r02", "r01", "r11", "r04"],
+        "negativePassed": null,
+        "top": ["r05", "r02", "r01", "r11", "r04"]
+      },
+      "coreCandidates": 5,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q13",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q14",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "coreCandidates": 0,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q15",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r05", "r02", "r01"],
+        "negativePassed": false,
+        "top": ["r05", "r02", "r01"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    },
+    {
+      "iteration": 3,
+      "queryId": "q16",
+      "group": "negative",
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true,
+        "top": []
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": ["r12", "r09", "r02"],
+        "negativePassed": false,
+        "top": ["r12", "r09", "r02"]
+      },
+      "coreCandidates": 3,
+      "coreUnbound": 0
+    }
+  ],
+  "summary": {
+    "all": {
+      "doggie": {
+        "recallAt5": 0.5833,
+        "precisionAt5": 0.1917,
+        "unexpectedAt5": 63,
+        "negativePassed": 9,
+        "negativeTotal": 12
+      },
+      "core": {
+        "recallAt5": 0.8333,
+        "precisionAt5": 0.6417,
+        "unexpectedAt5": 54,
+        "negativePassed": 6,
+        "negativeTotal": 12
+      }
+    },
+    "literal": {
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.375,
+        "unexpectedAt5": 21,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 1,
+        "unexpectedAt5": 0,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      }
+    },
+    "paraphrase": {
+      "doggie": {
+        "recallAt5": 0,
+        "precisionAt5": 0,
+        "unexpectedAt5": 0,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      },
+      "core": {
+        "recallAt5": 0.6,
+        "precisionAt5": 0.45,
+        "unexpectedAt5": 15,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      }
+    },
+    "disambiguation": {
+      "doggie": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2667,
+        "unexpectedAt5": 33,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      },
+      "core": {
+        "recallAt5": 1,
+        "precisionAt5": 0.4833,
+        "unexpectedAt5": 21,
+        "negativePassed": 0,
+        "negativeTotal": 0
+      }
+    },
+    "negative": {
+      "doggie": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpectedAt5": 9,
+        "negativePassed": 9,
+        "negativeTotal": 12
+      },
+      "core": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpectedAt5": 18,
+        "negativePassed": 6,
+        "negativeTotal": 12
+      }
+    }
+  }
+}

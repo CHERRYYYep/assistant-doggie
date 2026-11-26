@@ -125,6 +125,85 @@ test("archive writes the whole graph in one transaction", () => {
   ]);
 });
 
+test("archive ID lookup uses the Entry index and follows effective source and Bucket bindings", (t) => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database, steppingClock());
+  const target = store.archive(
+    "关联资料",
+    createNew("目标 Bucket"),
+    createExtraction({
+      summary: "摘要",
+      evidences: ["证据 A", "证据 B"],
+      todos: ["后续验证"],
+    }),
+    AUDIT,
+  );
+  const other = store.archive(
+    "无结构化资料",
+    createNew("另一个 Bucket"),
+    minimalExtraction("空提取项"),
+    AUDIT,
+  );
+  assert.ok(
+    target.bucketId && target.entryId && other.bucketId && other.entryId,
+  );
+  const { entryId, bucketId } = target;
+  const expected = store
+    .getBucketDetail(bucketId)
+    ?.memories.map(({ id }) => id);
+  assert.equal(expected?.length, 3);
+  const prepare = t.mock.method(database, "prepare");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, bucketId),
+    expected,
+  );
+  assert.equal(prepare.mock.callCount(), 1);
+  const query = prepare.mock.calls[0]?.arguments[0];
+  assert.ok(query);
+  assert.match(query, /^SELECT m\.id\s+FROM/u);
+  const plan = database
+    .prepare(`EXPLAIN QUERY PLAN ${query}`)
+    .all(entryId, bucketId);
+  assert.ok(
+    plan.some(
+      ({ detail }) =>
+        typeof detail === "string" &&
+        /ix_memory_items_entry.*entry_id=\?/u.test(detail),
+    ),
+    JSON.stringify(plan),
+  );
+  prepare.mock.restore();
+
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry("missing", bucketId),
+    [],
+  );
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    [],
+  );
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(other.entryId, other.bucketId),
+    [],
+  );
+  store.moveEntry(entryId, other.bucketId, "移到另一主题");
+  assert.deepEqual(store.listEffectiveMemoryIdsForEntry(entryId, bucketId), []);
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    expected,
+  );
+  store.deleteEntry(entryId, "撤销来源");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(entryId, other.bucketId),
+    [],
+  );
+  store.deleteBucket(other.bucketId, "删除主题");
+  assert.deepEqual(
+    store.listEffectiveMemoryIdsForEntry(other.entryId, other.bucketId),
+    [],
+  );
+});
+
 test("foreign keys are enforced", () => {
   const store = freshStore();
   const enforced = store.database.prepare("PRAGMA foreign_keys").get() as {
@@ -769,6 +848,12 @@ test("a database holding foreign tables is refused", () => {
         "bucket_tags",
         "memory_items",
         "archive_attempts",
+        "pending_actions",
+        "background_tasks",
+        "background_task_executor",
+        "agent_workspaces",
+        "agent_sessions",
+        "agent_tasks",
         "corrections",
         "conversation_messages",
       ]);
@@ -788,7 +873,7 @@ test("the schema records its version", () => {
   const meta = store.database
     .prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'")
     .get() as { value: string };
-  assert.equal(meta.value, "2");
+  assert.equal(meta.value, "13");
 
   const migrations = store.database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
@@ -796,6 +881,17 @@ test("the schema records its version", () => {
   assert.deepEqual(plainAll(migrations), [
     { version: 1, name: "create_memory_schema_v1" },
     { version: 2, name: "add_pending_archive_suggestions_v2" },
+    { version: 3, name: "add_pending_actions_v3" },
+    { version: 4, name: "add_background_tasks_v4" },
+    { version: 5, name: "add_agent_control_v5" },
+    { version: 6, name: "add_entry_revocation_v6" },
+    { version: 7, name: "add_todo_plan_v7" },
+    { version: 8, name: "add_work_items_v8" },
+    { version: 9, name: "add_main_clarifications_v9" },
+    { version: 10, name: "link_conversation_execution_v10" },
+    { version: 11, name: "add_natural_conversation_v11" },
+    { version: 12, name: "add_entry_subject_v12" },
+    { version: 13, name: "bind_clarification_material_message_v13" },
   ]);
 });
 
@@ -891,4 +987,111 @@ test("query candidate reads do not refresh Bucket activity", () => {
 
   assert.equal(store.searchEntryCandidates(["压测"]).length, 1);
   assert.deepEqual(store.getBucket(outcome.bucketId!), before);
+});
+
+test("model history fills its window with eligible rows, respects an upper bound and hides audit details", () => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database);
+  const first = store.appendChatMessage({
+    role: "user",
+    content: "早先的问题",
+    details: { other_key: "work_item_id" },
+  });
+  const second = store.appendChatMessage({
+    role: "assistant",
+    content: "早先的回答",
+  });
+  for (let index = 0; index < 41; index++) {
+    store.appendChatMessage({
+      role: "user",
+      content: "目标消息",
+      details: { work_item_id: null },
+    });
+    store.appendChatMessage({ role: "tool", content: "工具输出" });
+  }
+  const newest = store.appendChatMessage({ role: "user", content: "新的问题" });
+
+  assert.deepEqual(
+    store.listModelChatMessages(2).map(({ id, details }) => [id, details]),
+    [
+      [second.id, undefined],
+      [newest.id, undefined],
+    ],
+  );
+  assert.deepEqual(
+    store.listModelChatMessages(40, second.sequence).map(({ id }) => id),
+    [first.id, second.id],
+  );
+  assert.deepEqual(store.listModelChatMessages(40, 0), []);
+  assert.equal(store.listChatMessages(40).length, 40);
+});
+
+test("malformed model history details fail closed", () => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database);
+  const message = store.appendChatMessage({
+    role: "assistant",
+    content: "旧结果",
+  });
+  database
+    .prepare("UPDATE conversation_messages SET details_json = ? WHERE id = ?")
+    .run("{broken", message.id);
+  assert.throws(() => store.listModelChatMessages(40));
+});
+
+test("query candidates batch reads and preserve SQL-only and folded cross-field matches", (t) => {
+  using database = openDatabase(":memory:");
+  const store = new Store(database, steppingClock());
+  const first = store.archive(
+    "entry-head",
+    createNew("first"),
+    createExtraction({
+      summary: "summary",
+      evidences: ["fixture"],
+    }),
+    AUDIT,
+  );
+  assert.ok(first.bucketId && first.entryId);
+  database
+    .prepare("UPDATE buckets SET summary=? WHERE id=?")
+    .run("Straße", first.bucketId);
+  // The legacy SQL path sees literal formatting that the reserialized
+  // metadata in the folded corpus does not preserve.
+  database
+    .prepare(
+      "UPDATE memory_items SET metadata_json=? WHERE entry_id=? AND kind='evidence'",
+    )
+    .run('{"marker":  "fixture"}', first.entryId);
+  for (let index = 0; index < 16; index++) {
+    store.archive(
+      "another source",
+      createNew(`unrelated ${index}`),
+      minimalExtraction("another summary"),
+      AUDIT,
+    );
+  }
+  const prepare = t.mock.method(database, "prepare");
+  const matched = store.memory.searchEntryCandidates([
+    'marker":  "fixture',
+    "STRASSE entry-head",
+  ]);
+  assert.deepEqual(
+    matched.map(({ entry }) => entry.id),
+    [first.entryId],
+  );
+  assert.ok(
+    prepare.mock.callCount() <= 5,
+    "reads must not grow with Bucket count",
+  );
+  for (const term of ['marker":  "fixture', "STRASSE entry-head"]) {
+    const only = store.memory.searchEntryCandidates([term]);
+    assert.deepEqual(
+      only.map(({ entry }) => entry.id),
+      [first.entryId],
+    );
+    assert.deepEqual(
+      only[0]?.memories.find(({ kind }) => kind === "evidence")?.metadata,
+      { marker: "fixture" },
+    );
+  }
 });

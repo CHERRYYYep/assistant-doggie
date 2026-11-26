@@ -1,11 +1,7 @@
 /**
  * Canonical SQLite schema.
  *
- * The physical layout is a cleaned-up version of the Rust canonical schema —
- * the `rust_` table-name prefix is gone, since it was a legacy-compatibility
- * artifact that means nothing here. Compatibility with the old database was
- * dropped deliberately (see `docs/PLAN.md` Q3), so this is free to be a
- * straightforward design.
+ * TypeScript owns this schema; pre-TS databases are not imported.
  *
  * What did **not** change is the transaction semantics: see
  * `docs/INVARIANTS.md` §4, all fifteen of which this layer must uphold.
@@ -19,7 +15,7 @@
  *      `entries.raw_text`, which is the one irreplaceable column.
  */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 13;
 export const SCHEMA_KIND = "doggie-work-memory";
 
 /**
@@ -89,8 +85,8 @@ CREATE TABLE bucket_tags (
 
 -- One table for every structured memory kind: summary, todo, evidence,
 -- timeline, decision, hypothesis, entity, tag.
--- entry_id is SET NULL rather than CASCADE: deleting one Entry must not erase
--- memory that other Entries in the Bucket still support.
+-- Legacy physical deletion leaves entry_id NULL. Current Entry revocation
+-- preserves this link, and effective reads exclude a revoked source.
 CREATE TABLE memory_items (
     id            TEXT PRIMARY KEY,
     bucket_id     TEXT NOT NULL REFERENCES buckets(id) ON DELETE CASCADE,
@@ -172,12 +168,361 @@ ALTER TABLE archive_attempts ADD COLUMN suggested_bucket_type TEXT;
 ALTER TABLE archive_attempts ADD COLUMN suggested_title TEXT;
 `;
 
+const ADD_PENDING_ACTIONS_V3 = `
+CREATE TABLE pending_actions (
+    id            TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL CHECK (kind IN ('archive', 'agent_task', 'scheduled_run', 'bulk_mutation')),
+    proposed_by   TEXT NOT NULL CHECK (proposed_by IN ('model', 'schedule', 'user')),
+    binding_text  TEXT NOT NULL,
+    payload_json  TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'rejected', 'executed', 'failed')),
+    approval_json TEXT,
+    result_json   TEXT,
+    failure_code  TEXT,
+    created_at    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+CREATE INDEX ix_pending_actions_status_created ON pending_actions(status, created_at, id);
+
+-- Preserve existing confirmation IDs and raw input; history cards need no rewrite.
+-- Archive attempts remain the historical audit projection, not approval authority.
+INSERT INTO pending_actions
+    (id, kind, proposed_by, binding_text, payload_json, status, result_json, created_at, updated_at)
+SELECT id, 'archive', 'model', raw_text,
+    json_object('rawText', raw_text, 'candidateBucketIds', json(candidate_bucket_ids_json),
+      'focusBucketId', focus_bucket_id, 'suggestedBucketType', suggested_bucket_type,
+      'suggestedTitle', suggested_title),
+    CASE WHEN archive_state = 'needs_confirmation' AND resolved_at IS NULL AND corrected = 0 THEN 'pending'
+         WHEN archive_state = 'archived' THEN 'executed' ELSE 'rejected' END,
+    CASE WHEN archive_state = 'archived' THEN json_object('referenceId', id) ELSE NULL END,
+    created_at, COALESCE(resolved_at, created_at)
+FROM archive_attempts WHERE action = 'ask_user';
+
+CREATE TRIGGER pending_action_proposal_immutable
+BEFORE UPDATE OF id, kind, proposed_by, binding_text, payload_json, created_at ON pending_actions
+BEGIN
+  SELECT RAISE(ABORT, 'pending action proposal is immutable');
+END;
+`;
+
+const ADD_BACKGROUND_TASKS_V4 = `
+CREATE TABLE background_tasks (
+    id TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL UNIQUE CHECK (sequence > 0),
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('queued','running','succeeded','failed','cancelled')),
+    revision INTEGER NOT NULL CHECK (revision > 0),
+    error_code TEXT CHECK (error_code IN ('execution_failed','interrupted')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX ix_background_tasks_status_created ON background_tasks(status, sequence);
+CREATE TRIGGER background_task_payload_immutable
+BEFORE UPDATE OF id, sequence, payload_json, created_at ON background_tasks
+BEGIN SELECT RAISE(ABORT, 'task payload is immutable'); END;
+-- A local process owner prevents a second Web runtime recovering live work.
+CREATE TABLE background_task_executor (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    owner_id TEXT NOT NULL,
+    process_id INTEGER NOT NULL CHECK (process_id > 0)
+);
+`;
+
+const ADD_AGENT_CONTROL_V5 = `
+CREATE TABLE agent_workspaces (
+ id TEXT PRIMARY KEY, path TEXT NOT NULL, base_commit TEXT NOT NULL,
+ git_status TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(path,base_commit,git_status)
+);
+ALTER TABLE buckets ADD COLUMN workspace_id TEXT REFERENCES agent_workspaces(id) ON DELETE SET NULL;
+CREATE TABLE agent_sessions (
+ id TEXT PRIMARY KEY, workspace_id TEXT REFERENCES agent_workspaces(id),
+ backend TEXT NOT NULL CHECK (backend IN ('claude','codex')), remote_id TEXT,
+ created_at TEXT NOT NULL
+);
+CREATE TABLE agent_tasks (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_sessions(id),
+ workspace_id TEXT REFERENCES agent_workspaces(id), backend TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+ instruction TEXT NOT NULL, pending_action_id TEXT NOT NULL UNIQUE REFERENCES pending_actions(id),
+ queue_id TEXT UNIQUE REFERENCES background_tasks(id) ON DELETE SET NULL,
+ status TEXT NOT NULL CHECK (status IN ('pending','queued','running','succeeded','failed','cancelled','rejected')),
+ output TEXT NOT NULL DEFAULT '', failure_code TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX ix_agent_workspace_busy ON agent_tasks(workspace_id) WHERE status IN ('queued','running') AND workspace_id IS NOT NULL;
+CREATE UNIQUE INDEX ix_agent_session_busy ON agent_tasks(session_id) WHERE status IN ('queued','running');
+CREATE INDEX ix_agent_task_created ON agent_tasks(created_at, id);
+CREATE TRIGGER agent_workspace_immutable BEFORE UPDATE ON agent_workspaces
+BEGIN SELECT RAISE(ABORT, 'workspace baseline is immutable'); END;
+CREATE TRIGGER agent_session_binding_immutable BEFORE UPDATE OF id,workspace_id,backend,created_at ON agent_sessions
+BEGIN SELECT RAISE(ABORT, 'session binding is immutable'); END;
+CREATE TRIGGER agent_task_binding_immutable BEFORE UPDATE OF id,session_id,workspace_id,backend,instruction,pending_action_id,created_at ON agent_tasks
+BEGIN SELECT RAISE(ABORT, 'task binding is immutable'); END;
+`;
+
+const ADD_ENTRY_REVOCATION_V6 = `
+ALTER TABLE entries ADD COLUMN revoked_at TEXT;
+CREATE INDEX ix_entries_effective_bucket_created
+    ON entries(bucket_id, created_at, id) WHERE revoked_at IS NULL;
+ALTER TABLE agent_sessions ADD COLUMN memory_revision INTEGER NOT NULL DEFAULT 0;
+DROP TRIGGER agent_session_binding_immutable;
+CREATE TRIGGER agent_session_binding_immutable
+BEFORE UPDATE OF id,workspace_id,backend,created_at,memory_revision ON agent_sessions
+BEGIN SELECT RAISE(ABORT, 'session binding is immutable'); END;
+`;
+
+const ADD_TODO_PLAN_V7 = `
+ALTER TABLE memory_items ADD COLUMN scheduled_at TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_rule_json TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_raw_time_json TEXT;
+ALTER TABLE memory_items ADD COLUMN todo_occurrence INTEGER;
+
+-- Existing extracted TODOs are the first occurrence and remain open. Other
+-- memory kinds deliberately keep the new TODO columns NULL.
+UPDATE memory_items SET status = 'open' WHERE kind = 'todo' AND status IS NULL;
+UPDATE memory_items SET todo_occurrence = 1 WHERE kind = 'todo';
+
+CREATE INDEX ix_memory_items_todo_agenda
+    ON memory_items(kind, status, due_at, scheduled_at, updated_at, id)
+    WHERE kind = 'todo';
+`;
+
+const ADD_WORK_ITEMS_V8 = `
+CREATE TABLE work_items (
+ id TEXT PRIMARY KEY, title TEXT NOT NULL, goal TEXT NOT NULL, acceptance TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('open','in_progress','blocked','done','cancelled')),
+ revision INTEGER NOT NULL CHECK(revision>0), scope_revision INTEGER NOT NULL CHECK(scope_revision>0),
+ cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+ last_attempt_id TEXT REFERENCES agent_tasks(id), last_attempt_status TEXT,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+);
+CREATE TABLE work_item_sources (
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), kind TEXT NOT NULL CHECK(kind IN ('entry','bucket','message')),
+ source_id TEXT NOT NULL, PRIMARY KEY(work_item_id,kind,source_id)
+);
+CREATE TABLE work_item_sessions (
+ session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id),
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), scope_revision INTEGER NOT NULL
+);
+CREATE TABLE work_item_attempts (
+ agent_task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ work_item_id TEXT NOT NULL REFERENCES work_items(id), scope_revision INTEGER NOT NULL,
+ sequence INTEGER NOT NULL UNIQUE
+);
+CREATE INDEX ix_work_item_attempts ON work_item_attempts(work_item_id,sequence DESC);
+CREATE TABLE work_item_requests (
+ request_id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload_json TEXT NOT NULL, result_id TEXT NOT NULL
+);
+CREATE TABLE work_item_events (
+ id TEXT PRIMARY KEY, work_item_id TEXT NOT NULL REFERENCES work_items(id),
+ revision INTEGER NOT NULL, kind TEXT NOT NULL, details_json TEXT NOT NULL, created_at TEXT NOT NULL,
+ UNIQUE(work_item_id,revision)
+);
+CREATE TRIGGER work_item_session_immutable BEFORE UPDATE ON work_item_sessions
+BEGIN SELECT RAISE(ABORT,'work item session binding is immutable'); END;
+CREATE TRIGGER work_item_attempt_immutable BEFORE UPDATE ON work_item_attempts
+BEGIN SELECT RAISE(ABORT,'work item attempt binding is immutable'); END;
+`;
+
+const ADD_MAIN_CLARIFICATIONS_V9 = `
+CREATE TABLE conversation_clarifications (
+ id TEXT PRIMARY KEY,
+ original_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ assistant_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ latest_reply_id TEXT REFERENCES conversation_messages(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','resolved','cancelled','stale')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ candidates_json TEXT NOT NULL CHECK(json_valid(candidates_json)),
+ truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+ selected_id TEXT REFERENCES work_items(id),
+ selected_scope_revision INTEGER CHECK(selected_scope_revision > 0),
+ CHECK ((selected_id IS NULL) = (selected_scope_revision IS NULL)),
+ CHECK (status != 'resolved' OR selected_id IS NOT NULL)
+);
+CREATE INDEX ix_conversation_clarification_status ON conversation_clarifications(status);
+CREATE TABLE conversation_requests (
+ request_id TEXT PRIMARY KEY,
+ payload_hash TEXT NOT NULL,
+ result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json))
+);
+`;
+
+const ADD_CONVERSATION_EXECUTION_V10 = `
+CREATE TABLE conversation_executions (
+ task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ clarification_id TEXT NOT NULL REFERENCES conversation_clarifications(id),
+ card_revision INTEGER NOT NULL CHECK(card_revision > 0)
+);
+CREATE INDEX ix_conversation_executions_card
+ ON conversation_executions(clarification_id,card_revision);
+CREATE TRIGGER conversation_execution_immutable BEFORE UPDATE ON conversation_executions
+BEGIN SELECT RAISE(ABORT,'conversation execution binding is immutable'); END;
+CREATE INDEX ix_conversation_supplements
+ ON conversation_messages(json_extract(details_json,'$.clarification_id'),sequence)
+ WHERE role='user' AND json_extract(details_json,'$.kind')='task_clarification_reply'
+   AND json_extract(details_json,'$.action')='reply';
+`;
+
+const ADD_NATURAL_CONVERSATION_V11 = `
+ALTER TABLE conversation_clarifications ADD COLUMN prompt_message_id TEXT REFERENCES conversation_messages(id);
+ALTER TABLE conversation_clarifications ADD COLUMN awaiting TEXT CHECK (
+ (awaiting IS NULL OR (prompt_message_id IS NOT NULL AND
+   ((status='pending' AND awaiting='subject') OR
+    (status='resolved' AND awaiting IN ('material','requirements')))))
+);
+CREATE INDEX ix_conversation_clarification_waiting ON conversation_clarifications(awaiting);
+`;
+
+// Rebuild parent and its dependent table in one transaction with FK enforcement on.
+const ADD_ENTRY_SUBJECT_V12 = `
+CREATE TABLE clarification_next (
+ id TEXT PRIMARY KEY,
+ original_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ assistant_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ latest_reply_id TEXT REFERENCES conversation_messages(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','resolved','cancelled','stale')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ candidates_json TEXT NOT NULL CHECK(json_valid(candidates_json)),
+ truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+ selected_id TEXT REFERENCES work_items(id),
+ selected_scope_revision INTEGER CHECK(selected_scope_revision > 0),
+ selected_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL,
+ selected_memory_revision INTEGER CHECK(selected_memory_revision >= 0),
+ prompt_message_id TEXT REFERENCES conversation_messages(id),
+ awaiting TEXT CHECK (awaiting IS NULL OR (prompt_message_id IS NOT NULL AND
+   ((status='pending' AND awaiting='subject') OR
+    (status='resolved' AND awaiting IN ('material','requirements'))))),
+ CHECK ((selected_id IS NULL) = (selected_scope_revision IS NULL)),
+ CHECK ((selected_entry_id IS NULL) = (selected_memory_revision IS NULL)),
+ CHECK (selected_id IS NULL OR selected_entry_id IS NULL),
+ CHECK (status != 'resolved' OR selected_id IS NOT NULL OR selected_entry_id IS NOT NULL)
+);
+CREATE TRIGGER clearance_entry_subject BEFORE DELETE ON entries
+ WHEN EXISTS (SELECT 1 FROM clarification_next WHERE selected_entry_id=OLD.id)
+ BEGIN
+  UPDATE clarification_next SET status='stale', revision=revision+1, awaiting=NULL,
+     selected_entry_id=NULL, selected_memory_revision=NULL WHERE selected_entry_id=OLD.id;
+ END;
+INSERT INTO clarification_next(id,original_message_id,assistant_message_id,latest_reply_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,prompt_message_id,awaiting)
+ SELECT id,original_message_id,assistant_message_id,latest_reply_id,status,revision,
+ (SELECT json_group_array(json_set(value,'$.kind','work_item')) FROM json_each(candidates_json)),truncated,selected_id,selected_scope_revision,prompt_message_id,awaiting FROM conversation_clarifications;
+CREATE TABLE execution_next (
+ task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ clarification_id TEXT NOT NULL REFERENCES clarification_next(id),
+ card_revision INTEGER NOT NULL CHECK(card_revision > 0)
+);
+INSERT INTO execution_next SELECT task_id,clarification_id,card_revision FROM conversation_executions;
+DROP TABLE conversation_executions;
+DROP TABLE conversation_clarifications;
+ALTER TABLE clarification_next RENAME TO conversation_clarifications;
+ALTER TABLE execution_next RENAME TO conversation_executions;
+CREATE INDEX ix_conversation_clarification_status ON conversation_clarifications(status);
+CREATE INDEX ix_conversation_clarification_waiting ON conversation_clarifications(awaiting);
+CREATE INDEX ix_conversation_executions_card ON conversation_executions(clarification_id,card_revision);
+CREATE TRIGGER conversation_execution_immutable BEFORE UPDATE ON conversation_executions
+BEGIN SELECT RAISE(ABORT,'conversation execution binding is immutable'); END;
+`;
+
+// Add a third, mutually exclusive resolved source: a user message that
+// supplied material to this exact interaction. Existing WorkItem and Entry
+// bindings and immutable execution links are copied without reinterpretation.
+const ADD_CLARIFICATION_MATERIAL_MESSAGE_V13 = `
+DROP TRIGGER clearance_entry_subject;
+DROP TRIGGER conversation_execution_immutable;
+CREATE TABLE clarification_next (
+ id TEXT PRIMARY KEY,
+ original_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ assistant_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(id),
+ latest_reply_id TEXT REFERENCES conversation_messages(id),
+ status TEXT NOT NULL CHECK(status IN ('pending','resolved','cancelled','stale')),
+ revision INTEGER NOT NULL CHECK(revision>0),
+ candidates_json TEXT NOT NULL CHECK(json_valid(candidates_json)),
+ truncated INTEGER NOT NULL CHECK(truncated IN (0,1)),
+ selected_id TEXT REFERENCES work_items(id),
+ selected_scope_revision INTEGER CHECK(selected_scope_revision > 0),
+ selected_entry_id TEXT REFERENCES entries(id) ON DELETE SET NULL,
+ selected_memory_revision INTEGER CHECK(selected_memory_revision >= 0),
+ selected_message_id TEXT REFERENCES conversation_messages(id),
+ prompt_message_id TEXT REFERENCES conversation_messages(id),
+ awaiting TEXT CHECK (awaiting IS NULL OR (prompt_message_id IS NOT NULL AND
+   ((status='pending' AND awaiting='subject') OR
+    (status='resolved' AND awaiting IN ('material','requirements'))))),
+ CHECK ((selected_id IS NULL) = (selected_scope_revision IS NULL)),
+ CHECK ((selected_entry_id IS NULL) = (selected_memory_revision IS NULL)),
+ CHECK (selected_id IS NULL OR selected_entry_id IS NULL),
+ CHECK (selected_id IS NULL OR selected_message_id IS NULL),
+ CHECK (selected_entry_id IS NULL OR selected_message_id IS NULL),
+ CHECK (status != 'resolved' OR selected_id IS NOT NULL OR selected_entry_id IS NOT NULL OR selected_message_id IS NOT NULL)
+);
+INSERT INTO clarification_next(id,original_message_id,assistant_message_id,latest_reply_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,selected_entry_id,selected_memory_revision,prompt_message_id,awaiting)
+ SELECT id,original_message_id,assistant_message_id,latest_reply_id,status,revision,candidates_json,truncated,selected_id,selected_scope_revision,selected_entry_id,selected_memory_revision,prompt_message_id,awaiting FROM conversation_clarifications;
+CREATE TABLE execution_next (
+ task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id),
+ clarification_id TEXT NOT NULL REFERENCES clarification_next(id),
+ card_revision INTEGER NOT NULL CHECK(card_revision > 0)
+);
+INSERT INTO execution_next SELECT task_id,clarification_id,card_revision FROM conversation_executions;
+DROP TABLE conversation_executions;
+DROP TABLE conversation_clarifications;
+ALTER TABLE clarification_next RENAME TO conversation_clarifications;
+ALTER TABLE execution_next RENAME TO conversation_executions;
+CREATE INDEX ix_conversation_clarification_status ON conversation_clarifications(status);
+CREATE INDEX ix_conversation_clarification_waiting ON conversation_clarifications(awaiting);
+CREATE INDEX ix_conversation_executions_card ON conversation_executions(clarification_id,card_revision);
+CREATE INDEX ix_conversation_clarification_material_message ON conversation_clarifications(selected_message_id) WHERE selected_message_id IS NOT NULL;
+CREATE TRIGGER clearance_entry_subject BEFORE DELETE ON entries
+ WHEN EXISTS (SELECT 1 FROM conversation_clarifications WHERE selected_entry_id=OLD.id)
+ BEGIN
+  UPDATE conversation_clarifications SET status='stale', revision=revision+1, awaiting=NULL,
+     selected_entry_id=NULL, selected_memory_revision=NULL WHERE selected_entry_id=OLD.id;
+ END;
+CREATE TRIGGER conversation_execution_immutable BEFORE UPDATE ON conversation_executions
+BEGIN SELECT RAISE(ABORT,'conversation execution binding is immutable'); END;
+CREATE TRIGGER clarification_material_message_insert BEFORE INSERT ON conversation_clarifications
+ WHEN NEW.selected_message_id IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM conversation_messages m WHERE m.id=NEW.selected_message_id AND m.role='user'
+    AND json_extract(m.details_json,'$.kind')='task_clarification_reply'
+    AND json_extract(m.details_json,'$.clarification_id')=NEW.id)
+ BEGIN SELECT RAISE(ABORT,'selected material message must belong to its clarification'); END;
+CREATE TRIGGER clarification_material_message_update BEFORE UPDATE OF selected_message_id ON conversation_clarifications
+ WHEN NEW.selected_message_id IS NOT NULL AND NOT EXISTS (
+   SELECT 1 FROM conversation_messages m WHERE m.id=NEW.selected_message_id AND m.role='user'
+    AND json_extract(m.details_json,'$.kind')='task_clarification_reply'
+    AND json_extract(m.details_json,'$.clarification_id')=NEW.id)
+ BEGIN SELECT RAISE(ABORT,'selected material message must belong to its clarification'); END;
+`;
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: "create_memory_schema_v1", sql: CREATE_V1 },
   {
     version: 2,
     name: "add_pending_archive_suggestions_v2",
     sql: ADD_PENDING_SUGGESTIONS_V2,
+  },
+  { version: 3, name: "add_pending_actions_v3", sql: ADD_PENDING_ACTIONS_V3 },
+  { version: 4, name: "add_background_tasks_v4", sql: ADD_BACKGROUND_TASKS_V4 },
+  { version: 5, name: "add_agent_control_v5", sql: ADD_AGENT_CONTROL_V5 },
+  { version: 6, name: "add_entry_revocation_v6", sql: ADD_ENTRY_REVOCATION_V6 },
+  { version: 7, name: "add_todo_plan_v7", sql: ADD_TODO_PLAN_V7 },
+  { version: 8, name: "add_work_items_v8", sql: ADD_WORK_ITEMS_V8 },
+  {
+    version: 9,
+    name: "add_main_clarifications_v9",
+    sql: ADD_MAIN_CLARIFICATIONS_V9,
+  },
+  {
+    version: 10,
+    name: "link_conversation_execution_v10",
+    sql: ADD_CONVERSATION_EXECUTION_V10,
+  },
+  {
+    version: 11,
+    name: "add_natural_conversation_v11",
+    sql: ADD_NATURAL_CONVERSATION_V11,
+  },
+  { version: 12, name: "add_entry_subject_v12", sql: ADD_ENTRY_SUBJECT_V12 },
+  {
+    version: 13,
+    name: "bind_clarification_material_message_v13",
+    sql: ADD_CLARIFICATION_MATERIAL_MESSAGE_V13,
   },
 ];
 
@@ -190,6 +535,21 @@ export const OWNED_TABLES: readonly string[] = [
   "bucket_tags",
   "memory_items",
   "archive_attempts",
+  "pending_actions",
+  "background_tasks",
+  "background_task_executor",
+  "agent_workspaces",
+  "agent_sessions",
+  "agent_tasks",
+  "work_items",
+  "work_item_sources",
+  "work_item_sessions",
+  "work_item_attempts",
+  "work_item_requests",
+  "work_item_events",
   "corrections",
   "conversation_messages",
+  "conversation_clarifications",
+  "conversation_requests",
+  "conversation_executions",
 ];

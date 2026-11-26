@@ -12,6 +12,7 @@ import {
   Store,
   type ArchiveAudit,
   type ArchiveOutcome,
+  type ChatMessageInput,
 } from "../storage/store.ts";
 
 export const CLASSIFICATION_PROMPT_VERSION = "classification-v2";
@@ -89,8 +90,15 @@ export class ArchiveService {
     classification: ClassificationResult,
     extraction: ExtractionResult | undefined,
     audit: ArchiveAudit,
+    messageForResult?: (result: ArchiveResult) => ChatMessageInput,
   ): ArchiveResult {
     const text = requiredText(rawText, "text");
+    if (audit.confirmationAttemptId !== undefined) {
+      this.#store.requirePendingArchiveAttempt(
+        audit.confirmationAttemptId,
+        rawText,
+      );
+    }
     if (classification.action === "ask_user" && extraction !== undefined) {
       throw new ApplicationError(
         "unexpected_extraction",
@@ -103,17 +111,7 @@ export class ArchiveService {
         `${classification.action} requires extraction`,
       );
     }
-    const outcome = this.#store.archive(
-      text,
-      classification,
-      extraction,
-      audit,
-    );
-    const bucket =
-      outcome.bucketId === undefined
-        ? undefined
-        : this.#store.getBucket(outcome.bucketId);
-    return {
+    const projectResult = (outcome: ArchiveOutcome): ArchiveResult => ({
       ...outcome,
       action: classification.action,
       // Proposed fields describe only a possible new Bucket. Existing Bucket
@@ -126,7 +124,21 @@ export class ArchiveService {
       candidateBucketIds: classification.candidateBucketIds,
       extraction,
       sourceAttemptId: audit.confirmationAttemptId,
-    };
+    });
+    let result: ArchiveResult | undefined;
+    const outcome = this.#store.archive(
+      text,
+      classification,
+      extraction,
+      audit,
+      messageForResult === undefined
+        ? undefined
+        : (outcome) => {
+            result = projectResult(outcome);
+            return messageForResult(result);
+          },
+    );
+    return result ?? projectResult(outcome);
   }
 
   confirm(
@@ -137,7 +149,9 @@ export class ArchiveService {
   ): ArchiveResult;
   confirm(request: ConfirmationRequest): ArchiveResult | DiscardResult {
     const attemptId = requiredText(request.attemptId, "attempt_id");
-    const rawText = requiredText(request.rawText, "text");
+    requiredText(request.rawText, "text");
+    const rawText = request.rawText;
+    this.#store.requirePendingArchiveAttempt(attemptId, rawText);
     if (request.action === "discard") {
       this.#store.discardArchiveAttempt(attemptId, rawText);
       return {

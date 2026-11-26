@@ -1,22 +1,32 @@
 /** Model-backed archive orchestration with deterministic server-side gates. */
 
 import {
-  appendExisting,
+  askUser,
   buildBucketCandidates,
-  createNew,
   DEFAULT_CONFIDENCE_POLICY,
   postprocessClassification,
   type ClassificationResult,
   type ConfidencePolicy,
 } from "../domain/classification.ts";
 import { requiredText } from "../domain/errors.ts";
-import type { ExtractionResult } from "../domain/memory.ts";
+import { createExtraction, type ExtractionResult } from "../domain/memory.ts";
+import {
+  localTimeZone,
+  parseNaturalTodoPlan,
+  shouldAutoPromoteTodo,
+} from "../domain/todo-time.ts";
 import {
   BucketStatus,
   createBucketView,
   type BucketType,
   type BucketView,
 } from "../domain/types.ts";
+import {
+  abortError,
+  isAbortError,
+  throwIfAborted,
+  withCancellation,
+} from "../llm/cancellation.ts";
 import {
   classificationContract,
   extractionContract,
@@ -43,15 +53,20 @@ export const CLASSIFICATION_SYSTEM_PROMPT =
 
 export const EXTRACTION_SYSTEM_PROMPT =
   "你是工作记忆提取器。只返回符合 ExtractionResult schema 的 JSON。" +
-  "完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。";
+  "完整保留用户事实，不要把建议、猜测或助手内容伪装成已发生事实；时间表达式保留用户原文。" +
+  "如果用户输入包含待完成的个人任务、作业、会议、提醒或日程安排（例如「明天早上写计网作业」「下周一前交报告」），必须将其放入 todos 数组并保留原始时间表达。";
 
 export type MemoryModel = {
   readonly modelName: string;
   readonly classify: (
     text: string,
     candidates: readonly BucketView[],
+    signal?: AbortSignal,
   ) => Promise<ClassificationResult>;
-  readonly extract: (text: string) => Promise<ExtractionResult>;
+  readonly extract: (
+    text: string,
+    signal?: AbortSignal,
+  ) => Promise<ExtractionResult>;
 };
 
 /** Production facade over the transport-independent strict output adapter. */
@@ -73,6 +88,7 @@ export class StructuredMemoryModel implements MemoryModel {
   classify(
     text: string,
     candidates: readonly BucketView[],
+    signal?: AbortSignal,
   ): Promise<ClassificationResult> {
     return this.#adapter.parse(
       classificationContract,
@@ -80,16 +96,22 @@ export class StructuredMemoryModel implements MemoryModel {
       CLASSIFICATION_SYSTEM_PROMPT,
       JSON.stringify({ text, candidates: candidates.map(projectCandidate) }),
       this.#maxRetries,
+      signal,
     );
   }
 
-  extract(text: string): Promise<ExtractionResult> {
+  extract(text: string, signal?: AbortSignal): Promise<ExtractionResult> {
     return this.#adapter.parse(
       extractionContract,
       this.modelName,
       EXTRACTION_SYSTEM_PROMPT,
-      JSON.stringify({ text }),
+      JSON.stringify({
+        current_time: new Date().toISOString(),
+        time_zone: localTimeZone(),
+        text,
+      }),
       this.#maxRetries,
+      signal,
     );
   }
 }
@@ -150,40 +172,69 @@ export class ArchiveRuntime {
   async archiveText(
     rawText: string,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
+    const memoryRevision = this.#store.getMemoryContextRevision();
     const candidates = this.#candidates(focusBucketId);
-    const raw = await this.#model.classify(text, candidates);
+    const raw = await withCancellation(signal, () =>
+      this.#model.classify(text, candidates, signal),
+    );
+    this.#assertMemoryRevision(memoryRevision);
     const classification = postprocessClassification(
       text,
       raw,
       candidates,
       this.#policy,
     );
-    const extraction =
+    const rawExtraction =
       classification.action === "ask_user"
         ? undefined
-        : await this.#model.extract(text);
+        : await withCancellation(signal, () =>
+            this.#model.extract(text, signal),
+          );
+    const extraction =
+      rawExtraction === undefined
+        ? undefined
+        : enrichAutoTodoExtraction(
+            text,
+            classification.bucketType,
+            rawExtraction,
+          );
+    this.#assertMemoryRevision(memoryRevision);
     return this.#execute(text, classification, extraction, candidates, {
       focusBucketId,
+      signal,
     });
+  }
+
+  #assertMemoryRevision(revision: number): void {
+    if (revision !== this.#store.getMemoryContextRevision()) {
+      throw new StorageError(
+        "memory_context_changed",
+        "记忆已更新，此次归档未执行，请重新提交。",
+      );
+    }
   }
 
   async appendConfirmed(
     rawText: string,
     bucketId: string,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
     const target = this.#requireActiveBucket(bucketId);
-    const candidates = this.#candidates(focusBucketId);
-    const extraction = await this.#model.extract(text);
-    return this.#execute(
+    return this.#confirmUserAction(
       text,
-      appendExisting(target.id, target.kind, 1, "用户明确确认目标 Bucket。"),
-      extraction,
-      candidates,
-      { focusBucketId },
+      {
+        action: "append",
+        targetBucketId: target.id,
+        ...(focusBucketId === undefined ? {} : { focusBucketId }),
+      },
+      signal,
     );
   }
 
@@ -192,22 +243,93 @@ export class ArchiveRuntime {
     title: string,
     bucketType: BucketType,
     focusBucketId?: string,
+    signal?: AbortSignal,
   ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
     const text = requiredText(rawText, "text");
-    const candidates = this.#candidates(focusBucketId);
-    const extraction = await this.#model.extract(text);
-    return this.#execute(
+    return this.#confirmUserAction(
       text,
-      createNew(bucketType, title, 1, "用户明确确认创建新 Bucket。"),
-      extraction,
-      candidates,
-      { focusBucketId },
+      {
+        action: "create",
+        title: requiredText(title, "title"),
+        bucketType,
+        ...(focusBucketId === undefined ? {} : { focusBucketId }),
+      },
+      signal,
     );
+  }
+
+  async #confirmUserAction(
+    text: string,
+    choice:
+      | {
+          readonly action: "append";
+          readonly targetBucketId: string;
+          readonly focusBucketId?: string;
+        }
+      | {
+          readonly action: "create";
+          readonly title: string;
+          readonly bucketType: BucketType;
+          readonly focusBucketId?: string;
+        },
+    signal?: AbortSignal,
+  ): Promise<ArchiveExecution> {
+    throwIfAborted(signal);
+    const candidates = this.#candidates(choice.focusBucketId);
+    // Extract before registering a one-shot explicit choice. A model failure
+    // must not leave an invisible pending proposal with no recovery card.
+    const extraction = await withCancellation(signal, () =>
+      this.#model.extract(text, signal),
+    );
+    const pending = this.#execute(
+      text,
+      askUser(
+        undefined,
+        undefined,
+        1,
+        "用户提交了明确的归档选择。",
+        "等待执行用户选择。",
+        candidates.map(({ id }) => id),
+      ),
+      undefined,
+      candidates,
+      { focusBucketId: choice.focusBucketId, proposedBy: "user", signal },
+    );
+    let execution: ConfirmationExecution;
+    try {
+      execution = await this.#confirm(
+        { ...choice, attemptId: pending.result.attemptId, rawText: text },
+        signal,
+        extraction,
+      );
+    } catch (error: unknown) {
+      // A one-shot explicit request has no durable UI card. Retain rejected
+      // audit instead of leaving an inaccessible pending action on failure.
+      throwIfAborted(signal);
+      if (isAbortError(error)) throw abortError();
+      this.#store.discardArchiveAttempt(pending.result.attemptId, text);
+      throw error;
+    }
+    if (execution.result.archiveState === "discarded") {
+      throw StorageError.invalidWrite("confirmation", "unexpected discard");
+    }
+    return { ...execution, result: execution.result };
   }
 
   async confirm(
     request: RuntimeConfirmationRequest,
+    signal?: AbortSignal,
   ): Promise<ConfirmationExecution> {
+    return this.#confirm(request, signal);
+  }
+
+  async #confirm(
+    request: RuntimeConfirmationRequest,
+    signal?: AbortSignal,
+    preparedExtraction?: ExtractionResult,
+  ): Promise<ConfirmationExecution> {
+    throwIfAborted(signal);
     const attempt = this.#requirePendingAttempt(
       request.attemptId,
       request.rawText,
@@ -218,6 +340,7 @@ export class ArchiveRuntime {
       .map(toBucketView);
 
     if (request.action === "discard") {
+      throwIfAborted(signal);
       return {
         result: this.#service.confirm({
           action: "discard",
@@ -229,18 +352,30 @@ export class ArchiveRuntime {
       };
     }
 
-    const targetBucket =
-      request.action === "append"
-        ? this.#requireActiveBucket(request.targetBucketId)
-        : undefined;
-    const extraction = await this.#model.extract(request.rawText);
+    let targetBucketType: BucketType | undefined;
+    if (request.action === "append") {
+      targetBucketType = this.#requireActiveBucket(request.targetBucketId).kind;
+    } else {
+      targetBucketType = request.bucketType;
+    }
+    const rawExtraction =
+      preparedExtraction ??
+      (await withCancellation(signal, () =>
+        this.#model.extract(request.rawText, signal),
+      ));
+    const extraction = enrichAutoTodoExtraction(
+      request.rawText,
+      targetBucketType,
+      rawExtraction,
+    );
     let result: ArchiveResult;
     if (request.action === "append") {
+      throwIfAborted(signal);
       result = this.#service.confirm({
         action: "append",
         attemptId: attempt.id,
         rawText: request.rawText,
-        targetBucketId: targetBucket!.id,
+        targetBucketId: request.targetBucketId,
         ...(request.focusBucketId === undefined
           ? {}
           : { focusBucketId: request.focusBucketId }),
@@ -250,6 +385,7 @@ export class ArchiveRuntime {
         modelName: attempt.modelName,
       });
     } else {
+      throwIfAborted(signal);
       result = this.#service.confirm({
         action: "create",
         attemptId: attempt.id,
@@ -280,14 +416,20 @@ export class ArchiveRuntime {
     classification: ClassificationResult,
     extraction: ExtractionResult | undefined,
     candidates: readonly BucketView[],
-    options: { readonly focusBucketId: string | undefined },
+    options: {
+      readonly focusBucketId: string | undefined;
+      readonly proposedBy?: "user" | "model";
+      readonly signal?: AbortSignal | undefined;
+    },
   ): ArchiveExecution {
+    throwIfAborted(options.signal);
     const result = this.#service.archiveClassifiedInput(
       text,
       classification,
       extraction,
       {
         candidateBucketIds: candidates.map((candidate) => candidate.id),
+        proposedBy: options.proposedBy ?? "model",
         focusBucketId: options.focusBucketId,
         promptVersion: RUNTIME_PROMPT_VERSION,
         modelName: this.#model.modelName,
@@ -326,20 +468,10 @@ export class ArchiveRuntime {
   }
 
   #requirePendingAttempt(attemptId: string, rawText: string) {
-    const id = requiredText(attemptId, "attempt_id");
-    const attempt = this.#store.getArchiveAttempt(id);
-    if (attempt === undefined) throw StorageError.archiveAttemptNotFound(id);
-    if (attempt.rawText !== rawText) {
-      throw StorageError.archiveAttemptTextMismatch(id);
-    }
-    if (
-      attempt.archiveState !== "needs_confirmation" ||
-      attempt.resolvedAt !== null ||
-      attempt.corrected
-    ) {
-      throw StorageError.archiveAttemptNotPending(id);
-    }
-    return attempt;
+    return this.#store.requirePendingArchiveAttempt(
+      requiredText(attemptId, "attempt_id"),
+      rawText,
+    );
   }
 }
 
@@ -352,6 +484,26 @@ export function toBucketView(bucket: BucketRow): BucketView {
     summary: bucket.summary,
     tags: bucket.tags,
     lastActiveAtUnixMs: Date.parse(bucket.lastActiveAt),
+  });
+}
+
+function enrichAutoTodoExtraction(
+  text: string,
+  bucketType: BucketType | undefined,
+  extraction: ExtractionResult,
+): ExtractionResult {
+  if (extraction.todos.length > 0) return extraction;
+  const plan = parseNaturalTodoPlan(text, new Date());
+  if (!shouldAutoPromoteTodo(text, bucketType, plan)) return extraction;
+  return createExtraction({
+    summary: extraction.summary,
+    todos: [text],
+    evidences: [...extraction.evidences],
+    timelineEvents: [...extraction.timelineEvents],
+    decisions: [...extraction.decisions],
+    hypotheses: [...extraction.hypotheses],
+    entities: [...extraction.entities],
+    tags: [...extraction.tags],
   });
 }
 

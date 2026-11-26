@@ -8,6 +8,7 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { types } from "node:util";
 
 import {
   MIGRATIONS,
@@ -22,16 +23,19 @@ export type StorageErrorKind =
   | "missing_record"
   | "invalid_write"
   | "inactive_bucket"
+  | "memory_context_changed"
   | "archive_attempt_not_found"
   | "archive_attempt_text_mismatch"
   | "archive_attempt_not_pending"
-  | "pragma_not_applied";
+  | "stale_write"
+  | "pragma_not_applied"
+  | "storage_unavailable";
 
 export class StorageError extends Error {
   readonly kind: StorageErrorKind;
 
-  constructor(kind: StorageErrorKind, message: string) {
-    super(message);
+  constructor(kind: StorageErrorKind, message: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = "StorageError";
     this.kind = kind;
   }
@@ -69,6 +73,13 @@ export class StorageError extends Error {
     return new StorageError(
       "archive_attempt_not_pending",
       `archive attempt ${id} is not pending`,
+    );
+  }
+
+  static staleWrite(table: string, id: string): StorageError {
+    return new StorageError(
+      "stale_write",
+      `${table} ${id} was changed after the client read it`,
     );
   }
 }
@@ -241,6 +252,125 @@ function assertSchemaShape(database: DatabaseSync): void {
     }
   }
 
+  const pendingColumns = new Set(
+    database
+      .prepare("PRAGMA table_info(pending_actions)")
+      .all()
+      .map((row) => row["name"]),
+  );
+  for (const column of [
+    "id",
+    "kind",
+    "proposed_by",
+    "binding_text",
+    "payload_json",
+    "status",
+    "approval_json",
+    "result_json",
+    "failure_code",
+    "created_at",
+    "updated_at",
+  ]) {
+    if (!pendingColumns.has(column)) {
+      throw new StorageError(
+        "unsupported_schema_version",
+        `Doggie schema is missing pending_actions.${column}`,
+      );
+    }
+  }
+
+  for (const [table, required] of [
+    [
+      "background_tasks",
+      [
+        "id",
+        "sequence",
+        "payload_json",
+        "status",
+        "revision",
+        "error_code",
+        "created_at",
+        "updated_at",
+      ],
+    ],
+    ["background_task_executor", ["singleton", "owner_id", "process_id"]],
+    [
+      "agent_workspaces",
+      ["id", "path", "base_commit", "git_status", "created_at"],
+    ],
+    [
+      "agent_sessions",
+      ["id", "workspace_id", "backend", "remote_id", "created_at"],
+    ],
+    [
+      "agent_tasks",
+      [
+        "id",
+        "session_id",
+        "workspace_id",
+        "backend",
+        "instruction",
+        "pending_action_id",
+        "queue_id",
+        "status",
+        "output",
+        "failure_code",
+        "created_at",
+        "updated_at",
+      ],
+    ],
+    [
+      "conversation_clarifications",
+      [
+        "original_message_id",
+        "assistant_message_id",
+        "latest_reply_id",
+        "status",
+        "revision",
+        "candidates_json",
+        "truncated",
+        "selected_id",
+        "selected_scope_revision",
+        "awaiting",
+        "prompt_message_id",
+        "selected_entry_id",
+        "selected_memory_revision",
+        "selected_message_id",
+      ],
+    ],
+    ["conversation_requests", ["request_id", "payload_hash", "result_json"]],
+    [
+      "conversation_executions",
+      ["task_id", "clarification_id", "card_revision"],
+    ],
+    ["buckets", ["workspace_id"]],
+    ["entries", ["revoked_at"]],
+    ["agent_sessions", ["memory_revision"]],
+    [
+      "memory_items",
+      [
+        "scheduled_at",
+        "todo_rule_json",
+        "todo_raw_time_json",
+        "todo_occurrence",
+      ],
+    ],
+  ] as const) {
+    const columns = new Set(
+      database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => row["name"]),
+    );
+    for (const column of required) {
+      if (!columns.has(column))
+        throw new StorageError(
+          "unsupported_schema_version",
+          `Doggie schema is missing ${table}.${column}`,
+        );
+    }
+  }
+
   const applied = database
     .prepare("SELECT version, name FROM schema_migrations ORDER BY version")
     .all() as { version: number; name: string }[];
@@ -265,8 +395,7 @@ function migrate(database: DatabaseSync): void {
     // applied. Two first-starting Web/MCP processes can otherwise both cache
     // an empty migration set and the second one will replay CREATE TABLE after
     // waiting for the first process to commit.
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    withTransaction(database, () => {
       if (!isMigrationApplied(database, migration.version)) {
         database.exec(migration.sql);
         database
@@ -285,11 +414,7 @@ function migrate(database: DatabaseSync): void {
             String(migration.version),
           );
       }
-      database.exec("COMMIT");
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
-    }
+    });
   }
 
   const version = readSchemaVersion(database);
@@ -322,6 +447,34 @@ export function readSchemaVersion(database: DatabaseSync): number {
   return row === undefined ? 0 : Number(row.value);
 }
 
+const databaseFaults = new WeakMap<DatabaseSync, StorageError>();
+const faultHandlers = new WeakMap<
+  DatabaseSync,
+  (fault: StorageError) => void
+>();
+
+/** The owner of the connection drains its server and workers before closing. */
+export function onDatabaseFault(
+  database: DatabaseSync,
+  handler: (fault: StorageError) => void,
+): void {
+  faultHandlers.set(database, handler);
+}
+
+export function assertDatabaseAvailable(database: DatabaseSync): void {
+  const fault = databaseFaults.get(database);
+  if (fault !== undefined) throw fault;
+}
+
+function isThenable(value: unknown): boolean {
+  return (
+    value !== null &&
+    (typeof value === "object" || typeof value === "function") &&
+    "then" in value &&
+    typeof value.then === "function"
+  );
+}
+
 /**
  * Run `body` inside one `BEGIN IMMEDIATE` transaction.
  *
@@ -330,17 +483,46 @@ export function readSchemaVersion(database: DatabaseSync): number {
  * rather than DEFERRED so a write conflict surfaces at the start instead of at
  * commit, when part of the work has already been done.
  */
-export function withTransaction<T>(database: DatabaseSync, body: () => T): T {
+export function withTransaction<T>(
+  database: DatabaseSync,
+  body: () => T &
+    (Extract<T, PromiseLike<unknown>> extends never ? unknown : never),
+): T {
+  assertDatabaseAvailable(database);
+  if (types.isAsyncFunction(body))
+    throw new TypeError("transaction body must be synchronous");
+  // Keep BEGIN outside the protected scope so a nested or failed BEGIN
+  // cannot roll back an unrelated transaction.
   database.exec("BEGIN IMMEDIATE");
-  let result: T;
   try {
-    result = body();
+    const result = body();
+    if (isThenable(result)) {
+      if (types.isPromise(result)) void result.catch(() => undefined);
+      throw new TypeError("transaction body must be synchronous");
+    }
+    database.exec("COMMIT");
+    return result;
   } catch (error) {
-    database.exec("ROLLBACK");
+    try {
+      if (database.isTransaction) database.exec("ROLLBACK");
+    } catch (rollbackError) {
+      const fault = new StorageError(
+        "storage_unavailable",
+        "storage is unavailable",
+        {
+          cause: new AggregateError(
+            [error, rollbackError],
+            "transaction cleanup failed",
+          ),
+        },
+      );
+      databaseFaults.set(database, fault);
+      const stop = faultHandlers.get(database);
+      if (stop !== undefined) queueMicrotask(() => stop(fault));
+      throw fault;
+    }
     throw error;
   }
-  database.exec("COMMIT");
-  return result;
 }
 
 /** Trim, rejecting an all-whitespace value. */

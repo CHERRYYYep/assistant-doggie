@@ -79,3 +79,81 @@ test("T10 official MCP validation rejects unknown fields before tool execution",
     await Promise.all([client.close(), server.close()]);
   }
 });
+
+test("T13 child MCP is retrieval-only at protocol registration, no proposal side effects", async () => {
+  const db = openDatabase(":memory:");
+  const store = new Store(db);
+  const server = createDoggieMcpServer(store, () => new Date(), true);
+  const client = new Client({ name: "readonly-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+  try {
+    assert.deepEqual(
+      (await client.listTools()).tools.map((tool) => tool.name),
+      ["list_active_buckets", "search_memory", "get_bucket_detail"],
+    );
+    await assert.rejects(
+      client.callTool({
+        name: "propose_entry",
+        arguments: { text: "must not write" },
+      }),
+    );
+    await client.callTool({ name: "list_active_buckets", arguments: {} });
+    assert.equal(store.listChatMessages(10).length, 0);
+    assert.equal(store.listBuckets().length, 0);
+  } finally {
+    await Promise.all([server.close(), client.close()]);
+    db.close();
+  }
+});
+
+test("MCP returns stable errors without leaking unknown exception details", async (t) => {
+  const db = openDatabase(":memory:");
+  const store = new Store(db);
+  const server = createDoggieMcpServer(store);
+  const client = new Client({ name: "error-test", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await Promise.all([
+    server.connect(serverTransport),
+    client.connect(clientTransport),
+  ]);
+  try {
+    const missing = await client.callTool({
+      name: "get_bucket_detail",
+      arguments: { bucket_id: "missing" },
+    });
+    assert.equal(missing.isError, true);
+    assert.deepEqual(missing.structuredContent, {
+      ok: false,
+      error: "buckets has no record with id missing",
+    });
+
+    const sensitiveDetail = "/private/path/doggie.db secret-token stack";
+    const failing = t.mock.method(store.memory, "listActiveBuckets", () => {
+      throw new Error(sensitiveDetail);
+    });
+    for (const thrown of [new Error(sensitiveDetail), sensitiveDetail]) {
+      failing.mock.mockImplementation(() => {
+        throw thrown;
+      });
+      const result = await client.callTool({
+        name: "list_active_buckets",
+        arguments: {},
+      });
+      assert.equal(result.isError, true);
+      assert.deepEqual(result.structuredContent, {
+        ok: false,
+        error: "internal server error",
+      });
+      assert.equal(JSON.stringify(result).includes(sensitiveDetail), false);
+    }
+  } finally {
+    await Promise.all([server.close(), client.close()]);
+    db.close();
+  }
+});

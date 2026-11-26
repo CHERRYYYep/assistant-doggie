@@ -1,5 +1,7 @@
 # Doggie MVP 规格
 
+> 当前范围与后续决策见 [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md)。Entry 撤销已实现；契约规范继续收口；远程访问只作文档预留。
+
 ## 1. 产品目标
 
 提供一个本地、单用户、单入口的工作记忆 Agent：用户只需输入自然语言，系统负责理解上下文、归档事实并在之后用对话方式检索。
@@ -51,3 +53,9 @@
 ## 5. 非目标
 
 当前 MVP 不提供认证、多租户、团队协作、外部动作执行、文件/图片索引、通用插件系统或公网部署安全能力。
+
+## 6. Entry 撤销与接入边界
+
+普通 Entry 删除已采用逻辑撤销：该 Entry 和仅由其支持的派生记忆退出有效查询、摘要、TODO 和后续模型记忆；保留其他记录与审计。它不等同于清除聊天/审计中的所有原文。HTTP/UI、历史上下文失效、CLI session 失效与旧空来源 Memory 保留合同见 [ENTRY_REVOCATION.md](ENTRY_REVOCATION.md)。
+
+个人多设备仅预留手机接入电脑端的操作边界，见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md)。当前 MVP 的 loopback 与无远程认证能力不变；不开放占位端点。

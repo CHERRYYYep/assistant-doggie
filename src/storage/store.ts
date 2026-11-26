@@ -8,12 +8,37 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import { MemoryReadStore, type MemoryColumns } from "./memory-read.ts";
+import {
+  parseMetadata,
+  parseTodoRawTime,
+  parseTodoRule,
+} from "./memory-rows.ts";
+import {
+  ConversationStore,
+  type ChatMessageInput,
+  type ChatMessageRow,
+} from "./conversation.ts";
+export type { ChatMessageInput, ChatMessageRow } from "./conversation.ts";
+import { z } from "zod";
 
 import type {
   BucketStatus,
   BucketType,
   ClassificationAction,
 } from "../domain/types.ts";
+import {
+  calculateNextTodoOccurrence,
+  createTodoPlan,
+  isTodoStatus,
+  normalizeTodoTime,
+  transitionTodoStatus,
+  type RepeatRule,
+  type TodoPlan,
+  type TodoRawTime,
+  type TodoStatus,
+} from "../domain/todo.ts";
+import { parseNaturalTodoPlan } from "../domain/todo-time.ts";
 import {
   extractionToMemoryRows,
   type ExtractionResult,
@@ -35,6 +60,23 @@ import {
   withTransaction,
   type Clock,
 } from "./database.ts";
+
+import { pendingActionDraftSchema } from "../domain/pending-action.ts";
+import type {
+  PendingAction,
+  DeferredActionDraft,
+  ProposedBy,
+  ActionCompletion,
+  ApprovalChoice,
+} from "../domain/pending-action.ts";
+import {
+  readPendingAction,
+  insertPendingAction,
+  requirePendingAction,
+  approvePendingAction,
+  rejectPendingAction,
+  finishPendingAction,
+} from "./pending-actions.ts";
 
 export type BucketRow = {
   readonly id: string;
@@ -79,12 +121,35 @@ export type MemoryRow = {
   readonly text: string;
   readonly status: string | null;
   readonly dueAt: string | null;
+  readonly scheduledAt: string | null;
+  readonly todoRule: RepeatRule | null;
+  readonly todoRawTime: TodoRawTime | null;
+  readonly todoOccurrence: number | null;
   readonly occurredAt: string | null;
   readonly source: string | null;
   readonly reason: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly metadata: JsonValue;
+};
+
+export type TodoRow = MemoryRow & {
+  readonly kind: "todo";
+  readonly status: TodoStatus;
+};
+
+export type TodoAgendaInput = {
+  readonly now?: unknown;
+  readonly from?: unknown;
+  readonly to?: unknown;
+  readonly bucketId?: string | undefined;
+  readonly statuses?: readonly unknown[] | undefined;
+  readonly includeHistory?: boolean | undefined;
+};
+
+export type TodoMutationOutcome = {
+  readonly todo: TodoRow;
+  readonly correctionId: string;
 };
 
 export type QueryEntryCandidate = {
@@ -107,6 +172,7 @@ export type BucketDetail = {
 
 /** Metadata every archive attempt records for audit. */
 export type ArchiveAudit = {
+  readonly proposedBy?: ProposedBy;
   readonly candidateBucketIds: readonly string[];
   readonly focusBucketId?: string | undefined;
   readonly promptVersion: string;
@@ -174,6 +240,20 @@ export type SaveExtractionInput = {
   readonly extraction: ExtractionResult;
 };
 
+export type EntryRevocation = {
+  readonly entryId: string;
+  readonly bucketId: string;
+  readonly correctionId: string;
+  readonly revokedAt: string;
+  readonly memoryItemIds: readonly string[];
+};
+
+const revocationAuditSchema = z.object({
+  bucket_id: z.string().min(1),
+  revoked_at: z.string().min(1),
+  memory_item_ids: z.array(z.string().min(1)),
+});
+
 export type DeleteBucketOutcome = {
   readonly bucketId: string;
   readonly deletedEntryIds: readonly string[];
@@ -182,24 +262,17 @@ export type DeleteBucketOutcome = {
   readonly correctionId: string;
 };
 
-export type ChatMessageRow = {
-  readonly id: string;
-  readonly sequence: number;
-  readonly role: string;
-  readonly content: string;
-  readonly toolName: string | null;
-  readonly toolCallId: string | null;
-  readonly details: unknown;
-  readonly createdAt: string;
-};
-
 export class Store {
   readonly #database: DatabaseSync;
   readonly #clock: Clock;
+  readonly conversation: ConversationStore;
+  readonly memory: MemoryReadStore;
 
   constructor(database: DatabaseSync, clock: Clock = systemClock) {
     this.#database = database;
     this.#clock = clock;
+    this.conversation = new ConversationStore(database, clock);
+    this.memory = new MemoryReadStore(database);
   }
 
   get database(): DatabaseSync {
@@ -224,17 +297,26 @@ export class Store {
     decision: ArchiveDecision,
     extraction: ExtractionResult | undefined,
     audit: ArchiveAudit,
+    messageForOutcome?: (outcome: ArchiveOutcome) => ChatMessageInput,
   ): ArchiveOutcome {
     const text = requiredField(rawText, "raw_text");
     const promptVersion = requiredField(audit.promptVersion, "prompt_version");
     const modelName = requiredField(audit.modelName, "model_name");
 
     return withTransaction(this.#database, () => {
+      const finish = (outcome: ArchiveOutcome): ArchiveOutcome => {
+        if (messageForOutcome !== undefined) {
+          this.conversation.appendChatMessageWithinTransaction(
+            messageForOutcome(outcome),
+          );
+        }
+        return outcome;
+      };
       const timestamp = this.#now();
       const attemptId = newId();
       const confirmationAttemptId = audit.confirmationAttemptId;
       if (confirmationAttemptId !== undefined) {
-        this.#requirePendingAttempt(confirmationAttemptId, text);
+        this.requirePendingArchiveAttempt(confirmationAttemptId, rawText);
         if (decision.action === "ask_user") {
           throw StorageError.invalidWrite(
             "confirmation",
@@ -252,12 +334,37 @@ export class Store {
           promptVersion,
           modelName,
         });
-        return {
+        return finish({
           attemptId,
-          archiveState: "needs_confirmation" as const,
+          archiveState: "needs_confirmation",
           bucketId: undefined,
           entryId: undefined,
-        };
+        });
+      }
+
+      if (confirmationAttemptId !== undefined) {
+        let choice: ApprovalChoice;
+        if (decision.action === "create_new") {
+          if (decision.bucketType === undefined)
+            throw StorageError.invalidWrite("bucket_type", "is required");
+          choice = {
+            action: "create",
+            title: decision.title ?? "",
+            bucketType: decision.bucketType,
+          };
+        } else {
+          choice = {
+            action: "append",
+            targetBucketId: decision.bucketId ?? "",
+          };
+        }
+        approvePendingAction(
+          this.#database,
+          confirmationAttemptId,
+          text,
+          choice,
+          timestamp,
+        );
       }
 
       if (extraction === undefined) {
@@ -270,11 +377,7 @@ export class Store {
       const bucketId =
         decision.action === "create_new"
           ? this.#createBucket(decision, timestamp)
-          : this.#requireBucket(
-              decision.bucketId,
-              timestamp,
-              confirmationAttemptId !== undefined,
-            );
+          : this.#requireBucket(decision.bucketId, timestamp);
 
       const entryId = this.#insertEntry(
         bucketId,
@@ -283,7 +386,14 @@ export class Store {
         extraction,
         timestamp,
       );
-      this.#insertMemories(bucketId, entryId, extraction, timestamp);
+      this.#insertMemories(
+        bucketId,
+        entryId,
+        extraction,
+        timestamp,
+        false,
+        text,
+      );
       this.#applyExtractionToBucket(bucketId, extraction, timestamp);
       this.#insertAttempt(attemptId, text, decision, audit, {
         archiveState: "archived",
@@ -305,14 +415,24 @@ export class Store {
         if (updated.changes !== 1) {
           throw StorageError.archiveAttemptNotPending(confirmationAttemptId);
         }
+        finishPendingAction(
+          this.#database,
+          confirmationAttemptId,
+          text,
+          {
+            status: "executed",
+            result: { bucketId, entryId, resultAttemptId: attemptId },
+          },
+          timestamp,
+        );
       }
 
-      return {
+      return finish({
         attemptId,
-        archiveState: "archived" as const,
+        archiveState: "archived",
         bucketId,
         entryId,
-      };
+      });
     });
   }
 
@@ -391,6 +511,7 @@ export class Store {
         request.extraction,
         timestamp,
         true,
+        entry.rawText,
       );
       this.#database
         .prepare("UPDATE entries SET summary = ? WHERE id = ?")
@@ -430,11 +551,7 @@ export class Store {
     return bucketId;
   }
 
-  #requireBucket(
-    bucketId: string | undefined,
-    timestamp: string,
-    requireActive = false,
-  ): string {
+  #requireBucket(bucketId: string | undefined, timestamp: string): string {
     if (bucketId === undefined) {
       throw StorageError.invalidWrite("append_existing", "requires bucket_id");
     }
@@ -443,7 +560,7 @@ export class Store {
       .get(bucketId) as { lifecycle: string } | undefined;
     if (bucket === undefined)
       throw StorageError.missingRecord("buckets", bucketId);
-    if (requireActive && bucket.lifecycle !== "active") {
+    if (bucket.lifecycle !== "active") {
       throw StorageError.inactiveBucket(bucketId);
     }
     this.#database
@@ -489,45 +606,90 @@ export class Store {
     extraction: ExtractionResult,
     timestamp: string,
     dedupeExisting = false,
+    rawSourceText?: string,
   ): string[] {
     const seen = dedupeExisting
-      ? this.#existingMemoryKeys(bucketId)
+      ? this.#existingMemoryKeys(entryId)
       : new Set<string>();
+    const hasTodoPlanColumns =
+      this.#database
+        .prepare(
+          "SELECT 1 FROM pragma_table_info('memory_items') WHERE name = 'scheduled_at'",
+        )
+        .get() !== undefined;
     const insert = this.#database.prepare(
-      `INSERT INTO memory_items
-         (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
-          created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      hasTodoPlanColumns
+        ? `INSERT INTO memory_items
+             (id, bucket_id, entry_id, kind, text, status, due_at, occurred_at, source,
+              scheduled_at, todo_rule_json, todo_raw_time_json, todo_occurrence,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        : `INSERT INTO memory_items
+             (id, bucket_id, entry_id, kind, text, status, occurred_at, source,
+              created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
+    const referenceNow = new Date(timestamp);
     const insertedIds: string[] = [];
     for (const row of extractionToMemoryRows(extraction)) {
       const key = this.#memoryKey(row);
       if (seen.has(key)) continue;
       const id = newId();
-      insert.run(
-        id,
-        bucketId,
-        entryId,
-        row.kind,
-        row.text,
-        row.status,
-        row.occurredAt,
-        row.source,
-        timestamp,
-        timestamp,
-      );
+      if (hasTodoPlanColumns) {
+        const plan =
+          row.kind === "todo"
+            ? (parseNaturalTodoPlan(row.text, referenceNow) ??
+              (rawSourceText === undefined
+                ? null
+                : parseNaturalTodoPlan(rawSourceText, referenceNow)))
+            : null;
+        insert.run(
+          id,
+          bucketId,
+          entryId,
+          row.kind,
+          row.text,
+          row.status,
+          plan?.dueAt ?? null,
+          row.occurredAt,
+          row.source,
+          plan?.scheduledAt ?? null,
+          plan?.repeatRule === null || plan?.repeatRule === undefined
+            ? null
+            : JSON.stringify(plan.repeatRule),
+          plan?.rawTime === null || plan?.rawTime === undefined
+            ? null
+            : JSON.stringify(plan.rawTime),
+          row.kind === "todo" ? 1 : null,
+          timestamp,
+          timestamp,
+        );
+      } else {
+        insert.run(
+          id,
+          bucketId,
+          entryId,
+          row.kind,
+          row.text,
+          row.status,
+          row.occurredAt,
+          row.source,
+          timestamp,
+          timestamp,
+        );
+      }
       insertedIds.push(id);
       seen.add(key);
     }
     return insertedIds;
   }
 
-  #existingMemoryKeys(bucketId: string): Set<string> {
+  #existingMemoryKeys(entryId: string): Set<string> {
     const rows = this.#database
       .prepare(
-        "SELECT kind, text, occurred_at FROM memory_items WHERE bucket_id = ?",
+        "SELECT kind, text, occurred_at FROM memory_items WHERE entry_id = ?",
       )
-      .all(bucketId) as {
+      .all(entryId) as {
       kind: string;
       text: string;
       occurred_at: string | null;
@@ -637,9 +799,28 @@ export class Store {
         context.timestamp,
         context.archiveState === "archived" ? context.timestamp : null,
       );
+    if (context.archiveState === "needs_confirmation") {
+      insertPendingAction(
+        this.#database,
+        attemptId,
+        {
+          kind: "archive",
+          payload: {
+            rawText,
+            candidateBucketIds,
+            focusBucketId: optionalField(audit.focusBucketId),
+            suggestedBucketType: decision.bucketType ?? null,
+            suggestedTitle: optionalField(decision.title),
+          },
+        },
+        audit.proposedBy ?? "model",
+        rawText,
+        context.timestamp,
+      );
+    }
   }
 
-  #requirePendingAttempt(
+  requirePendingArchiveAttempt(
     attemptId: string,
     rawText: string,
   ): ArchiveAttemptRow {
@@ -656,6 +837,17 @@ export class Store {
       attempt.corrected
     ) {
       throw StorageError.archiveAttemptNotPending(attemptId);
+    }
+    const pending = readPendingAction(this.#database, attemptId);
+    if (
+      pending === undefined ||
+      pending.kind !== "archive" ||
+      pending.status !== "pending"
+    ) {
+      throw StorageError.archiveAttemptNotPending(attemptId);
+    }
+    if (pending.binding !== rawText || pending.payload.rawText !== rawText) {
+      throw StorageError.archiveAttemptTextMismatch(attemptId);
     }
     return attempt;
   }
@@ -698,7 +890,9 @@ export class Store {
     const id = requiredField(attemptId, "attempt_id");
     const text = requiredField(rawText, "raw_text");
     withTransaction(this.#database, () => {
-      this.#requirePendingAttempt(id, text);
+      this.requirePendingArchiveAttempt(id, rawText);
+      const timestamp = this.#now();
+      rejectPendingAction(this.#database, id, text, timestamp);
       const updated = this.#database
         .prepare(
           `UPDATE archive_attempts
@@ -706,11 +900,90 @@ export class Store {
            WHERE id = ? AND archive_state = 'needs_confirmation'
              AND resolved_at IS NULL AND corrected = 0`,
         )
-        .run(this.#now(), id);
+        .run(timestamp, id);
       if (updated.changes !== 1) {
         throw StorageError.archiveAttemptNotPending(id);
       }
     });
+  }
+
+  getPendingAction(id: string): PendingAction | undefined {
+    return readPendingAction(
+      this.#database,
+      requiredField(id, "pending_action_id"),
+    );
+  }
+
+  /** Future use cases can persist proposals; no executor is dispatched here. */
+  proposePendingAction(
+    draft: DeferredActionDraft,
+    binding: string,
+    proposedBy: ProposedBy,
+  ): PendingAction {
+    const parsed = pendingActionDraftSchema.safeParse(draft);
+    if (!parsed.success || parsed.data.kind === "archive") {
+      throw StorageError.invalidWrite(
+        "pending_action",
+        "requires a valid non-archive proposal",
+      );
+    }
+    return withTransaction(this.#database, () => {
+      const id = newId();
+      insertPendingAction(
+        this.#database,
+        id,
+        parsed.data,
+        proposedBy,
+        binding,
+        this.#now(),
+      );
+      return requirePendingAction(this.#database, id, binding);
+    });
+  }
+
+  approvePendingAction(id: string, binding: string): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding);
+      approvePendingAction(
+        this.#database,
+        id,
+        binding,
+        { action: "approve" },
+        this.#now(),
+      );
+    });
+  }
+
+  rejectPendingAction(id: string, binding: string): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding);
+      rejectPendingAction(this.#database, id, binding, this.#now());
+    });
+  }
+
+  finishPendingAction(
+    id: string,
+    binding: string,
+    outcome: ActionCompletion,
+  ): void {
+    withTransaction(this.#database, () => {
+      this.#requireDeferredAction(id, binding, "approved");
+      finishPendingAction(this.#database, id, binding, outcome, this.#now());
+    });
+  }
+
+  #requireDeferredAction(
+    id: string,
+    binding: string,
+    status: "pending" | "approved" = "pending",
+  ): PendingAction {
+    const row = requirePendingAction(this.#database, id, binding, status);
+    if (row.kind === "archive")
+      throw StorageError.invalidWrite(
+        "pending_action",
+        "archive actions must use bound confirmation",
+      );
+    return row;
   }
 
   // ── correction ───────────────────────────────────────────────────────────
@@ -732,16 +1005,21 @@ export class Store {
 
     return withTransaction(this.#database, () => {
       const source = this.#database
-        .prepare("SELECT bucket_id FROM entries WHERE id = ?")
+        .prepare(
+          "SELECT bucket_id FROM entries WHERE id = ? AND revoked_at IS NULL",
+        )
         .get(entryId) as { bucket_id: string } | undefined;
       if (source === undefined)
         throw StorageError.missingRecord("entries", entryId);
 
-      const targetExists = this.#database
-        .prepare("SELECT 1 FROM buckets WHERE id = ?")
-        .get(targetBucketId);
-      if (targetExists === undefined)
+      const target = this.#database
+        .prepare("SELECT lifecycle FROM buckets WHERE id = ?")
+        .get(targetBucketId) as { lifecycle: string } | undefined;
+      if (target === undefined)
         throw StorageError.missingRecord("buckets", targetBucketId);
+      if (target.lifecycle !== "active") {
+        throw StorageError.inactiveBucket(targetBucketId);
+      }
 
       const sourceBucketId = source.bucket_id;
       if (sourceBucketId === targetBucketId) {
@@ -760,6 +1038,9 @@ export class Store {
       this.#database
         .prepare("UPDATE memory_items SET bucket_id = ? WHERE entry_id = ?")
         .run(targetBucketId, entryId);
+      const tags = this.#entryTags(entryId);
+      this.#removeUnsupportedTags(sourceBucketId, tags);
+      this.#mergeBucketTags(targetBucketId, tags);
       this.#database
         .prepare(
           "UPDATE buckets SET updated_at = ?, last_active_at = ? WHERE id = ?",
@@ -850,7 +1131,7 @@ export class Store {
   #rebuildSummary(bucketId: string, timestamp: string): void {
     const rows = this.#database
       .prepare(
-        `SELECT summary FROM entries WHERE bucket_id = ?
+        `SELECT summary FROM entries WHERE bucket_id = ? AND revoked_at IS NULL
          ORDER BY created_at ASC, id ASC LIMIT ?`,
       )
       .all(bucketId, DEFAULT_REBUILD_ENTRY_LIMIT) as {
@@ -899,14 +1180,15 @@ export class Store {
       this.#database
         .prepare(
           `INSERT INTO corrections
-             (id, command_text, action, target_type, target_id, before_json, created_at)
-           VALUES (?, ?, 'delete_bucket', 'bucket', ?, ?, ?)`,
+             (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+           VALUES (?, ?, 'delete_bucket', 'bucket', ?, ?, ?, ?)`,
         )
         .run(
           correctionId,
           command,
           bucketId,
           JSON.stringify({ bucket_id: bucketId }),
+          JSON.stringify(this.#nextMemoryContext()),
           this.#now(),
         );
       return {
@@ -919,33 +1201,166 @@ export class Store {
     });
   }
 
-  /** Delete one Entry, leaving its Bucket and the other Entries intact. */
-  deleteEntry(entryId: string, commandText: string): void {
+  /** Revoke one Entry. Source text and audit survive outside effective memory. */
+  deleteEntry(entryId: string, commandText: string): EntryRevocation {
+    const id = requiredField(entryId, "entry_id");
     const command = requiredField(commandText, "command_text");
-    withTransaction(this.#database, () => {
+    return withTransaction(this.#database, () => {
+      const previous = this.getEntryRevocation(id);
+      if (previous !== undefined) return previous;
       const entry = this.#database
-        .prepare("SELECT bucket_id FROM entries WHERE id = ?")
-        .get(entryId) as { bucket_id: string } | undefined;
-      if (entry === undefined)
-        throw StorageError.missingRecord("entries", entryId);
+        .prepare(
+          "SELECT bucket_id FROM entries WHERE id = ? AND revoked_at IS NULL",
+        )
+        .get(id) as { bucket_id: string } | undefined;
+      if (entry === undefined) throw StorageError.missingRecord("entries", id);
 
       const timestamp = this.#now();
-      this.#database.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
+      const memoryItemIds = this.#database
+        .prepare("SELECT id FROM memory_items WHERE entry_id = ? ORDER BY id")
+        .all(id)
+        .map((row) => z.string().parse(row["id"]));
+      const tags = this.#entryTags(id);
+      this.#database
+        .prepare("UPDATE entries SET revoked_at = ? WHERE id = ?")
+        .run(timestamp, id);
+      this.#removeUnsupportedTags(entry.bucket_id, tags);
       this.#rebuildSummary(entry.bucket_id, timestamp);
       this.#database
         .prepare(
+          `UPDATE archive_attempts SET archive_state = 'revoked', corrected = 1, resolved_at = ?
+           WHERE entry_id = ?`,
+        )
+        .run(timestamp, id);
+      const correctionId = newId();
+      this.#database
+        .prepare(
           `INSERT INTO corrections
-             (id, command_text, action, target_type, target_id, before_json, created_at)
-           VALUES (?, ?, 'delete_entry', 'entry', ?, ?, ?)`,
+             (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+           VALUES (?, ?, 'delete_entry', 'entry', ?, ?, ?, ?)`,
         )
         .run(
-          newId(),
+          correctionId,
           command,
-          entryId,
+          id,
           JSON.stringify({ bucket_id: entry.bucket_id }),
+          JSON.stringify({
+            bucket_id: entry.bucket_id,
+            revoked_at: timestamp,
+            memory_item_ids: memoryItemIds,
+            ...this.#nextMemoryContext(),
+          }),
           timestamp,
         );
+      return {
+        entryId: id,
+        bucketId: entry.bucket_id,
+        correctionId,
+        revokedAt: timestamp,
+        memoryItemIds,
+      };
     });
+  }
+
+  /** The revocation audit is durable even if its Bucket is later deleted. */
+  getEntryRevocation(entryId: string): EntryRevocation | undefined {
+    const row = this.#database
+      .prepare(
+        `SELECT id, after_json FROM corrections
+         WHERE action = 'delete_entry' AND target_type = 'entry' AND target_id = ?
+           AND after_json IS NOT NULL ORDER BY created_at ASC, id ASC LIMIT 1`,
+      )
+      .get(entryId);
+    if (row === undefined) return undefined;
+    try {
+      const audit = revocationAuditSchema.parse(
+        JSON.parse(z.string().parse(row["after_json"])) as unknown,
+      );
+      return {
+        entryId,
+        bucketId: audit.bucket_id,
+        correctionId: z.string().parse(row["id"]),
+        revokedAt: audit.revoked_at,
+        memoryItemIds: audit.memory_item_ids,
+      };
+    } catch {
+      throw StorageError.invalidWrite(
+        "entry_revocation",
+        "has invalid stored data",
+      );
+    }
+  }
+
+  getMemoryContextRevision(): number {
+    return this.conversation.getMemoryContextRevision();
+  }
+
+  #nextMemoryContext(): {
+    readonly context_revision: number;
+    readonly history_sequence: number;
+  } {
+    const revision = this.getMemoryContextRevision() + 1;
+    if (!Number.isSafeInteger(revision))
+      throw StorageError.invalidWrite(
+        "memory_context",
+        "revision limit reached",
+      );
+    const row = this.#database
+      .prepare(
+        "SELECT COALESCE(MAX(sequence), 0) AS maximum FROM conversation_messages",
+      )
+      .get();
+    return {
+      context_revision: revision,
+      history_sequence: z.number().int().nonnegative().parse(row?.["maximum"]),
+    };
+  }
+
+  #entryTags(entryId: string): readonly string[] {
+    return this.#database
+      .prepare(
+        "SELECT text FROM memory_items WHERE entry_id = ? AND kind = 'tag'",
+      )
+      .all(entryId)
+      .map((row) => z.string().parse(row["text"]));
+  }
+
+  /** Remove only known contributions with no effective support; keep legacy tags. */
+  #removeUnsupportedTags(
+    bucketId: string,
+    contributed: readonly string[],
+  ): void {
+    if (contributed.length === 0) return;
+    const contributedKeys = new Set(contributed.map(normalizedKey));
+    const supportedKeys = new Set(
+      this.#database
+        .prepare(
+          `SELECT text FROM memory_items WHERE bucket_id = ? AND kind = 'tag'
+           AND (entry_id IS NULL OR EXISTS (
+             SELECT 1 FROM entries source WHERE source.id = memory_items.entry_id AND source.revoked_at IS NULL
+           ))`,
+        )
+        .all(bucketId)
+        .map((row) => normalizedKey(z.string().parse(row["text"]))),
+    );
+    const tags = this.#database
+      .prepare(
+        "SELECT tag FROM bucket_tags WHERE bucket_id = ? ORDER BY position",
+      )
+      .all(bucketId)
+      .map((row) => z.string().parse(row["tag"]))
+      .filter(
+        (tag) =>
+          !contributedKeys.has(normalizedKey(tag)) ||
+          supportedKeys.has(normalizedKey(tag)),
+      );
+    this.#database
+      .prepare("DELETE FROM bucket_tags WHERE bucket_id = ?")
+      .run(bucketId);
+    const insert = this.#database.prepare(
+      "INSERT INTO bucket_tags (bucket_id, tag, position) VALUES (?, ?, ?)",
+    );
+    tags.forEach((tag, position) => insert.run(bucketId, tag, position));
   }
 
   // ── Bucket lifecycle ─────────────────────────────────────────────────────
@@ -973,424 +1388,440 @@ export class Store {
     });
   }
 
-  // ── conversation ─────────────────────────────────────────────────────────
-
-  /** Append one chat message. `sequence` is assigned inside the transaction. */
-  appendChatMessage(message: {
-    role: "user" | "assistant" | "tool";
-    content: string;
-    toolName?: string | undefined;
-    toolCallId?: string | undefined;
-    details?: unknown;
-  }): ChatMessageRow {
-    const content = requiredField(message.content, "content");
-    return withTransaction(this.#database, () => {
-      const row = this.#database
-        .prepare(
-          "SELECT COALESCE(MAX(sequence), 0) AS max FROM conversation_messages",
-        )
-        .get() as { max: number };
-      const id = newId();
-      const createdAt = this.#now();
-      const toolName = optionalField(message.toolName);
-      const toolCallId = optionalField(message.toolCallId);
-      this.#database
-        .prepare(
-          `INSERT INTO conversation_messages
-             (id, sequence, role, content, tool_name, tool_call_id, details_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          id,
-          row.max + 1,
-          message.role,
-          content,
-          toolName,
-          toolCallId,
-          message.details === undefined
-            ? null
-            : JSON.stringify(message.details),
-          createdAt,
-        );
-      return {
-        id,
-        sequence: row.max + 1,
-        role: message.role,
-        content,
-        toolName,
-        toolCallId,
-        details: message.details,
-        createdAt,
-      };
-    });
+  appendChatMessage(message: ChatMessageInput): ChatMessageRow {
+    return this.conversation.appendChatMessage(message);
   }
 
-  /** Most recent `limit` messages, returned oldest-first for rendering. */
+  appendChatMessageWithinTransaction(
+    message: ChatMessageInput,
+  ): ChatMessageRow {
+    return this.conversation.appendChatMessageWithinTransaction(message);
+  }
+
   listChatMessages(limit: number): ChatMessageRow[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT id, sequence, role, content, tool_name, tool_call_id, details_json, created_at
-         FROM conversation_messages ORDER BY sequence DESC LIMIT ?`,
-      )
-      .all(limit) as {
-      id: string;
-      sequence: number;
-      role: string;
-      content: string;
-      tool_name: string | null;
-      tool_call_id: string | null;
-      details_json: string | null;
-      created_at: string;
-    }[];
-    return rows.reverse().map((row) => ({
-      id: row.id,
-      sequence: row.sequence,
-      role: row.role,
-      content: row.content,
-      toolName: row.tool_name,
-      toolCallId: row.tool_call_id,
-      details:
-        row.details_json === null ? undefined : JSON.parse(row.details_json),
-      createdAt: row.created_at,
-    }));
+    return this.conversation.listChatMessages(limit);
+  }
+
+  listModelChatMessages(
+    limit: number,
+    throughSequence?: number,
+  ): ChatMessageRow[] {
+    return this.conversation.listModelChatMessages(limit, throughSequence);
   }
 
   // ── reads ────────────────────────────────────────────────────────────────
 
   listBuckets(): BucketRow[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
-                last_active_at, archived_at
-         FROM buckets ORDER BY created_at ASC, id ASC`,
-      )
-      .all() as BucketColumns[];
-    return rows.map((row) => this.#toBucketRow(row));
+    return this.memory.listBuckets();
   }
-
-  getBucket(bucketId: string): BucketRow | undefined {
-    const row = this.#database
-      .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
-                last_active_at, archived_at
-         FROM buckets WHERE id = ?`,
-      )
-      .get(bucketId) as BucketColumns | undefined;
-    return row === undefined ? undefined : this.#toBucketRow(row);
+  getBucket(id: string): BucketRow | undefined {
+    return this.memory.getBucket(id);
   }
-
-  getEntry(entryId: string): EntryRow | undefined {
-    const row = this.#database
-      .prepare(
-        `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries WHERE id = ?`,
-      )
-      .get(entryId) as EntryColumns | undefined;
-    return row === undefined ? undefined : toEntryRow(row);
+  getEntry(id: string): EntryRow | undefined {
+    return this.memory.getEntry(id);
   }
-
   getLatestEntry(): EntryRow | undefined {
+    return this.memory.getLatestEntry();
+  }
+  listActiveBuckets(limit: number): BucketRow[] {
+    return this.memory.listActiveBuckets(limit);
+  }
+  searchBuckets(query: string, limit: number): BucketSearchHit[] {
+    return this.memory.searchBuckets(query, limit);
+  }
+  listPopularActiveBuckets(limit: number): BucketRow[] {
+    return this.memory.listPopularActiveBuckets(limit);
+  }
+  searchEntryCandidates(terms: readonly string[]): QueryEntryCandidate[] {
+    return this.memory.searchEntryCandidates(terms);
+  }
+  listEffectiveMemoryIdsForEntry(entryId: string, bucketId: string): string[] {
+    return this.memory.listEffectiveMemoryIdsForEntry(entryId, bucketId);
+  }
+  getBucketDetail(id: string): BucketDetail | undefined {
+    return this.memory.getBucketDetail(id);
+  }
+
+  /** Return one effective TODO, excluding a revoked source Entry. */
+  getTodo(todoId: string): TodoRow | undefined {
     const row = this.#database
       .prepare(
-        `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries ORDER BY created_at DESC, id DESC LIMIT 1`,
-      )
-      .get() as EntryColumns | undefined;
-    return row === undefined ? undefined : toEntryRow(row);
-  }
-
-  /** Active Buckets, most recently active first (§4.15). */
-  listActiveBuckets(limit: number): BucketRow[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT id, title, kind, lifecycle, summary, created_at, updated_at,
-                last_active_at, archived_at
-         FROM buckets WHERE lifecycle = 'active'
-         ORDER BY last_active_at DESC, updated_at DESC, id ASC LIMIT ?`,
-      )
-      .all(limit) as BucketColumns[];
-    return rows.map((row) => this.#toBucketRow(row));
-  }
-
-  /** Legacy Bucket-level search kept separate from Entry query planning. */
-  searchBuckets(query: string, limit: number): BucketSearchHit[] {
-    const cleaned = requiredField(query, "query");
-    if (!Number.isSafeInteger(limit) || limit <= 0) {
-      throw StorageError.invalidWrite("limit", "must be a positive integer");
-    }
-    const needle = cleaned.toLowerCase();
-    const hits: BucketSearchHit[] = [];
-    for (const bucket of this.listBuckets()) {
-      const detail = this.getBucketDetail(bucket.id);
-      if (detail === undefined) continue;
-      const bucketText =
-        `${bucket.title} ${bucket.summary} ${bucket.tags.join(" ")}`.toLowerCase();
-      let score = tokenScore(needle, bucketText);
-      let matchedEntryCount = 0;
-      for (const entry of detail.entries) {
-        const entryText =
-          `${entry.rawText} ${entry.summary ?? ""}`.toLowerCase();
-        const entryScore = tokenScore(needle, entryText);
-        if (entryScore > 0) {
-          matchedEntryCount += 1;
-          score += entryScore + 1;
-        }
-      }
-      if (score > 0) hits.push({ bucket, matchedEntryCount, score });
-    }
-    hits.sort(
-      (left, right) =>
-        right.score - left.score ||
-        compareStableStrings(
-          right.bucket.lastActiveAt,
-          left.bucket.lastActiveAt,
-        ) ||
-        compareStableStrings(left.bucket.id, right.bucket.id),
-    );
-    hits.splice(limit);
-    return hits;
-  }
-
-  /**
-   * Active Buckets ranked by volume of Entries and memory items (§2.2).
-   *
-   * "Popular" is a proxy for "the contexts this person actually works in",
-   * which recency alone misses for a Bucket touched steadily but not lately.
-   */
-  listPopularActiveBuckets(limit: number): BucketRow[] {
-    const rows = this.#database
-      .prepare(
-        `SELECT b.id, b.title, b.kind, b.lifecycle, b.summary,
-                b.created_at, b.updated_at, b.last_active_at, b.archived_at,
-                  (SELECT COUNT(*) FROM entries e WHERE e.bucket_id = b.id)
-                + (SELECT COUNT(*) FROM memory_items m WHERE m.bucket_id = b.id) AS volume
-         FROM buckets b WHERE b.lifecycle = 'active'
-         ORDER BY volume DESC, b.last_active_at DESC, b.id ASC LIMIT ?`,
-      )
-      .all(limit) as BucketColumns[];
-    return rows.map((row) => this.#toBucketRow(row));
-  }
-
-  /**
-   * Return Entry-level query candidates without mutating activity timestamps.
-   *
-   * SQLite narrows ordinary literal matches, while the folded in-memory pass
-   * preserves the repository's Unicode identity rule (for example Straße /
-   * STRASSE). LIKE metacharacters and the slash escape character are always
-   * escaped before binding; user text is never interpolated into SQL.
-   */
-  searchEntryCandidates(terms: readonly string[]): QueryEntryCandidate[] {
-    const normalizedTerms = [
-      ...new Set(
-        terms.map((term) => term.trim()).filter((term) => term !== ""),
-      ),
-    ];
-    const sqlMatchedIds = new Set<string>();
-
-    if (normalizedTerms.length > 0) {
-      const clauses = normalizedTerms.map(
-        () => `(
-          b.title LIKE ? ESCAPE '/' OR b.summary LIKE ? ESCAPE '/'
-          OR e.raw_text LIKE ? ESCAPE '/' OR COALESCE(e.summary, '') LIKE ? ESCAPE '/'
-          OR e.content_type LIKE ? ESCAPE '/'
-          OR EXISTS (
-            SELECT 1 FROM bucket_tags bt
-            WHERE bt.bucket_id = b.id AND bt.tag LIKE ? ESCAPE '/'
-          )
-          OR EXISTS (
-            SELECT 1 FROM memory_items mi
-            WHERE mi.entry_id = e.id AND (
-              mi.text LIKE ? ESCAPE '/' OR mi.kind LIKE ? ESCAPE '/'
-              OR COALESCE(mi.status, '') LIKE ? ESCAPE '/'
-              OR COALESCE(mi.source, '') LIKE ? ESCAPE '/'
-              OR mi.metadata_json LIKE ? ESCAPE '/'
-            )
-          )
-        )`,
-      );
-      const parameters = normalizedTerms.flatMap((term) => {
-        const pattern = `%${escapeLikeLiteral(term)}%`;
-        return Array.from({ length: 11 }, () => pattern);
-      });
-      const rows = this.#database
-        .prepare(
-          `SELECT e.id
-           FROM entries e JOIN buckets b ON b.id = e.bucket_id
-           WHERE ${clauses.join(" OR ")}
-           ORDER BY e.created_at ASC, e.id ASC`,
-        )
-        .all(...parameters) as { id: string }[];
-      for (const row of rows) sqlMatchedIds.add(row.id);
-    }
-
-    const foldedTerms = normalizedTerms.map(unicodeCaseFold);
-    const candidates: QueryEntryCandidate[] = [];
-    for (const bucket of this.listBuckets()) {
-      const detail = this.getBucketDetail(bucket.id);
-      if (detail === undefined) continue;
-      for (const entry of detail.entries) {
-        const memories = detail.memories.filter(
-          (memory) => memory.entryId === entry.id,
-        );
-        const corpus = unicodeCaseFold(
-          [
-            bucket.title,
-            bucket.summary,
-            ...bucket.tags,
-            entry.rawText,
-            entry.summary ?? "",
-            entry.contentType,
-            ...memories.flatMap((memory) => [
-              memory.kind,
-              memory.text,
-              memory.status ?? "",
-              memory.source ?? "",
-              JSON.stringify(memory.metadata),
-            ]),
-          ].join(" "),
-        );
-        if (
-          foldedTerms.length === 0 ||
-          sqlMatchedIds.has(entry.id) ||
-          foldedTerms.some((term) => corpus.includes(term))
-        ) {
-          candidates.push({ bucket, entry, memories });
-        }
-      }
-    }
-    return candidates;
-  }
-
-  getBucketDetail(bucketId: string): BucketDetail | undefined {
-    const bucket = this.getBucket(bucketId);
-    if (bucket === undefined) return undefined;
-
-    const entries = this.#database
-      .prepare(
-        `SELECT id, bucket_id, raw_text, summary, content_type, classification_confidence,
-                classification_reason, created_at, moved_from_bucket_id, archive_state, archived_at
-         FROM entries WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
-      )
-      .all(bucketId) as EntryColumns[];
-
-    const memories = this.#database
-      .prepare(
-        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, occurred_at,
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, scheduled_at,
+                todo_rule_json, todo_raw_time_json, todo_occurrence, occurred_at,
                 source, reason, created_at, updated_at, metadata_json
-         FROM memory_items WHERE bucket_id = ? ORDER BY created_at ASC, id ASC`,
+         FROM memory_items
+         WHERE id = ? AND kind = 'todo'
+           AND (entry_id IS NULL OR EXISTS (
+             SELECT 1 FROM entries source
+             WHERE source.id = memory_items.entry_id AND source.revoked_at IS NULL
+           ))`,
       )
-      .all(bucketId) as MemoryColumns[];
-
-    return {
-      bucket,
-      entries: entries.map(toEntryRow),
-      memories: memories.map((row) => ({
-        id: row.id,
-        bucketId: row.bucket_id,
-        entryId: row.entry_id,
-        kind: row.kind,
-        text: row.text,
-        status: row.status,
-        dueAt: row.due_at,
-        occurredAt: row.occurred_at,
-        source: row.source,
-        reason: row.reason,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at,
-        metadata: parseMetadata(row.metadata_json),
-      })),
-    };
+      .get(todoId) as MemoryColumns | undefined;
+    return row === undefined ? undefined : toTodoRow(row);
   }
 
-  #toBucketRow(row: BucketColumns): BucketRow {
-    const tags = this.#database
+  /** Stable Agenda projection with explicit history and time-window controls. */
+  listAgenda(input: TodoAgendaInput = {}): TodoRow[] {
+    const now =
+      input.now === undefined
+        ? this.#now()
+        : normalizeTodoTime(input.now, "agenda now");
+    const from =
+      input.from === undefined || input.from === null
+        ? undefined
+        : normalizeTodoTime(input.from, "agenda from");
+    const to =
+      input.to === undefined || input.to === null
+        ? undefined
+        : normalizeTodoTime(input.to, "agenda to");
+    if (from !== undefined && to !== undefined && from > to) {
+      throw StorageError.invalidWrite(
+        "agenda",
+        "from must not be later than to",
+      );
+    }
+
+    const statuses = input.statuses?.map((status) => {
+      if (!isTodoStatus(status)) {
+        throw StorageError.invalidWrite("agenda status", "is invalid");
+      }
+      return status;
+    });
+    const where = [
+      "m.kind = 'todo'",
+      `(m.entry_id IS NULL OR EXISTS (
+        SELECT 1 FROM entries source
+        WHERE source.id = m.entry_id AND source.revoked_at IS NULL
+      ))`,
+    ];
+    const parameters: (string | number)[] = [];
+    if (input.bucketId !== undefined) {
+      where.push("m.bucket_id = ?");
+      parameters.push(requiredField(input.bucketId, "bucket_id"));
+    }
+    if (statuses !== undefined && statuses.length > 0) {
+      where.push(`m.status IN (${statuses.map(() => "?").join(",")})`);
+      parameters.push(...statuses);
+    } else if (input.includeHistory !== true) {
+      where.push("m.status IN ('open', 'in_progress', 'blocked')");
+    }
+    if (from !== undefined || to !== undefined) {
+      const window: string[] = [];
+      if (from !== undefined) {
+        window.push("(m.due_at IS NULL OR m.due_at >= ?)");
+        parameters.push(from);
+      }
+      if (to !== undefined) {
+        window.push("(m.scheduled_at IS NULL OR m.scheduled_at <= ?)");
+        parameters.push(to);
+      }
+      where.push(
+        `(m.scheduled_at IS NULL AND m.due_at IS NULL OR ${window.join(" AND ")})`,
+      );
+    }
+    const rows = this.#database
       .prepare(
-        "SELECT tag FROM bucket_tags WHERE bucket_id = ? ORDER BY position ASC",
+        `SELECT m.id, m.bucket_id, m.entry_id, m.kind, m.text, m.status,
+                m.due_at, m.scheduled_at, m.todo_rule_json, m.todo_raw_time_json,
+                m.todo_occurrence, m.occurred_at, m.source, m.reason,
+                m.created_at, m.updated_at, m.metadata_json
+         FROM memory_items m
+         WHERE ${where.join(" AND ")}
+         ORDER BY
+           CASE WHEN m.status IN ('open', 'in_progress', 'blocked')
+                     AND m.due_at IS NOT NULL AND m.due_at < ? THEN 0 ELSE 1 END,
+           CASE m.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1
+                         WHEN 'blocked' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,
+           COALESCE(m.due_at, m.scheduled_at, '9999-12-31T23:59:59.999Z'),
+           m.updated_at DESC, m.id ASC`,
       )
-      .all(row.id) as { tag: string }[];
-    return {
-      id: row.id,
-      title: row.title,
-      kind: row.kind as BucketType,
-      lifecycle: row.lifecycle as BucketStatus,
-      summary: row.summary,
-      tags: tags.map((tag) => tag.tag),
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      lastActiveAt: row.last_active_at,
-      archivedAt: row.archived_at,
-    };
+      .all(...parameters, now) as MemoryColumns[];
+    return rows.map(toTodoRow);
+  }
+
+  transitionTodo(
+    todoId: string,
+    nextStatus: unknown,
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      const status = transitionTodoStatus(current.status, nextStatus);
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      this.#database
+        .prepare(
+          "UPDATE memory_items SET status = ?, updated_at = ? WHERE id = ? AND updated_at = ?",
+        )
+        .run(status, timestamp, todoId, expected);
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        { ...current, status, updatedAt: timestamp },
+        timestamp,
+        "todo_transition",
+      );
+      const todo = this.#requireTodoForMutation(todoId);
+      return { todo, correctionId };
+    });
+  }
+
+  updateTodoPlan(
+    todoId: string,
+    planInput: Parameters<typeof createTodoPlan>[0],
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    const plan = createTodoPlan(planInput);
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      const occurrence =
+        plan.repeatRule === null
+          ? null
+          : current.todoRule === null ||
+              JSON.stringify(current.todoRule) !==
+                JSON.stringify(plan.repeatRule)
+            ? 1
+            : (current.todoOccurrence ?? 1);
+      this.#database
+        .prepare(
+          `UPDATE memory_items
+           SET scheduled_at = ?, due_at = ?, todo_rule_json = ?,
+               todo_raw_time_json = ?, todo_occurrence = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ?`,
+        )
+        .run(
+          plan.scheduledAt,
+          plan.dueAt,
+          plan.repeatRule === null ? null : JSON.stringify(plan.repeatRule),
+          plan.rawTime === null ? null : JSON.stringify(plan.rawTime),
+          occurrence,
+          timestamp,
+          todoId,
+          expected,
+        );
+      const updated = {
+        ...current,
+        scheduledAt: plan.scheduledAt,
+        dueAt: plan.dueAt,
+        todoRule: plan.repeatRule,
+        todoRawTime: plan.rawTime,
+        todoOccurrence: occurrence,
+        updatedAt: timestamp,
+      };
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        updated,
+        timestamp,
+        "todo_plan",
+      );
+      return { todo: this.#requireTodoForMutation(todoId), correctionId };
+    });
+  }
+
+  advanceRepeatingTodo(
+    todoId: string,
+    commandText: string,
+    expectedUpdatedAt: string,
+  ): TodoMutationOutcome {
+    const command = requiredField(commandText, "command_text");
+    const expected = requiredField(expectedUpdatedAt, "expected_updated_at");
+    return withTransaction(this.#database, () => {
+      const current = this.#requireTodoForMutation(todoId);
+      this.#assertTodoVersion(current, expected);
+      if (current.todoRule === null || current.scheduledAt === null) {
+        throw StorageError.invalidWrite(
+          "todo",
+          "cannot advance without a repeat rule and scheduled_at",
+        );
+      }
+      if (current.status !== "open" && current.status !== "in_progress") {
+        throw StorageError.invalidWrite(
+          "todo",
+          "only open or in_progress TODOs can be advanced",
+        );
+      }
+      const next = calculateNextTodoOccurrence(
+        current.scheduledAt,
+        current.todoRule,
+        current.todoOccurrence ?? 1,
+      );
+      const timestamp = this.#nextTodoTimestamp(current.updatedAt);
+      let status: TodoStatus = "done";
+      let scheduledAt = current.scheduledAt;
+      let dueAt = current.dueAt;
+      let occurrence = current.todoOccurrence ?? 1;
+      if (next !== null) {
+        status = "open";
+        scheduledAt = next;
+        occurrence += 1;
+        if (current.dueAt !== null) {
+          const offset =
+            Date.parse(current.dueAt) - Date.parse(current.scheduledAt);
+          dueAt = new Date(Date.parse(next) + offset).toISOString();
+        }
+      }
+      this.#database
+        .prepare(
+          `UPDATE memory_items
+           SET status = ?, scheduled_at = ?, due_at = ?, todo_occurrence = ?, updated_at = ?
+           WHERE id = ? AND updated_at = ?`,
+        )
+        .run(
+          status,
+          scheduledAt,
+          dueAt,
+          occurrence,
+          timestamp,
+          todoId,
+          expected,
+        );
+      const updated = {
+        ...current,
+        status,
+        scheduledAt,
+        dueAt,
+        todoOccurrence: occurrence,
+        updatedAt: timestamp,
+      };
+      const correctionId = this.#insertTodoCorrection(
+        command,
+        todoId,
+        current,
+        updated,
+        timestamp,
+        "todo_advance",
+      );
+      return { todo: this.#requireTodoForMutation(todoId), correctionId };
+    });
+  }
+
+  #requireTodoForMutation(todoId: string): TodoRow {
+    const raw = this.#database
+      .prepare(
+        `SELECT id, bucket_id, entry_id, kind, text, status, due_at, scheduled_at,
+                todo_rule_json, todo_raw_time_json, todo_occurrence, occurred_at,
+                source, reason, created_at, updated_at, metadata_json
+         FROM memory_items WHERE id = ?`,
+      )
+      .get(todoId) as MemoryColumns | undefined;
+    if (raw === undefined)
+      throw StorageError.missingRecord("memory_items", todoId);
+    if (raw.kind !== "todo") {
+      throw StorageError.invalidWrite(
+        "todo_id",
+        "must reference a TODO memory",
+      );
+    }
+    if (raw.entry_id !== null) {
+      const source = this.#database
+        .prepare("SELECT revoked_at FROM entries WHERE id = ?")
+        .get(raw.entry_id) as { revoked_at: string | null } | undefined;
+      if (source?.revoked_at !== null) {
+        throw StorageError.invalidWrite("todo", "source Entry is revoked");
+      }
+    }
+    return toTodoRow(raw);
+  }
+
+  #assertTodoVersion(todo: TodoRow, expected: string): void {
+    if (todo.updatedAt !== expected) {
+      throw StorageError.staleWrite("todo", todo.id);
+    }
+  }
+
+  #nextTodoTimestamp(previous: string): string {
+    const candidate = this.#now();
+    const previousMs = Date.parse(previous);
+    if (!Number.isFinite(previousMs)) {
+      throw StorageError.invalidWrite("todo.updated_at", "is invalid");
+    }
+    return candidate > previous
+      ? candidate
+      : new Date(previousMs + 1).toISOString();
+  }
+
+  #insertTodoCorrection(
+    command: string,
+    todoId: string,
+    before: TodoRow,
+    after: TodoRow,
+    timestamp: string,
+    action: string,
+  ): string {
+    const correctionId = newId();
+    this.#database
+      .prepare(
+        `INSERT INTO corrections
+           (id, command_text, action, target_type, target_id, before_json, after_json, created_at)
+         VALUES (?, ?, ?, 'memory', ?, ?, ?, ?)`,
+      )
+      .run(
+        correctionId,
+        command,
+        action,
+        todoId,
+        JSON.stringify(todoAuditSnapshot(before)),
+        JSON.stringify(todoAuditSnapshot(after)),
+        timestamp,
+      );
+    return correctionId;
   }
 }
 
-type BucketColumns = {
-  id: string;
-  title: string;
-  kind: string;
-  lifecycle: string;
-  summary: string;
-  created_at: string;
-  updated_at: string;
-  last_active_at: string;
-  archived_at: string | null;
-};
-
-type EntryColumns = {
-  id: string;
-  bucket_id: string;
-  raw_text: string;
-  summary: string | null;
-  content_type: string;
-  classification_confidence: number | null;
-  classification_reason: string | null;
-  created_at: string;
-  moved_from_bucket_id: string | null;
-  archive_state: string;
-  archived_at: string;
-};
-
-type MemoryColumns = {
-  id: string;
-  bucket_id: string;
-  entry_id: string | null;
-  kind: string;
-  text: string;
-  status: string | null;
-  due_at: string | null;
-  occurred_at: string | null;
-  source: string | null;
-  reason: string | null;
-  created_at: string;
-  updated_at: string;
-  metadata_json: string;
-};
-
-function escapeLikeLiteral(value: string): string {
-  return value
-    .replaceAll("/", "//")
-    .replaceAll("%", "/%")
-    .replaceAll("_", "/_");
-}
-
-function parseMetadata(value: string): JsonValue {
-  return JSON.parse(value) as JsonValue;
-}
-
-function toEntryRow(row: EntryColumns): EntryRow {
+function toTodoRow(row: MemoryColumns): TodoRow {
+  if (row.kind !== "todo" || !isTodoStatus(row.status)) {
+    throw StorageError.invalidWrite("todo", "contains invalid stored status");
+  }
+  if (
+    row.todo_occurrence !== null &&
+    (!Number.isSafeInteger(row.todo_occurrence) || row.todo_occurrence < 1)
+  ) {
+    throw StorageError.invalidWrite(
+      "todo_occurrence",
+      "contains invalid stored data",
+    );
+  }
   return {
     id: row.id,
     bucketId: row.bucket_id,
-    rawText: row.raw_text,
-    summary: row.summary,
-    contentType: row.content_type,
-    classificationConfidence: row.classification_confidence,
-    classificationReason: row.classification_reason,
+    entryId: row.entry_id,
+    kind: "todo",
+    text: row.text,
+    status: row.status,
+    dueAt: row.due_at,
+    scheduledAt: row.scheduled_at,
+    todoRule: parseTodoRule(row.todo_rule_json),
+    todoRawTime: parseTodoRawTime(row.todo_raw_time_json),
+    todoOccurrence: row.todo_occurrence,
+    occurredAt: row.occurred_at,
+    source: row.source,
+    reason: row.reason,
     createdAt: row.created_at,
-    movedFromBucketId: row.moved_from_bucket_id,
-    archiveState: row.archive_state,
-    archivedAt: row.archived_at,
+    updatedAt: row.updated_at,
+    metadata: parseMetadata(row.metadata_json),
+  };
+}
+
+function todoAuditSnapshot(todo: TodoRow): Record<string, unknown> {
+  return {
+    status: todo.status,
+    scheduled_at: todo.scheduledAt,
+    due_at: todo.dueAt,
+    todo_rule: todo.todoRule,
+    todo_raw_time: todo.todoRawTime,
+    todo_occurrence: todo.todoOccurrence,
+    updated_at: todo.updatedAt,
   };
 }
 
@@ -1414,17 +1845,3 @@ type ArchiveAttemptColumns = {
   created_at: string;
   resolved_at: string | null;
 };
-
-function compareStableStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function tokenScore(needle: string, haystack: string): number {
-  let score = haystack.includes(needle) ? 3 : 0;
-  for (const token of needle.split(/\s+/u)) {
-    if (Buffer.byteLength(token, "utf8") > 1 && haystack.includes(token)) {
-      score += 1;
-    }
-  }
-  return score;
-}

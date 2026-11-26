@@ -91,9 +91,29 @@ const bucketSummaryInputSchema = z
   })
   .strict();
 
+const mainTurnRouteInputSchema = z
+  .object({
+    intent: z.enum(["answer", "lookup", "archive"]),
+    archive_text: nullableString,
+    reason: z.string(),
+  })
+  .strict();
+
 export type BucketSummaryResult = {
   readonly summary: string;
 };
+
+export type MainTurnRouteResult =
+  | {
+      readonly intent: "answer" | "lookup";
+      readonly archiveText: null;
+      readonly reason: string;
+    }
+  | {
+      readonly intent: "archive";
+      readonly archiveText: string;
+      readonly reason: string;
+    };
 
 export const classificationJsonSchema: JsonSchema = {
   additionalProperties: false,
@@ -284,6 +304,35 @@ export const bucketSummaryJsonSchema: JsonSchema = {
   type: "object",
 };
 
+export const mainTurnRouteJsonSchema: JsonSchema = {
+  additionalProperties: false,
+  description:
+    "Structured intent decision for a natural main-conversation user turn.",
+  properties: {
+    intent: {
+      description:
+        "Choose archive for personal todos/facts/schedules to save, lookup for personal memory queries, or answer for general chat/planning/clarification.",
+      enum: ["answer", "lookup", "archive"],
+      title: "Intent",
+      type: "string",
+    },
+    archive_text: {
+      anyOf: [{ type: "string" }, { type: "null" }],
+      description:
+        "Exact faithful user text to archive when intent is archive; must be null otherwise.",
+      title: "Archive Text",
+    },
+    reason: {
+      description: "Concise rationale for the routing decision.",
+      title: "Reason",
+      type: "string",
+    },
+  },
+  required: ["intent", "archive_text", "reason"],
+  title: "MainTurnRouteResult",
+  type: "object",
+};
+
 export const classificationContract: StructuredOutputContract<ClassificationResult> =
   {
     schemaName: "ClassificationResult",
@@ -332,5 +381,23 @@ export const bucketSummaryContract: StructuredOutputContract<BucketSummaryResult
     parse(value) {
       const input = bucketSummaryInputSchema.parse(value);
       return { summary: requiredText(input.summary, "summary") };
+    },
+  };
+
+export const mainTurnRouteContract: StructuredOutputContract<MainTurnRouteResult> =
+  {
+    schemaName: "MainTurnRouteResult",
+    strictJsonSchema: mainTurnRouteJsonSchema,
+    parse(value) {
+      const input = mainTurnRouteInputSchema.parse(value);
+      const reason = requiredText(input.reason, "reason");
+      if (input.intent === "archive") {
+        const archiveText = requiredText(
+          input.archive_text ?? "",
+          "archive_text",
+        );
+        return { intent: "archive", archiveText, reason };
+      }
+      return { intent: input.intent, archiveText: null, reason };
     },
   };

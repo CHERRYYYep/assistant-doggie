@@ -2,7 +2,7 @@
 
 > 面向对 TypeScript 不熟悉、但希望理解 Doggie 设计与实现方式的读者。
 >
-> 本文**只讲当前 TypeScript 重构版**。仓库中的 Rust 代码是历史参考，不作为当前实现路径。
+> 本文**只讲当前 TypeScript 重构版**。当前分支已在 T13 验收后移除 Rust 源码；历史参考保留在 Git 中。
 
 ---
 
@@ -177,25 +177,20 @@ Prettier 格式检查
 ```text
 src/
 ├── domain/       纯领域规则，不访问数据库、不访问 HTTP、不访问模型
-├── application/  归档、确认、查询、纠错、状态服务
+├── application/  归档、确认、查询、纠错、状态服务与后台队列
 ├── storage/      SQLite 数据库、schema、事务、查询和写入
 ├── llm/          模型端点、transport、结构化输出、wire response
 ├── http/         Hono 路由、HTTP DTO、安全策略、Node server adapter
+├── agent/        多轮只读 Harness、工作区与 CLI 编排
+├── mcp/          MCP stdio 工具服务
+├── runtime/      环境配置和生产组装
 └── evaluation/   分类/提取评测，不属于在线请求主路径
 
-apps/doggie-local-web/frontend/
+web/
 └── assets/       浏览器端 TypeScript UI
 ```
 
-仓库中还存在空的历史目录：
-
-```text
-src/agent/
-src/protocol/
-src/server/
-```
-
-当前真正被使用的 TS 实现主要位于上面列出的 `domain`、`application`、`storage`、`llm`、`http` 和 frontend 目录。阅读时应以实际 import 关系为准，而不是只看旧文档里的目录草图。
+目录及产品状态已在 T13 更新，完整验收见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。阅读时以实际 import、入口和测试为准。
 
 ---
 
@@ -969,7 +964,7 @@ HTTP 使用：
 目录：
 
 ```text
-apps/doggie-local-web/frontend/assets/
+web/assets/
 ├── api.ts
 ├── app.ts
 ├── dom.ts
@@ -1126,56 +1121,32 @@ response.archive_state
 
 ---
 
-## 15. Agent 部分：当前 TS 版本应该如何理解
+## 15. Agent 部分：两层受控执行
 
-历史文档中曾规划：
+T13 已实现 `src/agent/`，详细讲解和配置见 [AGENT_CONTROL.md](AGENT_CONTROL.md)。
 
-```text
-src/agent/
-src/server/
-src/protocol/
-```
-
-但当前实际 TS 文件中，Agent 相关能力主要体现为：
-
-- `src/llm/wire-response.ts` 对 tool call 的解析；
-- `src/http/api.ts` 的 `ChatResponder` 接口；
-- HTTP chat 流程对 tool message 的持久化；
-- `src/http/security.test.ts`、`src/http/api.test.ts` 对聊天边界的验证。
-
-也就是说，当前 branch 的 TS 重构重点已经完成了：
+第一层是网页回答的 `AgentHarness`：
 
 ```text
-domain / archive / confirmation / query / storage / HTTP / frontend
+模型 function call → 固定 Map 工具表 → Zod 参数校验 → 只读 executor
+       ↑                                             ↓
+       └──────────── 工具结果作为数据回传 ────────────┘
 ```
 
-而一个完整的、独立的多轮 Agent Harness 如果需要继续扩展，应当作为新的应用层组件加入，而不是把工具执行逻辑直接塞进 Hono route。
+工具名必须已注册且在允许列表中，写工具永远不进入回答阶段。`unknown` 参数先经 Zod 缩小类型，非法字段得到数据错误。轮数、每轮调用数和 UTF-8 字节预算由服务端控制；不能靠 prompt 约定无限循环会自行停止。Responses 和 Chat Completions 的 wire 差异仅体现在请求/续接格式，执行权限相同。
 
-建议未来把它设计成：
+第二层是独立的 CLI 控制面：
 
-```ts
-export type AgentTool = {
-  readonly name: string;
-  readonly input: z.ZodType;
-  readonly execute: (input: unknown) => Promise<unknown>;
-};
-
-export type AgentHarnessOptions = {
-  readonly maxRounds: number;
-  readonly maxCallsPerRound: number;
-  readonly allowedTools: readonly string[];
-};
+```text
+workspace（真实路径 + Git 内容基线）
+  → session（不可换目录/backend）
+  → task + pending action（不可改写提案）
+  → 用户显式批准的事务 → T12 queue → 固定 argv spawn
 ```
 
-关键原则：
+数据库 schema v5 保存工作区、会话、任务和原文审批。`AgentService` 负责批准前及执行前校验，`CliAgentRunner` 负责 stdin、只读 CLI 配置、有界 JSONL 和进程组取消。无目录任务只给搜索和 Doggie 读取工具，使用稳定的 0700 私有 cwd。真实 CLI 使用自身登录，和网页 `OPENAI_API_KEY` 分开。
 
-- 默认 deny，而不是默认开放所有工具；
-- 工具参数先 Zod 校验；
-- 工具结果限制大小；
-- tool round 有上限；
-- 工具结果是数据，不是系统指令；
-- 写入工具与只读工具分离；
-- 归档确认仍由 `ArchiveRuntime` 和 `ConcreteDoggieHttpApi` 掌控。
+前端 `web/assets/agents.ts` 提供提案、批准/拒绝、结果、刷新恢复和取消；不会把模型返回值当作授权或可执行 HTML。本阶段只读，不开放文件写入、自动 Git 提交或部署。
 
 ---
 
@@ -1427,7 +1398,7 @@ src/http/*.test.ts
 文件：
 
 ```text
-apps/doggie-local-web/frontend/tests/*.test.ts
+web/tests/*.test.ts
 ```
 
 测试：
@@ -1543,7 +1514,10 @@ src/application
 src/storage
 src/llm
 src/http
-apps/doggie-local-web/frontend
+src/agent
+src/mcp
+src/runtime
+web
 ```
 
 ---
@@ -1627,11 +1601,11 @@ src/llm/structured-output.ts
 ### 第 7 步：读前端
 
 ```text
-apps/doggie-local-web/frontend/assets/api.ts
-apps/doggie-local-web/frontend/assets/views.ts
-apps/doggie-local-web/frontend/assets/render-chat.ts
-apps/doggie-local-web/frontend/assets/render-archive.ts
-apps/doggie-local-web/frontend/assets/app.ts
+web/assets/api.ts
+web/assets/views.ts
+web/assets/render-chat.ts
+web/assets/render-archive.ts
+web/assets/app.ts
 ```
 
 重点理解事件 → API → state → render。
@@ -1723,3 +1697,69 @@ npm run test:web
 
 1. **不要让模型直接决定写入；**
 2. **不要让 UI 或 HTTP handler 直接承担领域和存储逻辑。**
+
+
+## T11 补充：通用待批准动作（2026-10-08）
+
+现在前端源码已位于独立 `web/`，生产入口为 `src/main.ts`，运行、类型检查、前端测试和 CI 不依赖 Rust/Cargo。
+
+### 类型定义：判别联合而不是大而全的对象
+
+`src/domain/pending-action.ts` 使用 `z.discriminatedUnion("kind", ...)` 同时提供运行时校验和 `z.infer` 类型：
+
+```ts
+type PendingActionDraft =
+  | { kind: "archive"; payload: ArchivePayload }
+  | { kind: "agent_task"; payload: { instruction: string; workspaceId: string | null } }
+  | { kind: "scheduled_run"; payload: { scheduleId: string } }
+  | { kind: "bulk_mutation"; payload: BulkPayload };
+```
+
+上面是简化讲解，真实定义以源码为准。`kind` 告诉 TS 应使用哪类 payload，Zod 的 `.strict()` 阻止运行时偷偷夹带其他字段。没有新增依赖、通用插件框架或复杂 class 继承。
+
+### 持久化状态不等于执行权限
+
+```text
+proposal → pending → approved → executed
+                  │          └→ failed
+                  └→ rejected
+```
+
+动作包含 `proposedBy`、原文 `binding`、用户 `approval` 和结果 `result`。存储层会比对动作 ID、原文和当前状态，不能仅凭模型给出的高置信度批准。proposal 字段由 SQLite trigger 保护，后续不能替换输入再复用批准。
+
+### 归档事务与兼容投影
+
+schema v3 增加 `pending_actions`，自动在迁移事务中回填 TS v2 库的确认记录。原来的 `archive_attempts` **不直接删除**：纠错、历史卡片和 HTTP DTO 还需要它，它现在是归档审计 projection，不再是另一套授权入口。
+
+归档确认在同一个事务内执行：
+
+```text
+校验 pending action + attempt + exact raw text
+  → 记录用户 append/create 选择，status=approved
+  → 写 Bucket / Entry / Memory
+  → 更新归档审计，status=executed
+  → commit
+```
+
+任何一步失败全部 rollback，原动作仍是 pending；“不保存”则将动作和归档审计一起标成拒绝。批准与执行之间不会留下可被重放的半成品 archive。
+
+`ArchiveRuntime.appendConfirmed/createConfirmed` 不再另走直接写入分支，而是登记用户 proposal，再复用 `confirm()`。用户已经明确点击保存，因此不会重复弹出一次批准。该单次入口先提取再登记 proposal，模型失败不留下不可恢复的 pending；正式写入失败则保留 rejected 审计。已经有 UI 卡片的确认失败仍保留 pending 供重试。自动归档仍保留原有领域安全门控。
+
+### 此阶段不实现什么
+
+T11 当时只提供三类数据契约；T12/T13 现已新增队列、取消/SSE、只读 Harness，以及显式批准后执行的 CLI Agent 任务。`scheduled_run` / `bulk_mutation` 仍不执行，普通 MCP 仍只有读取工具和 `propose_entry`。
+
+代码阅读顺序：`src/domain/pending-action.ts` → `src/storage/schema.ts` 的 v3 → `src/storage/pending-actions.ts` → `src/storage/store.ts` → `src/application/archive-runtime.ts` → `src/storage/pending-actions.test.ts`。
+
+
+## T12 补充：理解 TS 的后台执行
+
+详细实现见 [TASK_QUEUE.md](TASK_QUEUE.md)。这里没有把 TypeScript 当成需要编译的“另一套 Rust”：Node 原生 async 承担等待模型，SQLite 同步事务承担短时间确定性写入，两者的边界明确。
+
+- `Promise<T>` 代表“未来返回 T”，并不代表工作在独立线程。单 worker 是用一个 `#worker: Promise<void>` 防止同时启动两次 drain；claim → await execute → finish 循环按持久化 sequence 顺序执行。
+- `AbortController` 是发出取消的一方，`AbortSignal` 是传给下层的一方。把它作为最后一个可选参数，原有调用仍兼容；有 signal 的调用在 await 两侧和写入前检查。
+- `ReadableStream<Uint8Array>` 是分块响应。SSE 发送的是任务状态 JSON，不是执行命令；`desiredSize` 与 socket `drain` 分别控制应用缓冲和网络背压。
+- TypeScript 的联合类型约束内部状态，Zod 则在运行时验证外部 JSON/SQLite 行；两者不是替代关系。浏览器的 type-only import 会被 Node strip 掉，不把后端 Zod/数据库模块带入浏览器。
+- `finally` 是生命周期底线：worker 无论成功/失败都清 timer，socket 无论断线/结束都清 listener，进程无论关闭哪层失败都等实际工作结束再关数据库。
+
+最值得保留的设计不是某个框架，而是**授权、执行、观察三个边界分离**：批准状态机决定能不能写，queue 决定何时执行，SSE 只告诉 UI 当前是什么状态。

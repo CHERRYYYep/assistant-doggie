@@ -1,0 +1,1960 @@
+{
+  "environment": {
+    "doggieBaseCommit": "6be11ecc7da1a093c81d3ad2406123dc50a758e9",
+    "doggieTrackedDirty": true,
+    "harnessSha256": {
+      "run.ts": "9f80d08dd6040042c244b989b2744651febebf86dcd037f92e372469830f370d",
+      "live-smoke.ts": "0c5f5c4fbfa00e861b2fcafe872d6954c36d41479814b6f728bbc3a18cd964cd",
+      "client.ts": "dc4e36db9e858a83b687c47af6c5f011f7c01525aea0555f76445c26b0f087c7",
+      "fixtures.ts": "eeeefb03906da322a9e8e11f8dc6e3dd11e62000abbd5a5e66b68906fc71c870",
+      "source-guard.ts": "17ca698f2c37d4162b92a4cb87ae696ad3901d676fdfa52f8cb7d478740c5d35",
+      "report.ts": "94b6007d44b0ece2cbab65efb6ac124b75eeda53206da620fbfb34dd69e3c64c"
+    },
+    "os": {
+      "platform": "linux",
+      "release": "6.8.0-136-generic",
+      "arch": "x64"
+    },
+    "upstreamTrackedDirty": false,
+    "upstreamLockSha256": "7117adafa87418be34c1779db9b54666a4264f3be67f4454c6866610ee5148e7",
+    "doggieLockSha256": "905a2f0916c9dc948f90d42c9948db8434f03d2fab5de63ae0a49715ee1c2ce5",
+    "sdk": "direct HTTP; no SDK",
+    "index": "BM25/SQLite FTS5",
+    "model": "disabled",
+    "apiMode": "not used",
+    "promptVersion": "not used",
+    "embedding": "none",
+    "loopbackPort": 43783,
+    "networkIsolation": "loopback endpoints and allow-listed environment; no OS firewall sandbox",
+    "latencyMs": { "median": 4.590905000000021, "p95": 6.695471999999995 }
+  },
+  "phase": "L0 synthetic lexical smoke; no semantic L1 extraction",
+  "upstreamCommit": "42d4cde50c5a83182fced8c584f9ddb32a620615",
+  "fixtureVersion": "l0-lexical-v1",
+  "startedAt": "2026-11-15T04:57:56.030Z",
+  "node": "v24.18.0",
+  "isolation": "synthetic empty scope and loopback endpoint; runner owns process/data isolation",
+  "baseline": [
+    {
+      "queryId": "query-synthetic-entry-01",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-02",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-03",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-04",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-05",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-06",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-08",
+          "synthetic-entry-05"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-07",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-08",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-05"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-09",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-10",
+          "synthetic-entry-06",
+          "synthetic-entry-08",
+          "synthetic-entry-05"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-10",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-09",
+          "synthetic-entry-06",
+          "synthetic-entry-08",
+          "synthetic-entry-05"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-11",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-20",
+          "synthetic-entry-17",
+          "synthetic-entry-18",
+          "synthetic-entry-16"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-12",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-20",
+          "synthetic-entry-17",
+          "synthetic-entry-18",
+          "synthetic-entry-16"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-13",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-20",
+          "synthetic-entry-17",
+          "synthetic-entry-18",
+          "synthetic-entry-16"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-14",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-20",
+          "synthetic-entry-17",
+          "synthetic-entry-18",
+          "synthetic-entry-16"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-synthetic-entry-15",
+      "score": {
+        "recallAt5": 1,
+        "precisionAt5": 0.2,
+        "unexpected": [
+          "synthetic-entry-20",
+          "synthetic-entry-17",
+          "synthetic-entry-18",
+          "synthetic-entry-16"
+        ],
+        "negativePassed": null
+      }
+    },
+    {
+      "queryId": "query-missing-0",
+      "score": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true
+      }
+    },
+    {
+      "queryId": "query-missing-1",
+      "score": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true
+      }
+    },
+    {
+      "queryId": "query-missing-2",
+      "score": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true
+      }
+    },
+    {
+      "queryId": "query-missing-3",
+      "score": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true
+      }
+    },
+    {
+      "queryId": "query-missing-4",
+      "score": {
+        "recallAt5": null,
+        "precisionAt5": null,
+        "unexpected": [],
+        "negativePassed": true
+      }
+    }
+  ],
+  "baselineSummary": {
+    "positiveRecallAt5": 1,
+    "negativesPassed": 5,
+    "negativeTotal": 5
+  },
+  "core": { "version": "0.1.0", "ftsAvailable": true },
+  "runs": [
+    {
+      "iteration": 0,
+      "queryResults": [
+        {
+          "queryId": "query-synthetic-entry-01",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-11",
+              "synthetic-entry-21",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-01",
+            "synthetic-entry-11",
+            "synthetic-entry-21",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-02",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-12",
+              "synthetic-entry-22",
+              "synthetic-entry-01",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-02",
+            "synthetic-entry-12",
+            "synthetic-entry-22",
+            "synthetic-entry-01",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-03",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-13",
+              "synthetic-entry-23",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-04",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-14",
+              "synthetic-entry-24",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-04",
+            "synthetic-entry-14",
+            "synthetic-entry-24",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-05",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-15",
+              "synthetic-entry-25",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-05",
+            "synthetic-entry-15",
+            "synthetic-entry-25",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-06",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-16",
+              "synthetic-entry-26",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-06",
+            "synthetic-entry-16",
+            "synthetic-entry-26",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-07",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-17",
+              "synthetic-entry-27",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-07",
+            "synthetic-entry-17",
+            "synthetic-entry-27",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-08",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-18",
+              "synthetic-entry-28",
+              "synthetic-entry-03",
+              "synthetic-entry-13"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-09",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-19",
+              "synthetic-entry-01",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-09",
+            "synthetic-entry-19",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 2
+        },
+        {
+          "queryId": "query-synthetic-entry-10",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-20",
+              "synthetic-entry-30",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-10",
+            "synthetic-entry-20",
+            "synthetic-entry-30",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-11",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-01",
+              "synthetic-entry-21",
+              "synthetic-entry-12",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-11",
+            "synthetic-entry-01",
+            "synthetic-entry-21",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-12",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-02",
+              "synthetic-entry-22",
+              "synthetic-entry-11",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-12",
+            "synthetic-entry-02",
+            "synthetic-entry-22",
+            "synthetic-entry-11",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-13",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-03",
+              "synthetic-entry-23",
+              "synthetic-entry-18",
+              "synthetic-entry-08"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 14,
+          "admittedSourceIds": [
+            "synthetic-entry-13",
+            "synthetic-entry-03",
+            "synthetic-entry-23",
+            "synthetic-entry-18",
+            "synthetic-entry-08",
+            "synthetic-entry-28",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-14"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-14",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-04",
+              "synthetic-entry-24",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-14",
+            "synthetic-entry-04",
+            "synthetic-entry-24",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-15",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-05",
+              "synthetic-entry-25",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-15",
+            "synthetic-entry-05",
+            "synthetic-entry-25",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-0",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-1",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-2",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-3",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-4",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        }
+      ],
+      "crossSessionCount": 31,
+      "crossUserCount": 0,
+      "revokedCandidateRejected": true,
+      "staleSnapshotRejected": true,
+      "ftsAvailable": true,
+      "duplicateRequestProducedDistinctIds": true,
+      "cleanupDeleted": 31
+    },
+    {
+      "iteration": 1,
+      "queryResults": [
+        {
+          "queryId": "query-synthetic-entry-01",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-11",
+              "synthetic-entry-21",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-01",
+            "synthetic-entry-11",
+            "synthetic-entry-21",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-02",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-12",
+              "synthetic-entry-22",
+              "synthetic-entry-01",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-02",
+            "synthetic-entry-12",
+            "synthetic-entry-22",
+            "synthetic-entry-01",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-03",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-13",
+              "synthetic-entry-23",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-04",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-14",
+              "synthetic-entry-24",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-04",
+            "synthetic-entry-14",
+            "synthetic-entry-24",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-05",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-15",
+              "synthetic-entry-25",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-05",
+            "synthetic-entry-15",
+            "synthetic-entry-25",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-06",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-16",
+              "synthetic-entry-26",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-06",
+            "synthetic-entry-16",
+            "synthetic-entry-26",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-07",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-17",
+              "synthetic-entry-27",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-07",
+            "synthetic-entry-17",
+            "synthetic-entry-27",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-08",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-18",
+              "synthetic-entry-28",
+              "synthetic-entry-03",
+              "synthetic-entry-13"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-09",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-19",
+              "synthetic-entry-01",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-09",
+            "synthetic-entry-19",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 2
+        },
+        {
+          "queryId": "query-synthetic-entry-10",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-20",
+              "synthetic-entry-30",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-10",
+            "synthetic-entry-20",
+            "synthetic-entry-30",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-11",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-01",
+              "synthetic-entry-21",
+              "synthetic-entry-12",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-11",
+            "synthetic-entry-01",
+            "synthetic-entry-21",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-12",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-02",
+              "synthetic-entry-22",
+              "synthetic-entry-11",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-12",
+            "synthetic-entry-02",
+            "synthetic-entry-22",
+            "synthetic-entry-11",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-13",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-03",
+              "synthetic-entry-23",
+              "synthetic-entry-18",
+              "synthetic-entry-08"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 14,
+          "admittedSourceIds": [
+            "synthetic-entry-13",
+            "synthetic-entry-03",
+            "synthetic-entry-23",
+            "synthetic-entry-18",
+            "synthetic-entry-08",
+            "synthetic-entry-28",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-14"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-14",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-04",
+              "synthetic-entry-24",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-14",
+            "synthetic-entry-04",
+            "synthetic-entry-24",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-15",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-05",
+              "synthetic-entry-25",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-15",
+            "synthetic-entry-05",
+            "synthetic-entry-25",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-0",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-1",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-2",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-3",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-4",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        }
+      ],
+      "crossSessionCount": 31,
+      "crossUserCount": 0,
+      "revokedCandidateRejected": true,
+      "staleSnapshotRejected": true,
+      "ftsAvailable": true,
+      "duplicateRequestProducedDistinctIds": true,
+      "cleanupDeleted": 31
+    },
+    {
+      "iteration": 2,
+      "queryResults": [
+        {
+          "queryId": "query-synthetic-entry-01",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-11",
+              "synthetic-entry-21",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-01",
+            "synthetic-entry-11",
+            "synthetic-entry-21",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-02",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-12",
+              "synthetic-entry-22",
+              "synthetic-entry-01",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-02",
+            "synthetic-entry-12",
+            "synthetic-entry-22",
+            "synthetic-entry-01",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-03",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-13",
+              "synthetic-entry-23",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-04",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-14",
+              "synthetic-entry-24",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-04",
+            "synthetic-entry-14",
+            "synthetic-entry-24",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-05",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-15",
+              "synthetic-entry-25",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-05",
+            "synthetic-entry-15",
+            "synthetic-entry-25",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-06",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-16",
+              "synthetic-entry-26",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-06",
+            "synthetic-entry-16",
+            "synthetic-entry-26",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-07",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-17",
+              "synthetic-entry-27",
+              "synthetic-entry-08",
+              "synthetic-entry-18"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-07",
+            "synthetic-entry-17",
+            "synthetic-entry-27",
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-08",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-18",
+              "synthetic-entry-28",
+              "synthetic-entry-03",
+              "synthetic-entry-13"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 15,
+          "admittedSourceIds": [
+            "synthetic-entry-08",
+            "synthetic-entry-18",
+            "synthetic-entry-28",
+            "synthetic-entry-03",
+            "synthetic-entry-13",
+            "synthetic-entry-23",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-04"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-09",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-19",
+              "synthetic-entry-01",
+              "synthetic-entry-02",
+              "synthetic-entry-07"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-09",
+            "synthetic-entry-19",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-10",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 2
+        },
+        {
+          "queryId": "query-synthetic-entry-10",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-20",
+              "synthetic-entry-30",
+              "synthetic-entry-01",
+              "synthetic-entry-02"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-10",
+            "synthetic-entry-20",
+            "synthetic-entry-30",
+            "synthetic-entry-01",
+            "synthetic-entry-02",
+            "synthetic-entry-07",
+            "synthetic-entry-09",
+            "synthetic-entry-05",
+            "synthetic-entry-06",
+            "synthetic-entry-03",
+            "synthetic-entry-04",
+            "synthetic-entry-08"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-11",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-01",
+              "synthetic-entry-21",
+              "synthetic-entry-12",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 13,
+          "admittedSourceIds": [
+            "synthetic-entry-11",
+            "synthetic-entry-01",
+            "synthetic-entry-21",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 1
+        },
+        {
+          "queryId": "query-synthetic-entry-12",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-02",
+              "synthetic-entry-22",
+              "synthetic-entry-11",
+              "synthetic-entry-17"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-12",
+            "synthetic-entry-02",
+            "synthetic-entry-22",
+            "synthetic-entry-11",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-13",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-03",
+              "synthetic-entry-23",
+              "synthetic-entry-18",
+              "synthetic-entry-08"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 14,
+          "admittedSourceIds": [
+            "synthetic-entry-13",
+            "synthetic-entry-03",
+            "synthetic-entry-23",
+            "synthetic-entry-18",
+            "synthetic-entry-08",
+            "synthetic-entry-28",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-14"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-14",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-04",
+              "synthetic-entry-24",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-14",
+            "synthetic-entry-04",
+            "synthetic-entry-24",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-15",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-synthetic-entry-15",
+          "score": {
+            "recallAt5": 1,
+            "precisionAt5": 0.2,
+            "unexpected": [
+              "synthetic-entry-05",
+              "synthetic-entry-25",
+              "synthetic-entry-11",
+              "synthetic-entry-12"
+            ],
+            "negativePassed": null
+          },
+          "candidateCount": 12,
+          "admittedSourceIds": [
+            "synthetic-entry-15",
+            "synthetic-entry-05",
+            "synthetic-entry-25",
+            "synthetic-entry-11",
+            "synthetic-entry-12",
+            "synthetic-entry-17",
+            "synthetic-entry-19",
+            "synthetic-entry-16",
+            "synthetic-entry-20",
+            "synthetic-entry-13",
+            "synthetic-entry-14",
+            "synthetic-entry-18"
+          ],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-0",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-1",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-2",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-3",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        },
+        {
+          "queryId": "query-missing-4",
+          "score": {
+            "recallAt5": null,
+            "precisionAt5": null,
+            "unexpected": [],
+            "negativePassed": true
+          },
+          "candidateCount": 0,
+          "admittedSourceIds": [],
+          "notAdmittedCount": 0
+        }
+      ],
+      "crossSessionCount": 31,
+      "crossUserCount": 0,
+      "revokedCandidateRejected": true,
+      "staleSnapshotRejected": true,
+      "ftsAvailable": true,
+      "duplicateRequestProducedDistinctIds": true,
+      "cleanupDeleted": 31
+    }
+  ],
+  "summary": {
+    "positiveRecallAt5": 1,
+    "negativesPassed": 15,
+    "negativeTotal": 15,
+    "crossSessionAggregationPassed": true,
+    "crossUserIsolationPassed": true,
+    "duplicateRequestWasIdempotent": false,
+    "cleanupPassed": true
+  },
+  "transport": {
+    "requests": 170,
+    "bytes": 163847,
+    "latenciesMs": [
+      129.69101700000002, 4.3836089999999786, 285.23593800000003,
+      5.120187999999985, 4.6197160000000395, 4.650614000000019,
+      4.627215999999976, 4.685254999999984, 6.1159280000000535,
+      5.968682000000058, 5.120087000000012, 4.103054000000043,
+      5.190584999999942, 5.345402999999919, 4.3747130000000425,
+      4.272956000000022, 4.737716999999975, 4.309766999999965,
+      4.652056000000016, 4.989092000000028, 5.0297199999999975,
+      5.9216650000000755, 6.639843000000042, 6.6578810000000885,
+      5.210027000000082, 6.2598990000000185, 5.231384000000048,
+      4.795272999999952, 4.880584999999996, 4.700277000000028,
+      4.520629999999983, 5.079265999999961, 5.69216700000004, 2.815162999999984,
+      10.734053999999901, 5.428529000000026, 4.664480000000026,
+      4.680786000000012, 4.233105000000023, 4.606629999999996, 4.52646100000004,
+      3.849792999999977, 3.337496999999985, 3.557886000000053,
+      3.882484999999974, 2.1191330000000335, 2.875603000000069,
+      2.9244109999999637, 2.9053139999999757, 2.9849470000000338,
+      3.3782320000000254, 2.713023000000021, 1.9302390000000287,
+      2.5916859999999815, 4.469709999999964, 2.5108189999999695,
+      54.21511899999996, 3.538010999999983, 5.838756999999987,
+      6.573273999999969, 5.339109000000008, 6.276948999999945,
+      5.007597999999916, 5.90477199999998, 6.259424000000081, 5.281233000000043,
+      6.695471999999995, 7.514217000000031, 5.163899000000015,
+      5.464845999999966, 5.068296999999916, 4.818016000000057,
+      5.172488999999928, 4.8578469999999925, 4.958386000000019,
+      4.827814000000103, 2.6657109999999875, 3.758375000000001,
+      3.396867000000043, 3.608604000000014, 3.567062999999962,
+      3.569317999999953, 3.7920070000000123, 4.072065000000066,
+      5.1997729999999365, 5.45641599999999, 5.404551999999967,
+      6.001647000000048, 5.643444000000045, 2.5839559999999437,
+      4.066573999999946, 4.073438000000124, 4.026908999999932,
+      3.3286769999999706, 2.471057999999857, 3.231335000000172,
+      2.9983369999999923, 3.2226799999998548, 3.102967000000035,
+      2.9633859999999004, 2.722443999999996, 2.4830870000000687,
+      2.7907890000001316, 2.3235160000001542, 2.272163999999975,
+      2.523279999999886, 2.0117800000000443, 1.9731929999998101,
+      2.0412169999999605, 1.97620599999982, 2.2042630000000827,
+      2.1676279999999224, 58.47800600000005, 3.5621320000000196,
+      5.778343999999834, 4.8598199999999, 5.0526199999999335,
+      5.0291839999999866, 4.796985000000177, 3.3949760000000424,
+      4.292554000000109, 6.369623000000047, 4.784746999999925,
+      4.7916710000001785, 5.111760000000004, 3.9490959999998267,
+      3.9975979999999254, 4.326039999999921, 5.048655999999937,
+      5.109521000000086, 5.1262329999999565, 3.955545000000029,
+      5.5497629999999845, 5.862904999999955, 6.232111000000032,
+      5.483441999999968, 5.7616669999999885, 4.660525000000007,
+      6.081455999999889, 5.83134199999995, 6.5030850000000555, 5.22825899999998,
+      5.23711400000002, 4.590905000000021, 4.78419800000006, 2.3925669999998718,
+      4.621561000000156, 3.9241340000000946, 3.920932999999877,
+      3.460749999999962, 3.9066649999999754, 3.49101399999995,
+      3.4499620000001414, 2.659537999999884, 2.4492589999999836,
+      2.594677000000047, 2.3088920000000144, 2.3576040000000376,
+      2.302359000000024, 2.2060610000000906, 2.20082699999989,
+      2.0086519999999837, 2.1316209999999955, 2.207535999999891,
+      2.2627500000000964, 2.554151000000047, 164.68614000000002,
+      2.2039519999998447, 54.38636399999996, 4.738293000000112
+    ]
+  },
+  "finishedAt": "2026-11-15T04:57:57.547Z"
+}

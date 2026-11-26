@@ -162,6 +162,7 @@ test("delete correction methods retain stable application projections", () => {
     action: "delete_entry",
     targetType: "entry",
     targetId: entryTarget.entryId,
+    ...store.getEntryRevocation(entryTarget.entryId),
   });
   assert.equal(store.getEntry(entryTarget.entryId), undefined);
 

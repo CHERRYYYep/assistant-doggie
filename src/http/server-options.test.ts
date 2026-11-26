@@ -1,3 +1,4 @@
+import { httpApiFixture } from "./test-fixtures.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -9,28 +10,8 @@ import {
   DEFAULT_MAX_HTTP_CONNECTIONS,
 } from "./server.ts";
 
-function fakeApi(): DoggieHttpApi {
-  const ok = () => ({ ok: true });
-  return {
-    activeBuckets: ok,
-    searchBuckets: ok,
-    chatHistory: ok,
-    memoryQuery: ok,
-    memoryQueryJson: ok,
-    bucketDetail: ok,
-    deleteBucket: ok,
-    archive: ok,
-    chat: ok,
-    confirmChat: ok,
-    appendConfirmed: ok,
-    createConfirmed: ok,
-    moveEntry: ok,
-    setBucketStatus: ok,
-  };
-}
-
 test("T9b applies bounded connection and request resource limits", () => {
-  const defaults = createDoggieNodeServer(fakeApi(), { assets: [] });
+  const defaults = createDoggieNodeServer(httpApiFixture(), { assets: [] });
   try {
     assert.equal(defaults.maxConnections, DEFAULT_MAX_HTTP_CONNECTIONS);
     assert.equal(defaults.headersTimeout, DEFAULT_HTTP_HEADERS_TIMEOUT_MS);
@@ -40,7 +21,7 @@ test("T9b applies bounded connection and request resource limits", () => {
     defaults.close();
   }
 
-  const overridden = createDoggieNodeServer(fakeApi(), {
+  const overridden = createDoggieNodeServer(httpApiFixture(), {
     assets: [],
     maxConnections: 3,
     headersTimeoutMs: 4_000,
@@ -62,7 +43,8 @@ test("T9b rejects invalid resource limits instead of silently disabling them", (
     { requestTimeoutMs: -1 },
   ]) {
     assert.throws(
-      () => createDoggieNodeServer(fakeApi(), { assets: [], ...options }),
+      () =>
+        createDoggieNodeServer(httpApiFixture(), { assets: [], ...options }),
       { name: "TypeError" },
     );
   }

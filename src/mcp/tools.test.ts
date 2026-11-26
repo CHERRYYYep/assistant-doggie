@@ -143,6 +143,48 @@ test("T10 MCP input schemas are strict and bounded before execution", () => {
   );
 });
 
+test("MCP proposal rolls back both audits when its confirmation card fails, then retries once", () => {
+  const { store, bucketId, tools } = setup();
+  const snapshot = () => ({
+    attempts: count(store, "archive_attempts"),
+    pending: count(store, "pending_actions"),
+    entries: count(store, "entries"),
+    memories: count(store, "memory_items"),
+    messages: count(store, "conversation_messages"),
+  });
+  const before = snapshot();
+  store.database.exec(`
+    CREATE TRIGGER reject_mcp_confirmation_card
+    BEFORE INSERT ON conversation_messages
+    BEGIN
+      SELECT RAISE(ABORT, 'confirmation card persistence failed');
+    END
+  `);
+
+  assert.throws(
+    () => tools.proposeEntry("接口 A 新一轮压测达到 120 QPS", bucketId),
+    /confirmation card persistence failed/u,
+  );
+  assert.deepEqual(snapshot(), before);
+
+  store.database.exec("DROP TRIGGER reject_mcp_confirmation_card");
+  const result = tools.proposeEntry(
+    "接口 A 新一轮压测达到 120 QPS",
+    bucketId,
+  ) as Record<string, unknown>;
+  assert.deepEqual(snapshot(), {
+    ...before,
+    attempts: before.attempts + 1,
+    pending: before.pending + 1,
+    messages: before.messages + 1,
+  });
+  const attemptId = result["attempt_id"] as string;
+  assert.equal(store.getPendingAction(attemptId)?.status, "pending");
+  const details = store.listChatMessages(10).at(-1)?.details as
+    Record<string, unknown> | undefined;
+  assert.deepEqual(details?.["archive"], result);
+});
+
 test("T10 tool output is replaced by a bounded data error", () => {
   const result = boundedToolResult({
     ok: true,

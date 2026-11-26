@@ -72,6 +72,8 @@ test("schema identity and required shape are verified on every reopen", () => {
         .run("not-doggie"),
     (database: DatabaseSync) =>
       database.exec("ALTER TABLE archive_attempts DROP COLUMN suggested_title"),
+    (database: DatabaseSync) =>
+      database.exec("ALTER TABLE pending_actions DROP COLUMN approval_json"),
   ]) {
     const fixture = temporaryDatabase();
     try {

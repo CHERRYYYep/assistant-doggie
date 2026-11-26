@@ -1,3 +1,4 @@
+import { httpApiFixture } from "./test-fixtures.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -35,26 +36,6 @@ function errorFrom(request: Request): {
     return { status: error.status, message: error.message };
   }
   assert.fail("expected the request to be rejected");
-}
-
-function fakeApi(): DoggieHttpApi {
-  const ok = () => ({ ok: true });
-  return {
-    activeBuckets: ok,
-    searchBuckets: ok,
-    chatHistory: ok,
-    memoryQuery: ok,
-    memoryQueryJson: ok,
-    bucketDetail: ok,
-    deleteBucket: ok,
-    archive: ok,
-    chat: ok,
-    confirmChat: ok,
-    appendConfirmed: ok,
-    createConfirmed: ok,
-    moveEntry: ok,
-    setBucketStatus: ok,
-  };
 }
 
 test("authority policy accepts loopback aliases and an explicitly bound authority", () => {
@@ -245,10 +226,10 @@ test("security rejection happens before write-route dispatch", async () => {
   let chatCalls = 0;
   const app = createDoggieApp(
     {
-      ...fakeApi(),
+      ...httpApiFixture(),
       chat: () => {
         chatCalls += 1;
-        return { ok: true };
+        return httpApiFixture().chat({ message: "fixture" });
       },
     },
     [],
@@ -272,12 +253,12 @@ test("security rejection happens before write-route dispatch", async () => {
 });
 
 test("all Hono responses carry the security headers without CORS relaxation", async () => {
-  const app = createDoggieApp(fakeApi(), [
+  const app = createDoggieApp(httpApiFixture(), [
     { path: "/", contentType: "text/html; charset=utf-8", body: "Doggie" },
   ]);
   const failingApp = createDoggieApp(
     {
-      ...fakeApi(),
+      ...httpApiFixture(),
       activeBuckets: () => {
         throw new Error("fixture failure");
       },

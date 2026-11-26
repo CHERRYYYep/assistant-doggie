@@ -1,0 +1,28 @@
+# C0 主对话行为基线验收
+
+2026-11-19 · 实施分支 `codex/main-conversation-backend` · 基线 `967a03a`。C0 仅增加测试、合成样本和文档，没有更改产品代码、schema 或 API。后续阶段见[实施计划](MAIN_CONVERSATION_PLAN.md)。
+
+## 旧入口：已运行的回归
+
+| 观察点 | C0 冻结的结果 | 证据 |
+|---|---|---|
+| 归档优先 | 明确记录依次经过分类、提取和归档提交，回答服务可在运行时读到已提交的 Entry。浏览器提交的焦点不是任务绑定。 | [跨层测试](../src/http/chat-baseline.test.ts)、[旧编排](../src/application/chat.ts) |
+| 低信息与回答覆盖 | 「那个任务继续」即使拿到高置信度的追加建议也只生成待确认，不提取或写 Entry。若归档返回 `needs_confirmation`，回答服务仍被调用，但 [ChatService](../src/application/chat.ts) 保留归档提示作为可见正文；成功归档时模型正文可覆盖默认归档文案。 | [跨层测试](../src/http/chat-baseline.test.ts) |
+| 原话与操作绑定 | 两个实验已有同 Bucket 的 WorkItem 时，旧入口仍把术语提问、「抓三次握手那个」的补充和「好」当作独立输入。在指定的待确认模拟条件下各自产生新的归档提案，不绑定目标或启动任务。确认须提交同一 attempt 与原文；用补充替代原文会冲突；不保存只消耗所选提案；重放冲突。 | [跨层测试](../src/http/chat-baseline.test.ts)；四选项、移动和重启复用 [Q4 联合回归](../src/runtime/core-flow.test.ts) |
+| 取消边界 | 在提取中取消且晚返回时，已接收的用户消息保留，无 Entry、确认审计或回答。归档已提交后取消，保留 Entry 与确定性归档回复，迟到回答和工具输出不入历史。等待轮次取消不保存，单实例 FIFO 不变。 | [跨层测试](../src/http/chat-baseline.test.ts)、[轮次回归](../src/application/chat.test.ts)、[归档取消回归](../src/application/archive-runtime.cancellation.test.ts) |
+| 撤销与证据 | 撤销前实际只读 `search_memory` 返回有效 Entry 证据；之后同一检索不返回该证据，模型历史不含旧轮次，原文仍留在 UI 历史，归档卡标记 revoked。撤销跨阶段的迟到输出仍由原有测试检查。 | [跨层测试](../src/http/chat-baseline.test.ts)、[撤销回归](../src/http/entry-revocation.test.ts) |
+
+取消测试通过 Hono 请求传播信号，并让替身在取消后主动结束，以检查迟到结果。它没有把底层取消描述为强制中止任意不响应信号的适配器，也没有要求实际已断开的 HTTP 客户端收到归档回复。
+
+## 新入口：待测的目标行为
+
+[TypeScript 样本](../tests/fixtures/main-conversation-cases.ts)固定 11 组场景，记录场景 ID、首次可验收阶段、前置条件、轮次和预期。代表场景用同一组「那个计网实验」用语：先问 TCP／UDP，中途术语问答直接回答，刷新后将有明确关联的补充绑回原请求，只处理报告。还包括同名、单个弱候选、无候选、明确输入、陈旧与重复操作、撤销或缺证据、归档交错以及受批准执行。
+
+测试中的假模型只固定输入分支。它不证明真实分类器必然会将上述问题判成待确认，也不证明旧入口已实现澄清。C1–C3 增量接入样本，C4 按[验收指标](MAIN_CONVERSATION_PLAN.md#6-验收既不能猜错也不能什么都问)报告错绑、多余追问、证据遗漏和无证据误答。目前尚不能给出这些产品质量指标；普通门禁没有挂载跳过的目标测试。
+
+## 验收与交接
+
+- 定向回归：59 项全部通过，其中 4 项为新增跨层测试。
+- `npm run check`：554 项后端、60 项前端全部通过，零失败、零取消、零跳过；类型与 OpenAPI 漂移检查通过。
+- `git diff --check` 通过。使用替身与临时数据库，无真实模型调用或用户数据。
+- C0 交接给 [C1](MAIN_CONVERSATION_C1_ACCEPTANCE.md)：复用现有 ChatService，在归档前区分普通回答、取证、澄清、独立归档和执行提案。先用明确问答与材料改写验证直接分支，保持旧归档/确认入口兼容。C2 再实现可持久的回复关联、候选选择与刷新恢复。

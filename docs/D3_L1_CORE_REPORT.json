@@ -1,0 +1,2675 @@
+{
+  "phase": "L1 extractor core experiment; not integrated Core HTTP or full D3 acceptance",
+  "fixtureVersion": "l1-core-v1",
+  "startedAt": "2026-11-15T08:21:20.209Z",
+  "status": "completed_scoped_experiment",
+  "authorization": {
+    "existingDotenvAuthorized": true,
+    "modelRequestLimit": 50,
+    "outputTokensPerRequest": 4096,
+    "automaticRetries": 0,
+    "iterations": 3,
+    "scope": "30 synthetic sources only; active accepted subset"
+  },
+  "environment": {
+    "doggieBaseCommit": "0e75c09b9944e6802be0780a30031fc94dea938e",
+    "upstreamCommit": "42d4cde50c5a83182fced8c584f9ddb32a620615",
+    "upstreamLockSha256": "7117adafa87418be34c1779db9b54666a4264f3be67f4454c6866610ee5148e7",
+    "harnessSha256": {
+      "live-l1.ts": "927d8f8b7d2560cc95de70f16b57ca14c543b847f9b7fc5f75dbf6066967b895",
+      "l1-worker.ts": "711368a6a2cf4d16e356be689c041aeea04facdd138527b303da4f7a8338f1c8",
+      "l1-fixtures.ts": "e590367a7faa35405427351ddfb42acbb83041791bc33f986258ba64dc8d2e35",
+      "l1-protocol.ts": "c371468e4c7ebf1bf600df75ac313aad2dc12cd37e4856a6aa059d39d047d4ff",
+      "model-budget.ts": "a97d28e757a87a27f4b8be10ee9067a5c5577309c2e18d5a0ddf624fd5ea9789"
+    },
+    "fixtureSha256": "14a27a9c92a1a7875054bda788a27a723db9c6a949a7c946737c9a43f66878b2",
+    "model": "gpt-6.1-sol",
+    "apiMode": "responses",
+    "endpointIdentifier": "4583da2ec147d8c5123b034364e50881676c72b9b34e45a5d9e118be3a638b80",
+    "node": "v24.18.0",
+    "os": { "platform": "linux", "arch": "x64" },
+    "promptMode": "chat",
+    "promptCustomization": "none",
+    "doggiePromptSha256": "da3a52efd7380ccdec0caa2b815360ea5907dccd521c91388eeb796c54a5160f",
+    "tencentPromptSha256": "4a443a170a5c6d754c8212728a2fa23b1d1f647d49f960b7e10b6a6cc5761816",
+    "sourceMapping": "one synthetic Entry per L0 message; batches <=3; one session per case/iteration",
+    "runner": "upstream LLMRunner injection -> parent Doggie transport; native standalone Chat runner not used",
+    "generationCap": 4096,
+    "sampling": "provider defaults; no temperature/seed override",
+    "dedup": false,
+    "embedding": false,
+    "l2l3": false,
+    "networkIsolation": "child receives no model credential; parent fixed endpoint; no OS egress sandbox",
+    "cost": "unknown; request count cap is not a currency cap",
+    "qualityRun": true
+  },
+  "tencent": [
+    {
+      "kind": "result",
+      "caseId": "l1-case-01",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730893210_1c5de8b3",
+            "content": "用户在2026年11月15日完成合成项目青禾支付的压测，订单接口P95延迟为120毫秒、错误率为0.8%，使用构建701；用户决定保留构建701作为回滚版本，并明确这不代表批准生产发布。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-01",
+              "synthetic-l1-source-02",
+              "synthetic-l1-source-03"
+            ],
+            "sessionId": "l1-case-01-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "latency",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "error-rate",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "rollback",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-02",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730910790_4e975da1",
+            "content": "用户在2026年11月15日报告，合成项目蓝杉搜索仍存在超时，错误码为E731，不能标记故障解决；用户决定在超时原因查明之前保留故障状态，并阻止该搜索服务发布。同日青禾支付已恢复，但这一状态仅属于支付服务，不代表蓝杉搜索恢复。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-04",
+              "synthetic-l1-source-05",
+              "synthetic-l1-source-06"
+            ],
+            "sessionId": "l1-case-02-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "search-outage",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "payment-recovered",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-release-block",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-03",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 2,
+        "storedCount": 2,
+        "records": [
+          {
+            "id": "m_1794730925207_3dceca1f",
+            "content": "用户在2026年11月15日先决定合成项目青禾于11月20日进行内部灰度发布，随后将该计划更正为11月23日，替代原定日期。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-07",
+              "synthetic-l1-source-08"
+            ],
+            "sessionId": "l1-case-03-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794730925207_3235d12a",
+            "content": "用户明确表示，合成项目青禾正式对外发布尚未获批，内部灰度发布获批不代表对外发布也获批。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-09"],
+            "sessionId": "l1-case-03-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 2,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 2,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 2,
+      "reopenedL1Count": 2,
+      "evaluation": {
+        "recordCount": 2,
+        "sourceValidRecordCount": 2,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "updated-date",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "approval-boundary",
+            "contentMatched": false,
+            "contentAndSourcesMatched": false
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-04",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730939995_eb9710c8",
+            "content": "用户于2026年11月15日决定在交接文档中始终写清项目名，以区分两个不同的Atlas：林澈负责的合成支付项目青禾中的Atlas是只读报表服务，宋禾负责的合成搜索项目蓝杉中的Atlas是索引迁移工具。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-10",
+              "synthetic-l1-source-11",
+              "synthetic-l1-source-12"
+            ],
+            "sessionId": "l1-case-04-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "payment-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "disambiguation",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-05",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730959659_15c456a7",
+            "content": "用户（未提供姓名）确认合成项目山岚的缓存保留时间为90秒，并决定缓存过期后必须回源读取，不能将过期数据当作当前事实。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-13",
+              "synthetic-l1-source-14",
+              "synthetic-l1-source-15"
+            ],
+            "sessionId": "l1-case-05-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "duplicate-fact",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "cache-boundary",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 2,
+        "sourceChecksPassed": 2
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-06",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 3,
+        "storedCount": 3,
+        "records": [
+          {
+            "id": "m_1794730970535_ef749408",
+            "content": "用户长期负责合成项目的故障排查，习惯先核对日志和时间线，再判断根因。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-16"],
+            "sessionId": "l1-case-06-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794730970535_d833a44d",
+            "content": "用户要求 AI 以后始终用简体中文回答其工作问题，并明确区分事实与推测。",
+            "type": "instruction",
+            "source_message_ids": ["synthetic-l1-source-17"],
+            "sessionId": "l1-case-06-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794730970535_06ab18b1",
+            "content": "用户长期习惯每天上午先整理待办，再处理低优先级消息。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-18"],
+            "sessionId": "l1-case-06-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 3,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 3,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 3,
+      "reopenedL1Count": 3,
+      "evaluation": {
+        "recordCount": 3,
+        "sourceValidRecordCount": 3,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "investigation-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "language",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "todo-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-07",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730981386_725bffea",
+            "content": "用户于2026年11月15日确认，合成项目“松溪”的备份需要保留30天，该保留期限是有效的长期配置。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-19"],
+            "sessionId": "l1-case-07-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "accepted-only",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-08",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794730989129_38954ccd",
+            "content": "用户于2026年11月15日确认，合成项目棠梨当前使用构建812，旧构建已退出有效状态。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-22"],
+            "sessionId": "l1-case-08-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "active-build",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-09",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731001503_0a9acaff",
+            "content": "用户要求合成项目远川长期遵循以下升级操作规程：升级前必须备份数据库；备份校验失败时必须停止升级，不得因任务紧急而绕过校验；升级完成后，备份和回滚记录必须保留至少30天，以便故障复盘。",
+            "type": "instruction",
+            "source_message_ids": [
+              "synthetic-l1-source-25",
+              "synthetic-l1-source-26",
+              "synthetic-l1-source-27"
+            ],
+            "sessionId": "l1-case-09-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "backup-first",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "validation-stop",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-10",
+      "iteration": 0,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731016294_ea24eded",
+            "content": "On November 15, 2026, the user confirmed that synthetic project Cedar uses region test-west, stated that synthetic project Birch independently uses region test-east, and decided that each project must retain its own rollback records for 14 days after deployment.",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-28",
+              "synthetic-l1-source-29",
+              "synthetic-l1-source-30"
+            ],
+            "sessionId": "l1-case-10-0",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "cedar-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "birch-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "english-retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-01",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731028806_469cd526",
+            "content": "用户在2026年11月15日完成合成项目青禾支付的压测，订单接口P95延迟为120毫秒，错误率为0.8%，使用构建701；用户决定保留构建701作为回滚版本，但这不代表批准生产发布。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-01",
+              "synthetic-l1-source-02",
+              "synthetic-l1-source-03"
+            ],
+            "sessionId": "l1-case-01-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "latency",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "error-rate",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "rollback",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-02",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731038343_c1dd9f1c",
+            "content": "用户（姓名未知）于2026年11月15日确认蓝杉搜索仍存在错误码为E731的超时，原因尚未查明，因此决定保留故障状态并阻止该搜索服务发布；青禾支付已恢复，但其状态不代表蓝杉搜索恢复。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-04",
+              "synthetic-l1-source-05",
+              "synthetic-l1-source-06"
+            ],
+            "sessionId": "l1-case-02-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "search-outage",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "payment-recovered",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-release-block",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-03",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731049356_f6534cc5",
+            "content": "用户决定将合成项目青禾的内部灰度发布日期从2026年11月20日更正为2026年11月23日；青禾正式对外发布尚未获批，内部灰度获批不代表对外发布获批。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-07",
+              "synthetic-l1-source-08",
+              "synthetic-l1-source-09"
+            ],
+            "sessionId": "l1-case-03-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "updated-date",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "approval-boundary",
+            "contentMatched": false,
+            "contentAndSourcesMatched": false
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-04",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731060993_91bb448e",
+            "content": "用户决定在交接文档中始终写清项目名，以区分不同项目中的Atlas：支付项目青禾由林澈负责，其中Atlas指只读报表服务；搜索项目蓝杉由宋禾负责，其中Atlas指索引迁移工具。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-10",
+              "synthetic-l1-source-11",
+              "synthetic-l1-source-12"
+            ],
+            "sessionId": "l1-case-04-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "payment-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "disambiguation",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-05",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731074340_d6f86eab",
+            "content": "用户在2026年11月15日确认，合成项目山岚的缓存保留时间为90秒；缓存过期后必须回源读取，不能将过期数据当作当前事实。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-13",
+              "synthetic-l1-source-14",
+              "synthetic-l1-source-15"
+            ],
+            "sessionId": "l1-case-05-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "duplicate-fact",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "cache-boundary",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 2,
+        "sourceChecksPassed": 2
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-06",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 3,
+        "storedCount": 3,
+        "records": [
+          {
+            "id": "m_1794731084628_7647a4dd",
+            "content": "用户（未提供姓名）长期负责合成项目的故障排查，习惯先核对日志和时间线，再判断根因。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-16"],
+            "sessionId": "l1-case-06-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731084628_398246a5",
+            "content": "用户要求 AI 以后回答其工作问题时始终使用简体中文，并明确区分事实与推测。",
+            "type": "instruction",
+            "source_message_ids": ["synthetic-l1-source-17"],
+            "sessionId": "l1-case-06-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731084628_67e62af5",
+            "content": "用户（未提供姓名）长期习惯每天上午先整理待办，再处理低优先级消息。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-18"],
+            "sessionId": "l1-case-06-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 3,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 3,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 3,
+      "reopenedL1Count": 3,
+      "evaluation": {
+        "recordCount": 3,
+        "sourceValidRecordCount": 3,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "investigation-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "language",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "todo-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-07",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731095297_337d074c",
+            "content": "用户在2026年11月15日确认合成项目“松溪”的备份需要保留30天，并将其设为长期有效配置。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-19"],
+            "sessionId": "l1-case-07-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "accepted-only",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-08",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731102197_9a805659",
+            "content": "用户于2026年11月15日确认，合成项目“棠梨”当前使用构建812，旧构建已退出有效状态。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-22"],
+            "sessionId": "l1-case-08-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "active-build",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-09",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731111914_34c36131",
+            "content": "用户要求 AI 在处理合成项目“远川”的升级时遵守其批准的长期操作规程：升级前必须备份数据库；备份校验失败时必须停止升级，不得因任务紧急绕过校验；升级完成后须保留备份和回滚记录至少30天，以便故障复盘。",
+            "type": "instruction",
+            "source_message_ids": [
+              "synthetic-l1-source-25",
+              "synthetic-l1-source-26",
+              "synthetic-l1-source-27"
+            ],
+            "sessionId": "l1-case-09-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "backup-first",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "validation-stop",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-10",
+      "iteration": 1,
+      "extraction": {
+        "success": true,
+        "extractedCount": 2,
+        "storedCount": 2,
+        "records": [
+          {
+            "id": "m_1794731131332_a84089cf",
+            "content": "The user confirmed that synthetic project Cedar uses the test-west region and synthetic project Birch uses the test-east region, with Birch's deployment configuration independent of Cedar's.",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-28",
+              "synthetic-l1-source-29"
+            ],
+            "sessionId": "l1-case-10-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731131332_77a70c61",
+            "content": "The user decided that synthetic projects Cedar and Birch must each retain their own rollback records for 14 days after deployment.",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-30"],
+            "sessionId": "l1-case-10-1",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 2,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 2,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 2,
+      "reopenedL1Count": 2,
+      "evaluation": {
+        "recordCount": 2,
+        "sourceValidRecordCount": 2,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "cedar-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "birch-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "english-retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-01",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731143327_19293dda",
+            "content": "用户（用户）于2026年11月15日完成合成项目青禾支付的压测，订单接口P95延迟为120毫秒、错误率为0.8%；用户决定保留构建701作为回滚版本，但未批准其生产发布。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-01",
+              "synthetic-l1-source-02",
+              "synthetic-l1-source-03"
+            ],
+            "sessionId": "l1-case-01-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "latency",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "error-rate",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "rollback",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-02",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731157367_12b4bec9",
+            "content": "用户在2026年11月15日确认，蓝杉搜索仍出现错误码为E731的超时，故障原因尚未查明，因此保留其故障状态并阻止该搜索服务发布；同日青禾支付已恢复，但这不代表蓝杉搜索恢复。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-04",
+              "synthetic-l1-source-05",
+              "synthetic-l1-source-06"
+            ],
+            "sessionId": "l1-case-02-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "search-outage",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "payment-recovered",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-release-block",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-03",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731171487_3395e939",
+            "content": "用户在2026年11月15日将合成项目青禾的内部灰度发布日期从11月20日更正为11月23日；青禾正式对外发布尚未获批，内部灰度获批不代表对外发布获批。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-07",
+              "synthetic-l1-source-08",
+              "synthetic-l1-source-09"
+            ],
+            "sessionId": "l1-case-03-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "updated-date",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "approval-boundary",
+            "contentMatched": false,
+            "contentAndSourcesMatched": false
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-04",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731185964_a1d2b683",
+            "content": "用户明确了合成支付项目青禾的负责人是林澈，项目中的Atlas指只读报表服务；合成搜索项目蓝杉的负责人是宋禾，项目中的Atlas指索引迁移工具。用户决定在交接文档中始终写清项目名，以区分两个项目中的不同Atlas对象。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-10",
+              "synthetic-l1-source-11",
+              "synthetic-l1-source-12"
+            ],
+            "sessionId": "l1-case-04-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "payment-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "search-atlas",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "disambiguation",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-05",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 2,
+        "storedCount": 2,
+        "records": [
+          {
+            "id": "m_1794731200748_b51c8945",
+            "content": "用户在2026年11月15日确认，合成项目山岚的缓存保留时间为90秒。",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-13",
+              "synthetic-l1-source-14"
+            ],
+            "sessionId": "l1-case-05-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731200748_b97c5dea",
+            "content": "用户决定，合成项目山岚的缓存过期后必须回源读取，不能将过期数据当作当前事实。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-15"],
+            "sessionId": "l1-case-05-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 2,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 2,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 2,
+      "reopenedL1Count": 2,
+      "evaluation": {
+        "recordCount": 2,
+        "sourceValidRecordCount": 2,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "duplicate-fact",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "cache-boundary",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 2,
+        "contentChecksPassed": 2,
+        "sourceChecksPassed": 2
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-06",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 3,
+        "storedCount": 3,
+        "records": [
+          {
+            "id": "m_1794731210272_36bcf40b",
+            "content": "用户（姓名不详）长期负责合成项目的故障排查，习惯先核对日志和时间线，再判断根因。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-16"],
+            "sessionId": "l1-case-06-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731210272_d536476d",
+            "content": "用户要求 AI 以后回答工作问题时始终使用简体中文，并明确区分事实与推测。",
+            "type": "instruction",
+            "source_message_ids": ["synthetic-l1-source-17"],
+            "sessionId": "l1-case-06-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731210272_9ea4fde0",
+            "content": "用户（姓名不详）长期习惯每天上午先整理待办，再处理低优先级消息。",
+            "type": "persona",
+            "source_message_ids": ["synthetic-l1-source-18"],
+            "sessionId": "l1-case-06-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 3,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 3,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 3,
+      "reopenedL1Count": 3,
+      "evaluation": {
+        "recordCount": 3,
+        "sourceValidRecordCount": 3,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "investigation-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "language",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "todo-preference",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-07",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731219991_8f96a181",
+            "content": "用户于2026年11月15日确认合成项目“松溪”的备份保留期限为30天，并将其设为长期有效配置。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-19"],
+            "sessionId": "l1-case-07-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "accepted-only",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-08",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731227968_9ce0ce6b",
+            "content": "用户（姓名未提供）于2026年11月15日确认，合成项目棠梨当前使用构建812，旧构建已退出有效状态。",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-22"],
+            "sessionId": "l1-case-08-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 1,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "active-build",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 1,
+        "contentChecksPassed": 1,
+        "sourceChecksPassed": 1
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-09",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 1,
+        "storedCount": 1,
+        "records": [
+          {
+            "id": "m_1794731241791_ef197357",
+            "content": "用户要求 AI 执行合成项目远川升级时，必须先备份数据库；备份校验失败时必须停止升级，不得因任务紧急而绕过校验；升级完成后须至少保留备份和回滚记录30天，以便故障复盘。",
+            "type": "instruction",
+            "source_message_ids": [
+              "synthetic-l1-source-25",
+              "synthetic-l1-source-26",
+              "synthetic-l1-source-27"
+            ],
+            "sessionId": "l1-case-09-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 1,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 1,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 1,
+      "reopenedL1Count": 1,
+      "evaluation": {
+        "recordCount": 1,
+        "sourceValidRecordCount": 1,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "backup-first",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "validation-stop",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    },
+    {
+      "kind": "result",
+      "caseId": "l1-case-10",
+      "iteration": 2,
+      "extraction": {
+        "success": true,
+        "extractedCount": 2,
+        "storedCount": 2,
+        "records": [
+          {
+            "id": "m_1794731257718_f74801fe",
+            "content": "The user confirmed on November 15, 2026, that synthetic project Cedar uses the test-west region and synthetic project Birch uses the test-east region, with Birch's deployment configuration independent of Cedar's.",
+            "type": "episodic",
+            "source_message_ids": [
+              "synthetic-l1-source-28",
+              "synthetic-l1-source-29"
+            ],
+            "sessionId": "l1-case-10-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          },
+          {
+            "id": "m_1794731257718_ea8e698e",
+            "content": "The user decided on November 15, 2026, that synthetic projects Cedar and Birch must each retain their own rollback records for 14 days after deployment.",
+            "type": "episodic",
+            "source_message_ids": ["synthetic-l1-source-30"],
+            "sessionId": "l1-case-10-2",
+            "teamId": "d3-l1-team",
+            "userId": "d3-l1-user",
+            "agentId": "d3-l1-agent"
+          }
+        ]
+      },
+      "persistedRecordCount": 2,
+      "persistedSourceIdsMatch": true,
+      "sqliteL1Count": 2,
+      "foreignUserL1Count": 0,
+      "deletedL0Count": 3,
+      "l1CountAfterL0Deletion": 2,
+      "reopenedL1Count": 2,
+      "evaluation": {
+        "recordCount": 2,
+        "sourceValidRecordCount": 2,
+        "rejectedRecordCount": 0,
+        "checks": [
+          {
+            "id": "cedar-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "birch-region",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          },
+          {
+            "id": "english-retention",
+            "contentMatched": true,
+            "contentAndSourcesMatched": true
+          }
+        ],
+        "totalChecks": 3,
+        "contentChecksPassed": 3,
+        "sourceChecksPassed": 3
+      },
+      "storagePassed": true,
+      "nativeL0DeletionCascadedToL1": false
+    }
+  ],
+  "doggie": [
+    {
+      "caseId": "l1-case-01",
+      "extraction": {
+        "summary": "合成项目青禾支付于2026年11月15日使用构建701完成压测，订单接口P95延迟为120毫秒、错误率为0.8%，用户决定保留构建701作为回滚版本，但未批准生产发布。",
+        "todos": [],
+        "evidences": [
+          "青禾支付是合成项目，于2026年11月15日完成压测。",
+          "该次压测使用构建701。",
+          "该次压测中，订单接口P95延迟为120毫秒，错误率为0.8%。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "合成项目青禾支付完成压测，订单接口P95延迟为120毫秒。",
+            "occurredAt": "2026年11月15日"
+          },
+          {
+            "text": "青禾支付错误率为0.8%，使用构建701。",
+            "occurredAt": "同次压测中"
+          },
+          {
+            "text": "用户决定为青禾支付保留构建701作为回滚版本，并明确这不是批准生产发布。"
+          }
+        ],
+        "decisions": [
+          "为青禾支付保留构建701作为回滚版本；该决定不代表批准生产发布。"
+        ],
+        "hypotheses": [],
+        "entities": ["青禾支付", "订单接口", "构建701"],
+        "tags": [
+          "合成项目",
+          "青禾支付",
+          "压测",
+          "P95延迟",
+          "错误率",
+          "构建701",
+          "回滚版本",
+          "未批准生产发布"
+        ]
+      },
+      "checks": [
+        { "id": "latency", "contentMatched": true },
+        { "id": "error-rate", "contentMatched": true },
+        { "id": "rollback", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-02",
+      "extraction": {
+        "summary": "蓝杉搜索在2026年11月15日仍发生E731超时，尽管同一天青禾支付已恢复，用户仍决定在搜索超时原因查明前保留其故障状态并阻止发布。",
+        "todos": ["查明蓝杉搜索超时的原因。"],
+        "evidences": [
+          "蓝杉搜索在2026年11月15日仍有超时，错误码为E731。",
+          "同一天，青禾支付已经恢复；该状态仅属于支付服务，不代表蓝杉搜索恢复。",
+          "蓝杉搜索超时原因尚未查明。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "蓝杉搜索仍有超时，错误码为E731。",
+            "occurredAt": "2026年11月15日"
+          },
+          { "text": "蓝杉搜索不能标记为故障已解决。", "occurredAt": "目前" },
+          {
+            "text": "青禾支付已经恢复，但不代表蓝杉搜索恢复。",
+            "occurredAt": "同一天"
+          },
+          {
+            "text": "用户决定在蓝杉搜索超时原因未查明之前，保留故障状态并阻止该搜索服务发布。"
+          }
+        ],
+        "decisions": [
+          "蓝杉搜索超时原因未查明之前，保留故障状态并阻止该搜索服务发布。",
+          "目前不能将蓝杉搜索故障标记为已解决。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目蓝杉搜索", "青禾支付", "错误码E731"],
+        "tags": [
+          "蓝杉搜索",
+          "青禾支付",
+          "E731",
+          "超时",
+          "故障未解决",
+          "阻止发布",
+          "支付已恢复"
+        ]
+      },
+      "checks": [
+        { "id": "search-outage", "contentMatched": true },
+        { "id": "payment-recovered", "contentMatched": true },
+        { "id": "search-release-block", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-03",
+      "extraction": {
+        "summary": "2026年11月15日，合成项目青禾的内部灰度发布计划由11月20日更正为11月23日，而正式对外发布尚未获批。",
+        "todos": [],
+        "evidences": [],
+        "timelineEvents": [
+          {
+            "text": "为合成项目青禾决定先在11月20日进行内部灰度发布。",
+            "occurredAt": "2026年11月15日上午"
+          },
+          {
+            "text": "更正青禾的内部灰度日期为11月23日，替代上午的11月20日计划。",
+            "occurredAt": "2026年11月15日下午"
+          },
+          {
+            "text": "青禾正式对外发布尚未批准，内部灰度获批不代表对外发布也获批。"
+          }
+        ],
+        "decisions": [
+          "2026年11月15日上午，决定先于11月20日进行合成项目青禾的内部灰度发布；该计划后来被替代。",
+          "2026年11月15日下午，将青禾的内部灰度发布日期更正为11月23日，替代上午的11月20日计划。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目青禾", "内部灰度发布", "正式对外发布"],
+        "tags": ["青禾", "合成项目", "内部灰度发布", "对外发布", "发布日期更正"]
+      },
+      "checks": [
+        { "id": "updated-date", "contentMatched": true },
+        { "id": "approval-boundary", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-04",
+      "extraction": {
+        "summary": "合成支付项目青禾由林澈负责，其Atlas是只读报表服务；合成搜索项目蓝杉由宋禾负责，其Atlas是索引迁移工具，用户决定在交接文档中始终写清项目名以区分两个不同对象。",
+        "todos": ["在交接文档中提及Atlas时始终写清所属项目名。"],
+        "evidences": [
+          "合成支付项目青禾的负责人是林澈。",
+          "支付项目中的Atlas指的是只读报表服务。",
+          "合成搜索项目蓝杉的负责人是宋禾。",
+          "搜索项目中的Atlas指的是索引迁移工具。",
+          "两个Atlas是不同项目的不同对象。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "用户决定在交接文档中始终写清项目名，以区分两个不同项目中的Atlas。"
+          }
+        ],
+        "decisions": [
+          "在交接文档中始终写清项目名，以区分支付项目与搜索项目中的两个Atlas。"
+        ],
+        "hypotheses": [],
+        "entities": [
+          "合成支付项目青禾",
+          "林澈",
+          "支付项目中的Atlas（只读报表服务）",
+          "合成搜索项目蓝杉",
+          "宋禾",
+          "搜索项目中的Atlas（索引迁移工具）",
+          "交接文档"
+        ],
+        "tags": [
+          "青禾",
+          "蓝杉",
+          "林澈",
+          "宋禾",
+          "Atlas",
+          "支付项目",
+          "搜索项目",
+          "只读报表服务",
+          "索引迁移工具",
+          "交接文档",
+          "同名对象区分"
+        ]
+      },
+      "checks": [
+        { "id": "payment-atlas", "contentMatched": true },
+        { "id": "search-atlas", "contentMatched": true },
+        { "id": "disambiguation", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-05",
+      "extraction": {
+        "summary": "合成项目山岚的缓存保留时间为90秒，该配置于2026年11月15日已确认，用户决定缓存过期后必须回源读取且不能将过期数据当作当前事实。",
+        "todos": [],
+        "evidences": [
+          "合成项目山岚的缓存保留时间是90秒，这是2026年11月15日已确认的配置事实；该事实在输入中重复出现两次。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "已确认合成项目山岚的缓存保留时间是90秒。",
+            "occurredAt": "2026年11月15日"
+          },
+          {
+            "text": "用户决定山岚缓存过期后必须回源读取，不能把过期数据当作当前事实。"
+          }
+        ],
+        "decisions": [
+          "用户决定：山岚缓存过期后必须回源读取，不能把过期数据当作当前事实。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目山岚", "山岚缓存"],
+        "tags": ["山岚", "缓存", "90秒", "配置事实", "缓存过期", "回源读取"]
+      },
+      "checks": [
+        { "id": "duplicate-fact", "contentMatched": true },
+        { "id": "cache-boundary", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-06",
+      "extraction": {
+        "summary": "用户长期负责合成项目故障排查，习惯先核对日志和时间线再判断根因，要求今后的工作问题始终用简体中文回答并区分事实与推测，且长期偏好每天上午先整理待办再处理低优先级消息。",
+        "todos": [],
+        "evidences": [
+          "用户长期负责合成项目的故障排查。",
+          "用户排查故障时习惯先核对日志和时间线，再判断根因。",
+          "用户偏好每天上午先整理待办，再处理低优先级消息，这是一项长期习惯。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "负责合成项目的故障排查，习惯先核对日志和时间线，再判断根因。",
+            "occurredAt": "长期"
+          },
+          {
+            "text": "要求始终用简体中文回答工作问题，并明确区分事实与推测。",
+            "occurredAt": "以后"
+          },
+          {
+            "text": "长期偏好先整理待办，再处理低优先级消息。",
+            "occurredAt": "每天上午"
+          }
+        ],
+        "decisions": [
+          "用户要求以后始终使用简体中文回答其工作问题，并明确区分事实与推测。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目"],
+        "tags": [
+          "合成项目",
+          "故障排查",
+          "日志",
+          "时间线",
+          "简体中文",
+          "事实与推测",
+          "待办整理",
+          "长期习惯",
+          "工作偏好"
+        ]
+      },
+      "checks": [
+        { "id": "investigation-preference", "contentMatched": true },
+        { "id": "language", "contentMatched": true },
+        { "id": "todo-preference", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-07",
+      "extraction": {
+        "summary": "2026年11月15日，已确认合成项目松溪的备份需要保留30天，并作为有效的长期配置。",
+        "todos": [],
+        "evidences": [],
+        "timelineEvents": [
+          {
+            "text": "确认合成项目松溪的备份需要保留30天，并作为有效的长期配置",
+            "occurredAt": "2026年11月15日"
+          }
+        ],
+        "decisions": [
+          "确认合成项目松溪的备份需要保留30天，并将其作为有效的长期配置"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目松溪"],
+        "tags": ["备份", "保留期限", "长期配置", "松溪"]
+      },
+      "checks": [{ "id": "accepted-only", "contentMatched": true }],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-08",
+      "extraction": {
+        "summary": "用户于2026年11月15日确认合成项目棠梨当前使用构建812，旧构建已退出有效状态。",
+        "todos": [],
+        "evidences": [
+          "用户确认合成项目棠梨当前使用构建812。",
+          "用户确认旧构建已退出有效状态。"
+        ],
+        "timelineEvents": [
+          {
+            "text": "用户确认合成项目棠梨当前使用构建812，旧构建已退出有效状态。",
+            "occurredAt": "2026年11月15日"
+          }
+        ],
+        "decisions": [
+          "确认合成项目棠梨当前使用构建812，旧构建已退出有效状态。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目棠梨", "构建812", "旧构建"],
+        "tags": ["棠梨", "合成项目", "构建812", "构建状态"]
+      },
+      "checks": [{ "id": "active-build", "contentMatched": true }],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-09",
+      "extraction": {
+        "summary": "用户已批准合成项目远川升级前备份数据库的长期操作规程，要求备份校验失败即停止升级且不得因紧急而绕过，并决定升级完成后保留备份和回滚记录至少30天以便故障复盘。",
+        "todos": [],
+        "evidences": [],
+        "timelineEvents": [
+          {
+            "text": "远川升级前必须备份数据库，这是用户批准的长期操作规程。",
+            "occurredAt": "升级需要先"
+          },
+          {
+            "text": "必须停止远川升级，不能因升级任务紧急而绕过校验。",
+            "occurredAt": "备份校验失败时"
+          },
+          {
+            "text": "远川备份和回滚记录须保留至少30天，以便故障复盘。",
+            "occurredAt": "升级完成后"
+          }
+        ],
+        "decisions": [
+          "已批准远川升级前必须先备份数据库，作为长期操作规程。",
+          "要求远川备份校验失败时停止升级，不得因升级任务紧急而绕过校验。",
+          "决定远川升级完成后保留备份和回滚记录至少30天，以便故障复盘。"
+        ],
+        "hypotheses": [],
+        "entities": ["合成项目远川", "数据库", "备份", "回滚记录"],
+        "tags": [
+          "远川",
+          "升级",
+          "数据库备份",
+          "备份校验",
+          "长期操作规程",
+          "回滚记录",
+          "故障复盘",
+          "保留至少30天"
+        ]
+      },
+      "checks": [
+        { "id": "backup-first", "contentMatched": true },
+        { "id": "validation-stop", "contentMatched": true },
+        { "id": "retention", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    },
+    {
+      "caseId": "l1-case-10",
+      "extraction": {
+        "summary": "Synthetic projects Cedar and Birch use independent deployment configurations in test-west and test-east respectively, and each must retain its own rollback records for 14 days after deployment.",
+        "todos": [],
+        "evidences": [
+          "The deployment configuration for Cedar was confirmed on November 15, 2026.",
+          "Birch's deployment configuration is independent of Cedar's."
+        ],
+        "timelineEvents": [
+          {
+            "text": "The deployment configuration for Synthetic project Cedar, which uses region test-west, was confirmed.",
+            "occurredAt": "November 15, 2026"
+          }
+        ],
+        "decisions": [
+          "Cedar and Birch must each retain their own rollback records for 14 days after deployment."
+        ],
+        "hypotheses": [],
+        "entities": [
+          "Synthetic project Cedar",
+          "Synthetic project Birch",
+          "region test-west",
+          "region test-east",
+          "deployment configuration",
+          "rollback records"
+        ],
+        "tags": [
+          "Cedar",
+          "Birch",
+          "test-west",
+          "test-east",
+          "deployment configuration",
+          "rollback records",
+          "retention"
+        ]
+      },
+      "checks": [
+        { "id": "cedar-region", "contentMatched": true },
+        { "id": "birch-region", "contentMatched": true },
+        { "id": "english-retention", "contentMatched": true }
+      ],
+      "sourceMapping": "local batch input binding only; native Doggie output has no per-fact source_message_ids"
+    }
+  ],
+  "calls": [
+    {
+      "ordinal": 1,
+      "label": "tencent-l1-case-01-0",
+      "requestSha256": "4a46bb099f2733b7bbc7724a18e04a9144c0ddcf07ac4ab177168f908cc9cf39",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 12475.451119000001,
+      "inputTokens": 1603,
+      "outputTokens": 435
+    },
+    {
+      "ordinal": 2,
+      "label": "tencent-l1-case-02-0",
+      "requestSha256": "dad97ec0097f24e792fb635908681fffab6396158c93c8df94524fe323c9f91c",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 17460.770673,
+      "inputTokens": 1609,
+      "outputTokens": 459
+    },
+    {
+      "ordinal": 3,
+      "label": "tencent-l1-case-03-0",
+      "requestSha256": "d14a5cf6af4af809ac8ca6bd5f7f06d727ce8f4fe75edc82589a9f1db19c7ed8",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14302.454618,
+      "inputTokens": 1912,
+      "outputTokens": 502
+    },
+    {
+      "ordinal": 4,
+      "label": "tencent-l1-case-04-0",
+      "requestSha256": "c9baa8e30eb29b699baa37e718d5a82e57f08ae9a8111f982fb73840dea962cc",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14682.597908000003,
+      "inputTokens": 1603,
+      "outputTokens": 400
+    },
+    {
+      "ordinal": 5,
+      "label": "tencent-l1-case-05-0",
+      "requestSha256": "3ba904b6152813b680620466d5d491cfe73312511596bfcc919012ea614b9e59",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 19551.010372000004,
+      "inputTokens": 1612,
+      "outputTokens": 483
+    },
+    {
+      "ordinal": 6,
+      "label": "tencent-l1-case-06-0",
+      "requestSha256": "091760dcba7ab7e490295dc574e56d5aad522d09fead127954454626b5504c87",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 10762.190201999998,
+      "inputTokens": 1601,
+      "outputTokens": 299
+    },
+    {
+      "ordinal": 7,
+      "label": "tencent-l1-case-07-0",
+      "requestSha256": "e267039fbb5a14225cb00d11bd659882a52128341b5a371c3875ba8d6320c9e3",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 10741.044412000003,
+      "inputTokens": 1502,
+      "outputTokens": 275
+    },
+    {
+      "ordinal": 8,
+      "label": "tencent-l1-case-08-0",
+      "requestSha256": "c489125dd1932643a459930e995e70f92c52280695158c58275e8c69aecc60f2",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 7636.034365999993,
+      "inputTokens": 1502,
+      "outputTokens": 191
+    },
+    {
+      "ordinal": 9,
+      "label": "tencent-l1-case-09-0",
+      "requestSha256": "ca82dce75664315d76fdf34f47aa689ef3f0be171d1eb2d37b4b5933f34a8e75",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 12255.854621999999,
+      "inputTokens": 1601,
+      "outputTokens": 351
+    },
+    {
+      "ordinal": 10,
+      "label": "tencent-l1-case-10-0",
+      "requestSha256": "33da56a747ad74bb875deb4635ca37788a4f8b2f3f2f0cc17cecfc3875a33946",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14680.66279100001,
+      "inputTokens": 1588,
+      "outputTokens": 379
+    },
+    {
+      "ordinal": 11,
+      "label": "tencent-l1-case-01-1",
+      "requestSha256": "4a46bb099f2733b7bbc7724a18e04a9144c0ddcf07ac4ab177168f908cc9cf39",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 12396.446904000011,
+      "inputTokens": 1603,
+      "outputTokens": 409
+    },
+    {
+      "ordinal": 12,
+      "label": "tencent-l1-case-02-1",
+      "requestSha256": "dad97ec0097f24e792fb635908681fffab6396158c93c8df94524fe323c9f91c",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 9419.265692999994,
+      "inputTokens": 1609,
+      "outputTokens": 321
+    },
+    {
+      "ordinal": 13,
+      "label": "tencent-l1-case-03-1",
+      "requestSha256": "d14a5cf6af4af809ac8ca6bd5f7f06d727ce8f4fe75edc82589a9f1db19c7ed8",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 10887.609335999994,
+      "inputTokens": 1912,
+      "outputTokens": 369
+    },
+    {
+      "ordinal": 14,
+      "label": "tencent-l1-case-04-1",
+      "requestSha256": "c9baa8e30eb29b699baa37e718d5a82e57f08ae9a8111f982fb73840dea962cc",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 11504.906048000004,
+      "inputTokens": 1603,
+      "outputTokens": 398
+    },
+    {
+      "ordinal": 15,
+      "label": "tencent-l1-case-05-1",
+      "requestSha256": "3ba904b6152813b680620466d5d491cfe73312511596bfcc919012ea614b9e59",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 13243.640484000003,
+      "inputTokens": 1612,
+      "outputTokens": 536
+    },
+    {
+      "ordinal": 16,
+      "label": "tencent-l1-case-06-1",
+      "requestSha256": "091760dcba7ab7e490295dc574e56d5aad522d09fead127954454626b5504c87",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 10187.790865999996,
+      "inputTokens": 1601,
+      "outputTokens": 408
+    },
+    {
+      "ordinal": 17,
+      "label": "tencent-l1-case-07-1",
+      "requestSha256": "e267039fbb5a14225cb00d11bd659882a52128341b5a371c3875ba8d6320c9e3",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 10562.130085000012,
+      "inputTokens": 1502,
+      "outputTokens": 357
+    },
+    {
+      "ordinal": 18,
+      "label": "tencent-l1-case-08-1",
+      "requestSha256": "c489125dd1932643a459930e995e70f92c52280695158c58275e8c69aecc60f2",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 6791.624469999981,
+      "inputTokens": 1502,
+      "outputTokens": 188
+    },
+    {
+      "ordinal": 19,
+      "label": "tencent-l1-case-09-1",
+      "requestSha256": "ca82dce75664315d76fdf34f47aa689ef3f0be171d1eb2d37b4b5933f34a8e75",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 9605.641272000008,
+      "inputTokens": 1601,
+      "outputTokens": 312
+    },
+    {
+      "ordinal": 20,
+      "label": "tencent-l1-case-10-1",
+      "requestSha256": "33da56a747ad74bb875deb4635ca37788a4f8b2f3f2f0cc17cecfc3875a33946",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 19310.553728,
+      "inputTokens": 1588,
+      "outputTokens": 674
+    },
+    {
+      "ordinal": 21,
+      "label": "tencent-l1-case-01-2",
+      "requestSha256": "4a46bb099f2733b7bbc7724a18e04a9144c0ddcf07ac4ab177168f908cc9cf39",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 11878.775938000006,
+      "inputTokens": 1603,
+      "outputTokens": 367
+    },
+    {
+      "ordinal": 22,
+      "label": "tencent-l1-case-02-2",
+      "requestSha256": "dad97ec0097f24e792fb635908681fffab6396158c93c8df94524fe323c9f91c",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 13927.923279999988,
+      "inputTokens": 1609,
+      "outputTokens": 516
+    },
+    {
+      "ordinal": 23,
+      "label": "tencent-l1-case-03-2",
+      "requestSha256": "d14a5cf6af4af809ac8ca6bd5f7f06d727ce8f4fe75edc82589a9f1db19c7ed8",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14019.778401999967,
+      "inputTokens": 1912,
+      "outputTokens": 525
+    },
+    {
+      "ordinal": 24,
+      "label": "tencent-l1-case-04-2",
+      "requestSha256": "c9baa8e30eb29b699baa37e718d5a82e57f08ae9a8111f982fb73840dea962cc",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14368.154640999972,
+      "inputTokens": 1603,
+      "outputTokens": 541
+    },
+    {
+      "ordinal": 25,
+      "label": "tencent-l1-case-05-2",
+      "requestSha256": "3ba904b6152813b680620466d5d491cfe73312511596bfcc919012ea614b9e59",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 14676.536411000008,
+      "inputTokens": 1612,
+      "outputTokens": 601
+    },
+    {
+      "ordinal": 26,
+      "label": "tencent-l1-case-06-2",
+      "requestSha256": "091760dcba7ab7e490295dc574e56d5aad522d09fead127954454626b5504c87",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 9422.259065999999,
+      "inputTokens": 1601,
+      "outputTokens": 359
+    },
+    {
+      "ordinal": 27,
+      "label": "tencent-l1-case-07-2",
+      "requestSha256": "e267039fbb5a14225cb00d11bd659882a52128341b5a371c3875ba8d6320c9e3",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 9602.852064999985,
+      "inputTokens": 1502,
+      "outputTokens": 330
+    },
+    {
+      "ordinal": 28,
+      "label": "tencent-l1-case-08-2",
+      "requestSha256": "c489125dd1932643a459930e995e70f92c52280695158c58275e8c69aecc60f2",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 7866.738895000017,
+      "inputTokens": 1502,
+      "outputTokens": 305
+    },
+    {
+      "ordinal": 29,
+      "label": "tencent-l1-case-09-2",
+      "requestSha256": "ca82dce75664315d76fdf34f47aa689ef3f0be171d1eb2d37b4b5933f34a8e75",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 13716.299857000005,
+      "inputTokens": 1601,
+      "outputTokens": 570
+    },
+    {
+      "ordinal": 30,
+      "label": "tencent-l1-case-10-2",
+      "requestSha256": "33da56a747ad74bb875deb4635ca37788a4f8b2f3f2f0cc17cecfc3875a33946",
+      "systemSha256": "fae33004afa3c0b714d70b45ef5252a3cb2406b7f746e118dfc6a22519892268",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 15800.82160700002,
+      "inputTokens": 1588,
+      "outputTokens": 601
+    },
+    {
+      "ordinal": 31,
+      "label": "doggie-l1-case-01-0",
+      "requestSha256": "d81aa9675b27f6b8a71216e29e05d59781c12b6dd54137a4be4bba02bb70aae9",
+      "systemSha256": "ae67b9d799818fb04d54a6cd2a9d3d1e10262fd98bd6001610be1f804ec454d0",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 8883.28468099999,
+      "inputTokens": 4721,
+      "outputTokens": 311
+    },
+    {
+      "ordinal": 32,
+      "label": "doggie-l1-case-02-0",
+      "requestSha256": "9cbd04b946a24e18717e44048d6602670bb19e2505ba32666b50f09698f9fb41",
+      "systemSha256": "df4af811ee0cef2a7ea2519e3b4940fe523ead5b3d139e7e499fda2ebb8411f9",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 11974.799936000025,
+      "inputTokens": 4727,
+      "outputTokens": 443
+    },
+    {
+      "ordinal": 33,
+      "label": "doggie-l1-case-03-0",
+      "requestSha256": "312a8ce74e874f6910093064885e67e95f96adb3d18ec449e067b0ea95939232",
+      "systemSha256": "2b1ee74b31390aa3838000e2a0ef7f8dcafd8babbf0f5a6d0a4585765cea359f",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 12359.558625000005,
+      "inputTokens": 520,
+      "outputTokens": 430
+    },
+    {
+      "ordinal": 34,
+      "label": "doggie-l1-case-04-0",
+      "requestSha256": "f1f6f69d6d0c6d58e38b28aa322df6b4dd3836632c156d7ddb929cf10fec650c",
+      "systemSha256": "8afba61296d0d0bce1dd316b836bcb81bf041c517ffb9410a520c60db168bbf9",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 12788.010570000042,
+      "inputTokens": 4720,
+      "outputTokens": 415
+    },
+    {
+      "ordinal": 35,
+      "label": "doggie-l1-case-05-0",
+      "requestSha256": "36276c7565ac943d0f4aa1c1146b1e1aee550be4d0aa0e12658d2c9796848943",
+      "systemSha256": "6a0b1b44854c469f340dbe9a8d70e7fbfe64c8990d27e38b9a9003a40be9c26e",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 8314.18939700001,
+      "inputTokens": 4730,
+      "outputTokens": 248
+    },
+    {
+      "ordinal": 36,
+      "label": "doggie-l1-case-06-0",
+      "requestSha256": "0ac69c145e8e7b7e5c9c3c00d922cd1060fd6e39e39e8f609e5440678c7ed461",
+      "systemSha256": "4c13fe2c20d546c5ac7a73b8cc164db92abc82355b499a28ad97a28dc8da0e98",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 9246.032879000006,
+      "inputTokens": 4718,
+      "outputTokens": 306
+    },
+    {
+      "ordinal": 37,
+      "label": "doggie-l1-case-07-0",
+      "requestSha256": "2d263f540e2c84bd0548a4da7852e57b738c6dbd6f9d6b7b28cb40688c58fd28",
+      "systemSha256": "8c473feee9d31a5b07f0c10bf0f4b42772435cc537fe2e7cc2a5c7ca730df2e8",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 5161.823202,
+      "inputTokens": 4839,
+      "outputTokens": 146
+    },
+    {
+      "ordinal": 38,
+      "label": "doggie-l1-case-08-0",
+      "requestSha256": "c51306d507b3522410802e79a3e538133b480aa31f9a7ed67aee9d0e4079668c",
+      "systemSha256": "01132c5e68b870e3ff988906e79c9555591b033362cde22de33cc08eff245bd1",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 7117.974904000002,
+      "inputTokens": 4676,
+      "outputTokens": 185
+    },
+    {
+      "ordinal": 39,
+      "label": "doggie-l1-case-09-0",
+      "requestSha256": "fdb4dbefdfc6ee1fdc82a0e96ccbd05cb8cf4d1c3b71ae5bd83bcbcaae73d4ed",
+      "systemSha256": "cfcfcddb8c6db9ecc1e40a5fac99d90664a8dc38ba37cf86b454da729fd201e6",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 8501.455336000014,
+      "inputTokens": 4719,
+      "outputTokens": 306
+    },
+    {
+      "ordinal": 40,
+      "label": "doggie-l1-case-10-0",
+      "requestSha256": "e11bd9bd3caaf781e0269fe72d71cf411403003e92378a3605ff82b839d1fdda",
+      "systemSha256": "ed4c755c5ca7ed6cadb13687cf2b915368a1c5387d1f78fa653077903af0a2c8",
+      "maxOutputTokens": 4096,
+      "outcome": "ok",
+      "latencyMs": 7689.526443999959,
+      "inputTokens": 1929,
+      "outputTokens": 255
+    }
+  ],
+  "finishedAt": "2026-11-15T08:29:09.807Z",
+  "cleanup": {
+    "childStopped": true,
+    "dotenvUnchanged": true,
+    "temporaryDataRemoved": true
+  },
+  "summary": {
+    "qualityRun": true,
+    "tencentCases": 30,
+    "doggieCases": 10,
+    "contentChecks": { "passed": 69, "total": 72 },
+    "sourceAndContentChecks": { "passed": 69, "total": 72 },
+    "sourceValidity": { "valid": 40, "total": 40 },
+    "infrastructurePassed": true,
+    "modelHttpRequests": 40,
+    "fakeTransportRequests": 0,
+    "inputTokens": 88698,
+    "outputTokens": 15506,
+    "usageComplete": true,
+    "fullD3Acceptance": false,
+    "decision": "No production adoption decision; integrated retrieval/dedup/revocation matrix still pending"
+  }
+}

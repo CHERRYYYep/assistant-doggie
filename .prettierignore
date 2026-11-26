@@ -1,6 +1,6 @@
 node_modules/
+web/dist/
 target/
-crates/
 package-lock.json
 *.db
 
@@ -11,3 +11,6 @@ package-lock.json
 
 # Golden fixtures are tab-separated with meaningful whitespace
 tests/fixtures/*.tsv
+
+# Deterministic schema generator controls formatting.
+docs/openapi.json

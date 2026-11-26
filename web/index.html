@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="theme-color" content="#f6f6f8" />
+    <title>Doggie · 个人工作记忆</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace-content">跳到工作区</a>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="工作区导航">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">d<span>·</span></div>
+          <div>
+            <h1>Doggie</h1>
+            <small>你的个人工作记忆</small>
+          </div>
+        </div>
+        <button id="new-chat" class="compose-button" title="清空输入，回到长期对话">
+          <span aria-hidden="true">＋</span>清空输入
+        </button>
+        <nav class="workspace-nav" aria-label="主要功能">
+          <span class="nav-label">工作区</span>
+          <button id="nav-chat" class="nav-item" aria-current="page" aria-controls="view-chat">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H9l-6 3V6a2 2 0 0 1 2-2Z" />
+              <path d="M8 9h8M8 13h5" /></svg
+            ><span>长期对话</span><span class="nav-hint">01</span>
+          </button>
+          <button id="nav-memory" class="nav-item" aria-controls="view-memory">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="16" height="16" rx="4" />
+              <path d="M9 4v16M13 9h3M13 13h3" /></svg
+            ><span>记忆空间</span><span class="nav-hint">02</span>
+          </button>
+          <button id="nav-agenda" class="nav-item" aria-controls="view-agenda">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="16" rx="3" />
+              <path d="M8 3v4M16 3v4M4 11h16m-12 5 2 2 5-4" /></svg
+            ><span>待办计划</span><span class="nav-hint">03</span>
+          </button>
+          <button id="nav-search" class="nav-item" aria-controls="view-search">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5" />
+              <path d="m16 16 5 5" /></svg
+            ><span>查询记忆</span><span class="nav-hint">04</span>
+          </button>
+          <details class="nav-tools">
+            <summary>
+              <span class="tools-label">工具与连接</span><span class="tools-label-short">工具</span>
+            </summary>
+            <button id="nav-tools" class="nav-item" aria-controls="view-tools">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="4" y="6" width="16" height="14" rx="4" />
+                <path d="M12 3v3M8 11v2M16 11v2M9 16h6" /></svg
+              ><span>Agent 与任务</span>
+            </button>
+          </details>
+        </nav>
+        <div class="sidebar-note">
+          <span class="note-orbit" aria-hidden="true">✳</span>
+          <p>让零散的工作，<br />成为可找回的记忆。</p>
+          <small>记录 · 整理 · 继续</small>
+        </div>
+        <div class="side-footer">
+          <span class="local-dot" aria-hidden="true"></span>
+          <div>本地优先<small>个人工作区 · 单一长期会话</small></div>
+        </div>
+      </aside>
+      <main id="workspace-content" class="workspace" tabindex="-1">
+        <header class="workspace-header">
+          <div class="breadcrumb">
+            个人工作区 <span>/</span> <strong id="workspace-title">长期对话</strong>
+          </div>
+          <span class="workspace-badge">DOGGIE / PERSONAL</span>
+        </header>
+        <div id="chat-status" class="chat-status" role="status" aria-live="polite"></div>
+        <section id="view-chat" class="workspace-view chat-panel" aria-labelledby="nav-chat">
+          <header class="chat-header">
+            <div>
+              <span class="eyebrow">THINK OUT LOUD</span>
+              <h2>把工作留在这里。</h2>
+              <p>一段持续的对话，让想法、进展和下一步都有迹可循。</p>
+            </div>
+            <span id="selected-bucket-label" class="context-chip">自动关联最近和热门 Bucket</span>
+          </header>
+          <section
+            id="chat-messages"
+            class="chat-messages"
+            aria-label="对话记录"
+            aria-live="polite"
+          ></section>
+          <section id="work-item-panel" class="surface work-item-panel" aria-label="工作目标">
+            <div class="section-heading">
+              <h3>当前工作目标</h3>
+              <span class="muted">先选择目标，再分发给 Agent</span>
+            </div>
+            <form id="work-item-form" class="work-item-form">
+              <label
+                >目标名称<input
+                  data-role="work-title"
+                  maxlength="120"
+                  placeholder="例如：审查后端撤销机制"
+              /></label>
+              <label
+                >要完成什么<textarea
+                  data-role="work-goal"
+                  rows="2"
+                  maxlength="4000"
+                  placeholder="描述需要完成的工作"
+                ></textarea>
+              </label>
+              <label
+                >验收要求<input
+                  data-role="work-acceptance"
+                  maxlength="2000"
+                  placeholder="例如：给出有来源的问题清单"
+              /></label>
+              <button type="button" data-action="create-work-item" class="primary">
+                建立工作目标
+              </button>
+            </form>
+            <div id="work-items" aria-live="polite"><p class="muted">加载中…</p></div>
+          </section>
+          <div class="composer-wrap">
+            <label class="composer-hint">
+              <input id="conversation-preview" type="checkbox" checked />
+              主对话模式（取消勾选可回退旧聊天）
+            </label>
+            <button id="conversation-refresh" type="button" hidden>刷新对话</button>
+            <div id="clarification-reply-context" class="composer-hint" hidden>
+              <span id="clarification-reply-label"></span>
+              <button id="clarification-reply-clear" type="button">退出回复并丢弃草稿</button>
+            </div>
+            <button id="conversation-retry" type="button" hidden>核对或重试上次发送</button>
+            <div class="composer">
+              <label class="sr-only" for="chat-input">输入工作事实或消息</label
+              ><textarea
+                id="chat-input"
+                rows="2"
+                placeholder="记下一个想法、一条进展，或接下来要做的事…"
+              ></textarea>
+              <div class="composer-toolbar">
+                <span>不确定的归档，会先向你确认</span
+                ><button id="chat-send" class="primary">
+                  发送 <span aria-hidden="true">↑</span>
+                </button>
+              </div>
+            </div>
+            <p class="composer-hint">
+              Enter 发送 · Shift + Enter 换行 <span>内容由模型辅助整理，请核对重要信息</span>
+            </p>
+          </div>
+        </section>
+        <section
+          id="view-memory"
+          class="workspace-view page-view"
+          aria-labelledby="nav-memory"
+          hidden
+        >
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">YOUR MEMORY, ORGANIZED</span>
+              <h2>记忆空间</h2>
+              <p>按主题整理的工作记录。选择一个 Bucket，回看它的来龙去脉。</p>
+            </div>
+            <button id="refresh-buckets">刷新记忆</button>
+          </header>
+          <div class="memory-layout">
+            <section class="surface bucket-surface" aria-label="活跃 Bucket">
+              <div class="section-heading">
+                <h3>活跃 Bucket</h3>
+                <span class="muted">主题集合</span>
+              </div>
+              <div id="buckets" class="bucket-list">加载中…</div>
+            </section>
+            <section class="surface detail-surface" aria-label="Bucket 详情">
+              <div class="section-heading">
+                <h3>记忆详情</h3>
+                <span class="muted">原文与摘要</span>
+              </div>
+              <div id="detail" class="detail-panel muted">
+                <div class="panel-empty">
+                  <span aria-hidden="true">↗</span>
+                  <h3>打开一段工作记忆</h3>
+                  <p>选择一个 Bucket，查看已保存的原文、摘要和记录操作。</p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section
+          id="view-agenda"
+          class="workspace-view page-view"
+          aria-labelledby="nav-agenda"
+          hidden
+        >
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">MAKE ROOM FOR WHAT'S NEXT</span>
+              <h2>待办计划 <span class="heading-aside">Agenda</span></h2>
+              <p>从记忆中提取的下一步，在这里安排、推进与完成。</p>
+            </div>
+            <button id="refresh-agenda">刷新 / 查看历史</button>
+          </header>
+          <div class="info-strip">
+            支持计划时间、截止时间与重复周期；完成重复项后，将推进到下一次。
+          </div>
+          <div id="agenda" class="agenda-list" aria-live="polite">加载中…</div>
+        </section>
+        <section
+          id="view-search"
+          class="workspace-view page-view search-view"
+          aria-labelledby="nav-search"
+          hidden
+        >
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">CONNECT THE DOTS</span>
+              <h2>找回你需要的记忆。</h2>
+              <p>描述主题、时间或状态，从多个 Bucket 中汇总相关证据。</p>
+            </div>
+          </header>
+          <section class="surface query-box">
+            <label for="memory-query">你想回顾什么？</label>
+            <div class="query-input-row">
+              <input
+                id="memory-query"
+                type="text"
+                maxlength="500"
+                placeholder="例如：接口 A 最近两周的压测结果"
+              /><button id="memory-query-button" class="primary">
+                查询记忆 <span aria-hidden="true">↗</span>
+              </button>
+            </div>
+            <p class="muted">可输入实体、主题、时间范围和状态，不需要记住关键词。</p>
+          </section>
+          <div id="memory-query-result" class="query-result muted">
+            <div class="panel-empty">
+              <span aria-hidden="true">⌕</span>
+              <h3>答案，也带着依据</h3>
+              <p>查询结果会展示解析条件、汇总答案和对应的工作记录。</p>
+            </div>
+          </div>
+        </section>
+        <section
+          id="view-tools"
+          class="workspace-view page-view tools-view"
+          aria-labelledby="nav-tools"
+          hidden
+        >
+          <header class="page-heading">
+            <div>
+              <span class="eyebrow">A LITTLE EXTRA HELP</span>
+              <h2>Agent 与任务</h2>
+              <p>查看后台处理，或创建需要你批准的只读 CLI 任务。</p>
+            </div>
+          </header>
+          <details class="surface tool-disclosure" open>
+            <summary>后台任务 <span>消息处理与执行状态</span></summary>
+            <section class="task-panel" aria-label="后台任务">
+              <div class="section-heading">
+                <h3>最近任务</h3>
+                <button id="task-refresh">刷新任务状态</button>
+              </div>
+              <div id="task-list" aria-live="polite"></div>
+            </section>
+          </details>
+          <details class="surface tool-disclosure">
+            <summary>Agent 只读任务 <span>提案 → 确认批准 → 执行</span></summary>
+            <section class="agent-panel" aria-label="Agent 只读任务">
+              <div class="section-heading">
+                <h3>CLI 助手</h3>
+                <button id="agent-refresh">刷新</button>
+              </div>
+              <p class="muted">创建提案不会执行任务。请核对指令，再在任务卡片中批准。</p>
+              <details class="workspace-registration">
+                <summary>登记工作目录与 Git 基线</summary>
+                <label>目录绝对路径<input id="agent-path" placeholder="/home/user/project" /></label
+                ><label>关联 Bucket ID（可选）<input id="agent-bucket" /></label
+                ><button id="agent-register">登记目录和 Git 基线</button>
+              </details>
+              <div class="agent-form-grid">
+                <label
+                  >CLI<select id="agent-backend">
+                    <option value="codex">codex</option>
+                    <option value="claude">claude</option>
+                  </select></label
+                ><label
+                  >工作区<select id="agent-workspace">
+                    <option value="">无目录</option>
+                  </select></label
+                >
+              </div>
+              <label>恢复会话 ID（可选，来自下方任务）<input id="agent-session" /></label
+              ><label
+                >任务指令<textarea
+                  id="agent-instruction"
+                  rows="3"
+                  maxlength="12000"
+                  placeholder="例如：阅读项目并说明架构"
+                ></textarea></label
+              ><button id="agent-propose" class="primary">创建待批准提案</button>
+              <p id="agent-status" role="status"></p>
+              <div id="agent-list" aria-live="polite"></div>
+            </section>
+          </details>
+        </section>
+      </main>
+    </div>
+    <script type="module" src="assets/app.ts"></script>
+  </body>
+</html>

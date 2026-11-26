@@ -1,6 +1,6 @@
 # Doggie 重构计划说明书
 
-> 最后更新：2026-08-25 · 当前分支 `dev_ts` · T10b 已完成，下一阶段 T11（`PendingAction` 泛化）
+> 最后更新：2026-11-26 · 基线集成分支 `dev_ts`；当前实施分支 `codex/natural-conversation` · T13、T14、本地任务、后端修缮 R0–R5 和后续修复 A1–A3 已交付；B0–B3、C0–C4、N0–N3 与自然对话修复 A–D（schema v13）及 React 19 UI 重设计（方案 B）均已验收，自然对话已设为网页默认入口
 
 ---
 
@@ -8,19 +8,66 @@
 
 | | 数量 |
 |---|---|
-| TS 代码 | **21,021 行**（含测试；含 1,401 条生成的 Unicode casefold 映射） |
-| TS 测试 | **204 通过** |
-| 前端测试 | **23 通过** |
-| Rust 参考实现 | **125 通过**（23,636 行，已冻结，见第九章） |
+| TS 代码 | 以 `src/`、`web/`、`tests/` 为当前源码边界（含测试、React UI 源码与 Unicode 映射） |
+| TypeScript 后端测试 | **627 通过**（2026-11-26，A–D + C4-1～C4-5 修复、方案 B 静态产物 CSP 校验与 schema v13 当前门禁） |
+| 前端测试 | **70 通过**（同一门禁，另含 `typecheck:web` 与 `build:web`） |
+| 历史参考实现 | 当前分支已移除 Rust workspace；参考保留在 Git 历史，见第九章 |
 | 不变量规格总条数 | **85 条**（8 个章节） |
-| 已覆盖 | **76 条**（§1–§6 + §8 全部） |
-| 剩余 | **9 条**（**只剩 §7 Agent Harness 边界**） |
+| 已覆盖 | **85 条**（§1–§8 全部，§7 已由 T13 补齐） |
+| 重构剩余 | **0 条**；T14–T17 不属于语言迁移验收 |
 
 ```
-进度  ███████████████████████████░░░  76 / 85
+进度  ██████████████████████████████  85 / 85
 ```
 
-**M1 的代码迁移和 M2 的本地可运行产品链路已经闭环**：T10b 已补齐 TypeScript production bootstrap、`.env` 组装、`npm start`、浏览器真实 socket 验收以及 MCP proposal → Web 确认的共库链路。下一步进入 M3 的 T11；§7 的 9 条完整 Agent Harness 不变量仍留到 T13。
+**M1–M3 已闭环，TypeScript 重构完成。** T13 补齐只读模型 Harness、三表 Agent 控制面、显式批准后的 Claude/Codex CLI 编排和浏览器入口。删除前后均通过 TS 全量门禁，已按第九章移除当前分支的 Rust workspace。只读 CLI、真实账号 smoke 与进程隔离的实际边界见 [AGENT_CONTROL.md](AGENT_CONTROL.md)，验收记录见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。
+
+### 既有执行决定与交付（2026-11-03 起）
+
+当前以个人助手为主，保留单入口、多 Bucket；多人协作只记录远期假设。个人多设备指手机安全接入电脑端，现阶段仅预留文档接口，不实现远程服务、配对或认证。完整决定见 [PRODUCT_DECISIONS.md](PRODUCT_DECISIONS.md)，远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md)。
+
+Q1–Q4 代码与自动验收已收口，有限真实浏览器 smoke 的范围和待人工事项见 [CORE_FLOW_ACCEPTANCE.md](CORE_FLOW_ACCEPTANCE.md)；完整实施记录见 [QUALITY_IMPLEMENTATION.md](QUALITY_IMPLEMENTATION.md)。阶段结果：
+
+1. **Q1：T13 基线收口（完成）**——已审查现有实现、补修 session 恢复/队列清理边界，完整门禁通过，保留本地数据和用户文件。
+2. **Q2：Entry 撤销（完成）**——逻辑撤销、存储/检索/HTTP/UI、模型历史和 CLI session 失效已实现并回归；[合同与限制](ENTRY_REVOCATION.md)。彻底清除另行设计。
+3. **Q3：API 与架构规范（完成）**——30 个业务 method/path 统一请求/响应/错误/SSE schema、派生 DTO 与浏览器验证，生成 OpenAPI 3.1 并加入漂移门禁；[接口规范](API_CONTRACT.md)、[架构决策](ARCHITECTURE_DECISIONS.md)。保持 Hono 和单机 SQLite。
+4. **Q4：核心流程联合验收（自动验收完成）**——三项真实 socket/API 模块集成测试与有限浏览器 smoke，输入、四种确认、查询、纠错/撤销、任务批准/取消及重启恢复通过；原生弹窗、触控/软键盘等人工体验未签收。
+
+Q1–Q4 和 T14 可工作功能链路已完成，2026-11-12 完成前端视觉与工作区结构初版，见 [FRONTEND_DESIGN.md](FRONTEND_DESIGN.md)。真实自用验收、视觉细化和 T15–T17 仍在后续决定。远程接入不自动进入下一实现阶段。上一轮六项修复与验证见 [REVIEW_FIXES.md](REVIEW_FIXES.md)。
+
+### 任务与记忆接入设计（2026-11-18，D3 L0 恢复与检索对照）
+
+本轮先完成 [腾讯记忆接入前的本地任务实施](LOCAL_TASK_IMPLEMENTATION.md)：WorkItem、目标/执行关联、schema v8、严格 HTTP/OpenAPI 和长期对话中的目标卡片已交付；未交付自动自然语言分发、MemoryCore 接入或真实数据迁移。D3 已完成 [L0 词法冒烟](D3_L0_SMOKE_REPORT.json)、[L1 隔离提取](D3_L1_CORE_REPORT.json) 和 [首轮 D3.4 故障与撤销验证](D3_FAULT_MATRIX_PLAN.md)；真实 Core 的部分 L0 代次检查已通过，完整 D3 尚未验收，当前没有生产适配器。[真实 L0 恢复和范围清理](D3_L0_RECOVERY_PLAN.md)已通过合成场景。固定自然语言查询中 Core 找回更多目标，但无证据查询误入更多，暂不进入 D4b。若重启 D3 研究，先验证相关性与弃答规则，再单独验证向量/混合检索和 L1 来源生命周期。
+
+核心方向为个人助手统一入口、任务与执行会话分离、单任务单执行者，以及仅同步现有规则接受的有效 Entry。保留本地审批、TODO 和撤销权威；独立 MemoryCore 作为候选派生引擎，逐层验证来源、撤销、同步未知结果和故障降级。T15/T16 不自动提前，T17 导出/导入承诺保留；远程接入与多人协作边界不变。前端沿用 11 月 12 日初版，仅增加本地目标表单和卡片；全面视觉重做不是腾讯接入前置。
+
+### 后端修缮 R0–R5（已完成）
+
+后端修缮 R0–R5 的实施与架构边界见 [验收记录](BACKEND_REPAIR_ACCEPTANCE.md)。R1 修复事务、标题完整性与历史窗口；R2 统一聊天轮次；R3 拆出对话存储和中立只读记忆能力；R4 减少检索重复关联、将恢复移出正常 GET。完整门禁为 471 后端 + 60 前端通过。检索仍同步线性扫描且峰值内存增加，旧 Store 仍保留兼容门面；这些限制已列明。
+
+### 后端后续修复阶段 0–3（已完成）
+
+后端修缮 R0–R5 与后续 A1–A3 的提交、行为合同和逐阶段验收见[后端修缮验收记录](BACKEND_REPAIR_ACCEPTANCE.md)：跨范围 WorkItem 最近尝试摘要同步；传输层按实际响应体字节限制为 1 MiB；归档投影只查询当前 Entry 的有效 Memory ID，历史卡片只查 Bucket 元数据。A1/A2/A3 提交分别为 `0dcce2d`、`8652db8`、`8b7c2d6`。B1 Agent 终态合同、B2 结构化模型重试已独立提交并完成验收；最新前置门禁为 550 后端 + 60 前端通过，详见[C0 前计划](PRE_C0_BACKEND_PLAN.md#9-当前执行记录)。索引/分页 D1 与 Store 职责 D2 仍未实施，不自动阻塞 C0。
+
+### 主对话澄清与本地续做（C0–C3、N0–N3 与 A–D 自动化验收完成，C4 待评估）
+
+后端 R0–R5、A1–A3 与 B0–B3 已完成；[C0 行为基线](MAIN_CONVERSATION_C0_ACCEPTANCE.md)已验收。产品目标仍是用原请求绑定补充、复用 WorkItem 和有效 Entry，需要检查工作区才走受批准的只读执行。[C1 用途分流](MAIN_CONVERSATION_C1_ACCEPTANCE.md)已在 ChatService 中完成，旧 API 与默认网页保持兼容。[C2](MAIN_CONVERSATION_C2_ACCEPTANCE.md) 已交付可恢复的澄清卡；[C3](MAIN_CONVERSATION_C3_ACCEPTANCE.md) 已接入本地上下文、证据引用和受批准只读执行。[N0–N3](NATURAL_CONVERSATION_ACCEPTANCE.md) 与自然对话审查修复 **A–D（F1–F9，schema v13）** 已完成自动化验收，并已补齐 F1、F2/F3、F4、F7、F8、F9 的隔离浏览器 smoke；网页自然续接仍是默认关闭的预览。下一步冻结真实模型配置/预算，做 C4 真实质量与操作体验评估，再决定是否切换默认入口。保留 Bucket；腾讯 D3 是已有隔离证据，D4b 不是本阶段前置。
+
+2026-11-25：N0–N3 历史验收见[历史验收记录](NATURAL_CONVERSATION_ACCEPTANCE.md)；随后发现的 F1–F9 已按[修复计划](NATURAL_CONVERSATION_REPAIR_PLAN.md)及[测试矩阵](NATURAL_CONVERSATION_REPAIR_TESTS.md)完成 A–D 实现，并通过完整自动化门禁（619 后端 + 70 前端，schema v13）与隔离浏览器 smoke（F1、F2/F3、F4、F7、F8、F9）。主输入可续接已观察的澄清，从有效 Entry 或本轮材料消息定位材料且不预建 WorkItem，失败后支持受绑定重试；卡片仍是可选快捷入口。普通聊天不自动归档，归档/执行批准边界不变。真实模型质量评估和 C4 默认入口决策尚未完成。
+
+### 阶段冻结与未完成事项（2026-11-25）
+
+**当前代码基线**：`codex/natural-conversation` 已在 B0–B3（`5ec83c6`）之上交付 C0–C3、N0–N3 与自然对话修复 A–D（`884d882`、`b9d6ea1`、`7c726f9`，schema v13），并补齐隔离浏览器 smoke；全量门禁 619 项后端测试、70 项前端测试通过。当前工作树中的用户 PDF 与 SQLite sidecar 是未跟踪本地文件，保留原状，不纳入提交。
+
+| 状态 | 未完成事项 | 后续依据 |
+|---|---|---|
+| 已完成 | React 19 + Vite + Tailwind CSS v4（方案 B）三栏 UI 实施并通过 `npm run check`（627 后端 + 70 前端）与隔离浏览器 7/7 验收 | [UI 架构设计](UI_ARCHITECTURE_DESIGN.md)、[C4 评估报告](MAIN_CONVERSATION_C4_EVALUATION.md) |
+| 延后设计门 | D1 检索规模/分页/性能测量；D2 Store 职责与跨层依赖渐进收敛 | [C0 前修缮计划 §7](PRE_C0_BACKEND_PLAN.md#7-d1d2明确保留的后续设计门) |
+| 未验收、非当前链路前置 | 腾讯记忆 D3 完整评测及 D4b 生产接入 | [主对话实施计划 §7](MAIN_CONVERSATION_PLAN.md) 与 D3 计划 |
+| 明确延后 | 真实自用长周期验收、深色模式视觉细化、远程多设备接入和多人协作 | 需要独立需求/验收依据；远程边界见 [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
+| 尚无本阶段实施设计 | T15–T17 的后续功能 | 保留后续规划；开始前另行确定目标、范围和验收条件 |
+
+C0 已固定旧入口行为并整理 11 组样本。C1 验收后的完整门禁为 561 项后端和 60 项前端通过；当前 A–D 修复后门禁为 619 项后端和 70 项前端通过。详细设计见 [主对话实施计划](MAIN_CONVERSATION_PLAN.md)。
 
 ### 分支布局
 
@@ -29,7 +76,9 @@
 | `main` | 原始 Python 实现 | 冻结 |
 | `dev` | Python + Rust 并存 | **Python 参考**，`128 passed in 6.18s` |
 | `dev_rust` | 纯 Rust workspace | **Rust 参考**，124 测试 |
-| `dev_ts` | ← **当前** | TypeScript 目标实现 |
+| `dev_ts` | TypeScript 集成基线分支 | 包含 R0–R5、A1–A3、B0–B3 和 C0 开工前交接 |
+| `codex/main-conversation-backend` | 主对话实施基线 | 包含 C0–C3 自动化验收 |
+| `codex/natural-conversation` | ← **当前实施分支** | 包含 N0–N3、A–D（schema v13）、C4 真实模型对照/复验与默认入口切换（可随时切回旧聊天） |
 
 ---
 
@@ -218,11 +267,13 @@ T9 小任务提交链：`ef7c8be`（分类）→ `24a4ad4`（提取）→ `63d90
 ```
 M1  TS 与 Rust 功能对等         T3 ✅ → T8b ✅   ← 已完成，CI 就位
 M2  记忆开始被日常消费           T9 ✅ → T9b ✅ → T10 ✅  ← 已完成
-M3  Doggie 成为 Agent 控制面    T11 → T12 → T13   ← §7 在此覆盖完
+M3  Doggie 成为 Agent 控制面    T11 ✅ → T12 ✅ → T13   ← §7 在此覆盖完
        ↓
     ⚑ 删除 Rust workspace（前置条件见第九章）
        ↓
-M4  日常长期助手                T14 → T17
+Q   当前质量与契约收口          Q1 → Q2 → Q3 → Q4
+       ↓
+M4  日常长期助手                T14 → T17（顺序在 Q 阶段后复核）
 ```
 
 ### M1 — 功能对等
@@ -323,9 +374,9 @@ T10b 最终实现与验证：
 
 | # | 阶段 | 交付 |
 |---|---|---|
-| **T11** | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
-| **T12** | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
-| **T13** | Agent 编排 | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
+| **T11** ✅ | `PendingAction` 泛化 | 把 `ArchiveAttempt` 抽象成通用待批准动作，顺带合并两套并行归档流 |
+| **T12** ✅ | 任务队列 + 后台执行器 + SSE + **请求级取消** | Node 原生 async，不需要 tokio 那种重构 |
+| **T13** ✅ | Agent 编排（只读 MVP） | `agent_workspaces` / `agent_sessions` / `agent_tasks` 三表 + spawn `claude`/`codex` |
 
 **T11 的关键洞察**：`ask_user` → 确认卡片 → 服务端执行，**已经是 agent action approval 的正确形态**。扩展不需要发明新安全模型，只需泛化：
 
@@ -337,10 +388,35 @@ PendingAction
   └─ status: pending | approved | rejected | executed | failed
 ```
 
-**T12 必须包含取消传播**：目前客户端断开连接后，服务端 handler 仍会跑完全程（已实测）。
-现在影响有限——LLM 有 30s 超时兜着。但 T13 之后 agent 任务要跑几分钟，
-"用户关了页面而 agent 还在烧 token"就不可接受了。因此把 `AbortSignal` 从 HTTP 请求
-一路传到 LLM transport 和任务执行器，是 T12 的验收项之一，而不是 T9b 的补丁。
+**T11 已完成（2026-10-08）**：采用增量、无新增依赖的轻量实现，不一次性重写现有 API 或 UI。
+
+- `src/domain/pending-action.ts`：严格 Zod 判别联合，四类 payload、来源和五态状态机；未知字段/类型拒绝，proposal 只有数据权限。
+- `src/storage/pending-actions.ts`：持久化读取校验、原文 binding、单次 CAS 状态转换，批准时记录用户选择，结果仅存稳定 ID；失败仅存稳定错误码。
+- schema v3 新增 `pending_actions` 和不可改写 proposal 的 trigger；v2→v3 在迁移事务中按旧确认 ID 回填 pending / executed / rejected，聊天卡片 ID 不变。
+- `archive_attempts` 保留为原有归档审计和 HTTP DTO projection，**不是独立授权路径**；所有确认同时校验 generic action 和旧审计。删除这个表会破坏历史审计、纠错和 DTO，因此本阶段不强行重命名全部业务对象。
+- 自动归档仍遵循领域门控；`ask_user`、MCP proposal、用户显式 append/create 共用批准流程。显式保存先登记 `proposed_by=user` 的 proposal，再使用用户给定选择执行；不额外弹出第二次确认。
+- 归档 `pending→approved→executed` 与 Bucket/Entry/Memory/attempt 在**一个 SQLite 事务**中完成；失败全部回滚，原动作保留 pending。通用 approve/reject/finish 方法不能处理 archive，避免旁路绕过写入门控。
+- 非归档三类动作仅提供持久化 proposal 和状态转换，不新增 HTTP/MCP 写接口，不启动真实 agent / schedule / bulk executor；这些执行能力分别留给 T13–T15，T12 只运行现有后台聊天服务。
+- 显式保存先完成模型提取，再登记用户 proposal 并复用确认事务；提取失败不留下隐形 pending，正式写入失败的无 UI 卡片 proposal 自动终结为 rejected。既有 UI 卡片确认失败仍保留 pending。
+- HTTP / runtime / store 的 pending 前置校验统一；并发确认可各自提取，但只有一次事务写入成功。取消已在 T12 覆盖；同一确认的重复提取暂不做共享 Promise，仍由单次事务阻止重复写入（请求级 signal 不共享）。
+
+**同期 TS 解耦**：前端搬到 `web/`，更新共享 DTO import、静态加载路径、`test:web` glob 和 typecheck include。生产启动、MCP、CI 和普通测试不读 Rust 源码、不调用 Cargo；保留人类可读的历史 fixture。Rust Web oracle 仅调整资源定位到 `web/`，无功能修改，避免搬迁将冻结参考的构建路径弄断。
+
+T11 验收覆盖：原文防伪造、单次/并发确认、拒绝、非法状态转换、事务故障注入回滚、v2 migration、数据库重开、不可修改 proposal、输入资源上限及 MCP 只提案。`npm run check`（真实 socket 需沙箱外权限）通过，222 个后端 + 23 个前端测试；未运行真实模型或访问用户数据库。详见 `docs/TEST_PLAN.md` 的 T11 项。
+
+**T12 已完成（2026-10-08）**：采用标准库 + SQLite 的轻量化后台聊天任务，不新增依赖，不提前启动 Claude/Codex 进程。
+
+- schema v4 新增 `background_tasks` / `background_task_executor`；严格 128 KiB payload、32 个 outstanding、最多 200 个保留任务；不可变单调 sequence 保证同毫秒 FIFO，claim/终态 CAS，单 Web worker ownership。
+- queued 重启继续，running 重启变为 `failed / interrupted`，不自动重放；正常 shutdown 取消当前工作并等实际 handler/worker 后才关 SQLite。ownership 对活 PID / 不确定 PID fail closed。
+- 新增任务 submit/list/get/cancel/events HTTP 路由，后台执行现有 `ConcreteDoggieHttpApi.chat`；低信息门控、T11 pending confirmation 和 MCP 四工具权限不变。不会把 generic agent/schedule/bulk payload 作为可执行命令。
+- SSE 即时分块、socket backpressure、有界快照合并、心跳和断线 reader/listener 清理；连接断线不取消持久化后台任务，显式 cancel/deadline/shutdown 才取消。
+- Request signal 传播至 API / archive runtime / structured output / fetch；模型 await 两侧和写入前检查，取消不重试且 abort reason 脱敏。正式归档已提交后不承诺撤销，不写入晚模型工具消息。
+- 终态持久化失败与 executor 失败区分：不伪报已提交效果为 cancelled，不自动重放，worker 停止接收并在 close 报告稳定错误。startup 清理即使 queue close 出错也必须释放 DB，保留原启动错误。
+- 浏览器聊天改为后台 submit，任务列表/取消/刷新恢复；严格 SSE parser，断线只 GET 有界轮询，POST 结果不明不自动重发；keyed history 渲染保留未改变确认表单和滚动位置。
+- 原 `/api/chat` / archive / confirm 同步路由保留；SSE 是任务状态，不是 token 流式回答。AbortSignal 为协作取消，永不返回的非协作执行器仍会阻止安全 shutdown。
+
+最终 `npm run check`（真实 socket / subprocess 需沙箱外权限）通过：**299 后端 + 50 前端，共 349 个**；格式、最高严格度 typecheck、`git diff --check` 均通过。审查发现并修复终态存储故障误标 cancelled、worker fault 丢失、同毫秒 FIFO 和 startup 清理及 drain 后探测故障问题，并补故障注入测试。全部 fake model / 临时库，未访问真实数据库/密钥、未调用真实模型。详细说明：[TASK_QUEUE.md](TASK_QUEUE.md)。
+
 
 **T13 数据模型**（已在对话中确认）：
 
@@ -356,29 +432,31 @@ Bucket ──N:1──► Workspace ──1:N──► AgentSession
 - **`agent_tasks.workspace_id` 可空**——非 coding 任务（会议、想法）不需要目录，只开 WebSearch + doggie MCP，不给文件系统工具
 - 六项目录检测：路径规范化、边界白名单、存在性、git 状态与 base commit、并发互斥、session↔目录一致性
 
-**已核实的 CLI 接口**：
+**T13 已完成（2026-11-03）**：
 
-```bash
-claude -p "指令" --output-format stream-json --include-partial-messages \
-  --session-id <uuid> --resume <uuid> --permission-mode manual \
-  --allowedTools "Read Grep Glob" --add-dir <workspace> \
-  --mcp-config <doggie> --strict-mcp-config
-```
+- `src/agent/harness.ts`：生产聊天回答进入有界多轮检索；固定只读工具表、严格参数、数据错误、写工具过滤；Responses / Chat Completions 对等，保留无状态 reasoning 数据且不接受模型伪造系统角色。§7 九条已有可执行测试。
+- schema v5：三张 agent 表和 `buckets.workspace_id`；工作区 Git 内容基线和 session/task proposal 不可变；批准与 PendingAction、后台队列单事务绑定，禁止跳过或重复批准。
+- `WorkspacePolicy`：真实路径、白名单、存在性、Git HEAD/状态/内容摘要、跨基线同路径互斥和 session↔工作区一致性。过大快照/子模块 fail closed。
+- `AgentService` + `CliAgentRunner`：后台 worker 调用固定 CLI，指令只通过 stdin；独立配置、只读工具、有限 JSONL、显式远端 session 恢复、取消/超时回收。无目录任务关闭文件工具并使用稳定私有 cwd。
+- 浏览器侧栏提供登记目录、关联 Bucket、选择 CLI/工作区、恢复会话、创建提案、批准/拒绝、最终结果和取消；复用 T12 SSE，刷新不自动重复提交。
+- 重启不重放 running，失败会话不复用；成功落盘故障停止 worker，不误报取消。默认不启用任何 CLI；本阶段不开放 coding 写入、自动提交、部署或调度。
 
-`--strict-mcp-config` 保证定时任务拿到确定的工具面，不受个人 MCP 配置影响。Codex 侧对应 `codex exec` / `codex exec resume`。
+删除前完整门禁 **329 后端 + 51 前端 = 380 测试通过**，无失败/跳过。新增验证含真实 HTTP runtime（fake runner）、进程组强制取消、输出预算、v4→v5 数据保留、工作区变化、绑定防伪造、只读 MCP 和 XSS。未调用真实模型或访问真实用户数据。CLI 参数依据当前 `--help` 和官方接口核对，旧计划的 `--permission-mode manual`、同时传 `--session-id/--resume` 已纠正；详见 [AGENT_CONTROL.md](AGENT_CONTROL.md)。
 
 ### M4 — 日常长期助手
 
 | # | 阶段 | 交付 | 参考实现 |
 |---|---|---|---|
 | **T14** | TODO 生命周期 + agenda | `SCHEDULED` / `DEADLINE` / repeater | **org-mode / org-agenda** |
+
+T14 的实现规划见 [T14_PLAN.md](T14_PLAN.md)。T14-A–B 已冻结并实现五状态、显式时间计划、受限重复规则、schema v7、迁移和 Store；T14-C–D 已实现严格 HTTP/OpenAPI 契约和功能性 Agenda MVP；T14-E 联合验收与阶段提交已完成。
 | **T15** | 调度器 + 系统通知 | 持久化调度、重启补跑策略 | 本地进程直接调 `notify-send` |
 | **T16** | 插件系统 | Doggie 作为 MCP client | 插件 = MCP server，任意语言、进程隔离 |
 | **T17** | **数据导出/导入** | 全量导出、可重新导入 | Q3 明确承诺的未来需求 |
 
 **T17 为什么单列**：Q3 决定不兼容旧库，代价是数据可迁移性要靠导出/导入补回来。这也是信任问题——**数据出不来的"长期记忆"，用户不会持续投入**。T3 的 schema 设计已为此预留。
 
-**T14 好消息**：schema 不用改——`memory_items` 已有 `todo` kind、`status`、event time。缺的是语义和生命周期。
+**T14 当前判断**：现有 `memory_items` 继续作为 TODO 权威对象；schema v7 已增加 `scheduled_at`、`todo_rule_json`、`todo_raw_time_json` 和 `todo_occurrence`，旧 `due_at` 保持原义。Agenda、状态/计划变更、重复推进、重新打开和 Entry 撤销后的有效性均通过 Store 与 HTTP 契约暴露。
 
 **为什么抄 org-mode**：`SCHEDULED`（什么时候开始想它）和 `DEADLINE`（什么时候必须做完）是两件事。Todoist 只有一个 due date，这正是它长期被诟病的点。
 
@@ -419,9 +497,9 @@ claude -p "指令" --output-format stream-json --include-partial-messages \
 | 一个 LLM 慢请求占用整个服务循环 | 1.5s 慢请求在飞时，并发读 **16ms 返回** | ❌ 不成立 |
 | 慢客户端影响后续请求 | 同上，`node:http` 事件驱动 | ❌ 不成立 |
 | 并发能力很弱 | 单进程 Node 对单用户本地应用够用 | ❌ 不成立 |
-| 没有请求级取消 | 客户端 abort 后 handler 仍跑完全程 | ✅ 成立 → **T12** |
+| 没有请求级取消 | 当时客户端 abort 后 handler 仍跑完全程 | ✅ **T12 已修复**：Request signal 传播 + 写入前门控 |
 | 没有连接数限制 | `maxConnections` 未设置 | ✅ **T9b 已修复**：默认 32 |
-| 没有限流 | 无 | ✅ 成立 → 见下 |
+| 没有任务配额 | 当时无后台队列 | ✅ **T12 已修复**：队列容量和 payload/订阅上限 |
 
 前三条在 **Rust 版是真问题**（`for stream in listener.incoming()` 串行 + `ureq` 阻塞式 HTTP），
 换到 `node:http` + `await fetch` 之后自动消失。**这是换语言一个此前未记录的收益。**
@@ -445,7 +523,7 @@ Node 默认值已提供部分保护：`headersTimeout` 60s（基本 slowloris �
 重新嫁接到中间件层，是**有风险的改动而收益只是代码变少**；当前瓶颈在 T10 而不在这里。
 
 **限流为什么也推迟**：对 loopback 单用户，限流真正防的是"前端 bug 导致的请求风暴"，不是攻击。
-等 T12 有了任务队列，配额应该落在**队列层**而不是 HTTP 层——现在在 HTTP 层加限流，T12 要拆一遍。
+T12 已把任务配额落在**队列层**，保留 Node adapter 的连接/请求字节限制；没有额外引入通用 HTTP 限流框架。
 
 ### D12 展开 — 排序必须与 locale 无关
 
@@ -472,7 +550,7 @@ locale 下验证（提交 `8d8f3ae`）。
 | **Q3** | 是否兼容现有 `doggie.db` | **不兼容。** 现有数据量少、可随时重新自测。T3 不做 legacy 导入，物理 schema 可自由设计（仍保留 §4 全部事务语义）。**导出/导入延后到 T17** |
 | **Q4** | `HEAD` 返回 404 | T7 重建路由时顺手修——正确的 HTTP 行为，成本近零 |
 | **Q5** | 评测 fixture | **复用 `dev` 分支的人工标注**，不重新标注 |
-| **Q6** | `renderHistory` 全量重渲染 | **推迟到 T12**，SSE 会重写这条路径 |
+| **Q6** | `renderHistory` 全量重渲染 | **T12 已完成**：keyed 增量更新、表单和滚动位置保留 |
 | **Q7** | 删除 Rust 时机 | **M1 完成后**，差分测试价值在 M1 阶段最高 |
 
 ### Q3 的两个后果
@@ -497,7 +575,7 @@ locale 下验证（提交 `8d8f3ae`）。
 
 沿用至今的做法，如需调整请指出：
 
-1. **每完成一个阶段 = 一次提交 + 一份总结 + 等你确认**
+1. **每完成一个阶段 = 一次提交 + 一份总结**；在用户已授权的连续实施范围内继续下一阶段，新增范围或关键产品歧义才另行讨论
 2. **每条不变量都要有可执行测试**——不允许用"代码看起来做了这件事"代替
 3. **能对拍就对拍**——固定测试只覆盖想得到的输入，差分测试覆盖想不到的
 4. **发现规格错误就地修正**并在总结里说明（已发生 2 次：Unicode 数字、Prettier 表格）
@@ -507,7 +585,6 @@ locale 下验证（提交 `8d8f3ae`）。
 
 ```bash
 npm run check      # format:check + typecheck + test + test:web
-cargo test --workspace --offline    # M1 期间保持 Rust 参考可运行
 ```
 
 ---
@@ -522,83 +599,17 @@ git stash && git checkout dev && .venv/bin/python -m pytest tests -q   # 跑 Pyt
 
 ---
 
-## 九、Rust 版本的冻结与删除
+## 九、Rust 退出验收（已完成，2026-11-03）
 
-### 9.1 为什么不是"M1 完成就删"
-
-原计划（D3）写的是"M1 完成后统一删"。**这个判断错了**，有两个具体原因：
-
-1. **§7 的 9 条不变量还没覆盖**，而它们唯一活的参考实现就是 `crates/doggie-agent-runtime`
-   （工具 allow-list、非法参数数据化、tool round 上限、写工具过滤）。T10/T13 要照着它做。
-2. **Rust oracle 仍在抓真 bug**。2026-08-25 那次 `localeCompare` 排序不确定性（见 D12），
-   就是靠 `crates/doggie-storage-sqlite/examples/scenario.rs` 重新生成 fixture 才定位并验证的。
-
-### 9.2 现在的状态：**已冻结，未删除**
-
-从现在到删除之前，Rust 代码的定位是**只读 oracle**：
-
-| 允许 | 不允许 |
+| 条件 | 验证 |
 |---|---|
-| 跑 `cargo test` 回答"Rust 到底怎么做的" | 加新功能 |
-| 跑 `examples/` 重新生成 parity fixture | 修 clippy 警告（除非影响 `cargo test`） |
-| 读源码作为移植依据 | 跟着 TS 侧的改动同步修改 |
+| §7 全部九条有 TS 可执行测试 | `src/agent/harness.test.ts`，双 API mode，含 32/64 KiB 预算、100 条历史和写权限过滤 |
+| 历史 fixture 保留且生成来源可追溯 | `tests/fixtures/README.md`，两份 parity fixture 原样保留，另迁出 protocol fixture |
+| 前端独立与本地 CI 同命令门禁通过 | `web/` + `npm run check`；远程 CI 需推送后运行，不声称已执行 |
+| 最近连续两阶段不依赖 Cargo 裁决 | T11、T12 及 T13 都以 TS 测试验收 |
 
-**CI 不跑 Rust**（`ci.yml` 只跑 `npm run check`）。这是有意的——它已经不是目标实现，
-但也意味着**它会静默腐烂**，这正是不能无限期留着它的理由。
+满足条件后，删除当前分支 Git 跟踪的 `crates/`、`apps/`、`Cargo.toml`、`Cargo.lock`，清理配置中的旧目录排除和文档中的运行指引。未删除用户未跟踪 PDF、忽略的本地文件、数据库或任何其他分支。
 
-### 9.3 删除的前置条件（全部满足才动手）
+参考源码仍可从移除前提交 `bc88675` 或既有历史分支读取，不需要在当前产品目录重新安装 Rust 工具链。`tests/fixtures/README.md` 记录在隔离历史工作树中的再生成方式。fixture 是历史合同快照；有意改变行为时同时更新测试并说明原因。
 
-| # | 条件 | 当前 |
-|---|---|---|
-| 1 | **§7 全部 9 条在 TS 侧有可执行测试** | ⬜ 等 T10 + T13 |
-| 2 | 所有 parity fixture 已提交，且文件头记录了再生成命令 | ✅ `low-information-gate.tsv`、`storage-parity.json` 都有 |
-| 3 | 前端已从 `apps/doggie-local-web/frontend/` 移到 `web/`，TS server 与 CI 通过 | ⬜ 与删除同批做 |
-| 4 | 最近连续两个阶段都没有需要 `cargo test` 来裁决行为 | ⬜ 观察中 |
-
-> **条件 3 是硬耦合**：前端现在住在 `apps/doggie-local-web/frontend/`，
-> 而那是 Rust crate 的目录。删 `apps/` 就必须同时搬前端，不能分两次。
-
-### 9.4 执行清单
-
-```bash
-# ① 最后一次全量对拍，确认两边仍一致
-cargo test --workspace --offline
-npm run check
-
-# ② 搬前端（条件 3）
-git mv apps/doggie-local-web/frontend web
-#    改 src/http/app.ts 的 loadFrontendAssets() 路径
-#    改 package.json 的 test:web glob
-#    改 tsconfig.json 的 include
-
-# ③ 删 Rust
-git rm -r crates apps Cargo.toml Cargo.lock
-#    删 .gitignore 里的 /target/
-#    删 AGENTS.md 里的 cargo 门禁段落
-
-# ④ 验证
-npm run check
-```
-
-### 9.5 删除之后会发生什么变化（必须提前接受）
-
-**parity fixture 变成不可再生。** `tests/fixtures/low-information-gate.tsv`（919 行）
-和 `tests/fixtures/storage-parity.json` 在 Rust 消失后无法重新生成。后果：
-
-- 这些 fixture 从"Rust 权威判定的快照"降级为"**历史行为的冻结记录**"；
-- 之后要有意改这些行为，只能**手工编辑 fixture 并在提交信息里写明为什么**；
-- 因此 fixture 必须保持人类可读（TSV / 格式化 JSON），**不能压缩或二进制化**。
-
-这是可接受的——T2 的 low-information fixture 从写下来那天起就是这个定位。
-但它意味着**删除是不可逆的**，所以条件 1 和 4 不能通融。
-
-### 9.6 其他两个分支
-
-| 分支 | 处理 |
-|---|---|
-| `dev`（Python + Rust，128 测试） | **永久保留**。它是 §9 评测 fixture 的来源，也是唯一还能跑的 Python 参考 |
-| `dev_rust`（纯 Rust） | **永久保留**。删除发生在 `dev_ts` 上，历史仍可 `git show dev_rust:...` 取回 |
-
-**删除 `dev_ts` 上的 Rust 代码 ≠ 丢失 Rust 实现。** 两个参考分支都不动，
-所以 9.5 里"不可再生"的准确含义是"**不能在 CI/日常流程里自动再生**"，
-真要考古仍可 `git checkout dev_rust` 重建环境——只是成本从"一条命令"变成"一次切分支"。
+验收结论及现实限制见 [TS_ACCEPTANCE.md](TS_ACCEPTANCE.md)。后续 T14 TODO、T15 调度通知、T16 插件、T17 导入导出是新增产品能力，语言迁移不再等待它们。

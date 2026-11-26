@@ -1,33 +1,34 @@
+import {
+  ConversationError,
+  type ConversationTurn,
+} from "../domain/main-conversation.ts";
+import { ChatCapacityError } from "../application/chat-turns.ts";
+import { WorkItemError } from "../domain/work-item.ts";
+import { AgentError, HarnessError } from "../domain/agent.ts";
+import { TaskError } from "../domain/task.ts";
 /** Stable JSON contracts at the local HTTP boundary. */
 
 import { z } from "zod";
 
-import {
-  ApplicationError,
-  type ArchiveResult,
-} from "../application/archive.ts";
+import { ApplicationError } from "../application/archive.ts";
+import { projectBucket } from "../application/archive-view.ts";
+export { projectArchive, projectBucket } from "../application/archive-view.ts";
 import { CorrectionError } from "../application/correction.ts";
-import {
-  MemoryQueryError,
-  type MemoryQueryPlan,
-} from "../application/memory-query.ts";
-import type { MemorySearchResponse } from "../application/query.ts";
+import { MemoryQueryError } from "../application/memory-query.ts";
+import { projectEntry, projectMemory } from "../application/memory-view.ts";
+export {
+  projectEntry,
+  projectMemory,
+  projectBucketDetail,
+  projectQueryPlan,
+  projectMemoryQuery,
+} from "../application/memory-view.ts";
 import { DomainError } from "../domain/errors.ts";
-import {
-  BUCKET_STATUSES,
-  BUCKET_TYPES,
-  type BucketView,
-} from "../domain/types.ts";
+import { BUCKET_STATUSES, BUCKET_TYPES } from "../domain/types.ts";
+import { TODO_STATUSES } from "../domain/todo.ts";
 import { LlmError } from "../llm/structured-output.ts";
 import { StorageError } from "../storage/database.ts";
-import type {
-  BucketDetail,
-  BucketRow,
-  ChatMessageRow,
-  EntryRow,
-  JsonValue,
-  MemoryRow,
-} from "../storage/store.ts";
+import type { ChatMessageRow, JsonValue, TodoRow } from "../storage/store.ts";
 
 export const DEFAULT_LIST_LIMIT = 20;
 export const MAX_LIST_LIMIT = 100;
@@ -101,6 +102,53 @@ export const bucketStatusRequestSchema = z
   })
   .strict();
 
+const todoCommandBase = {
+  command_text: requiredTrimmedString,
+  expected_updated_at: z.string().datetime(),
+} as const;
+const repeatRuleInputSchema = z
+  .strictObject({
+    frequency: z.enum(["daily", "weekly", "monthly"]),
+    interval: z.number().int().min(1).max(31),
+    weekdays: z.array(z.number().int().min(1).max(7)).optional(),
+    until: z.string().datetime({ offset: true }).optional(),
+    count: z.number().int().min(1).max(366).optional(),
+  })
+  .refine((rule) => !(rule.until !== undefined && rule.count !== undefined), {
+    message: "until and count cannot both be set",
+  });
+const todoRawTimeInputSchema = z.strictObject({
+  scheduled_text: z.string().trim().min(1).nullable(),
+  due_text: z.string().trim().min(1).nullable(),
+  time_zone: z.string().trim().min(1),
+});
+export const todoAgendaQuerySchema = z
+  .strictObject({
+    from: z.string().datetime({ offset: true }).optional(),
+    to: z.string().datetime({ offset: true }).optional(),
+    bucket_id: optionalTrimmedString,
+    include_history: z.enum(["true", "false"]).default("false"),
+  })
+  .refine((query) => query.from === undefined || query.to !== undefined, {
+    message: "from and to must be provided together",
+  })
+  .refine((query) => query.to === undefined || query.from !== undefined, {
+    message: "from and to must be provided together",
+  });
+export const todoTransitionRequestSchema = z.strictObject({
+  ...todoCommandBase,
+  status: z.enum(TODO_STATUSES),
+});
+export const todoPlanRequestSchema = z.strictObject({
+  ...todoCommandBase,
+  scheduled_at: z.string().datetime({ offset: true }).nullable(),
+  due_at: z.string().datetime({ offset: true }).nullable(),
+  repeat_rule: repeatRuleInputSchema.nullable(),
+  raw_time: todoRawTimeInputSchema.nullable(),
+});
+export const todoAdvanceRequestSchema = z.strictObject(todoCommandBase);
+export const todoReopenRequestSchema = z.strictObject(todoCommandBase);
+
 export const memoryQueryRequestSchema = z
   .object({
     query: requiredTrimmedString,
@@ -128,9 +176,15 @@ export type ChatRequest = z.infer<typeof chatRequestSchema>;
 export type ChatConfirmationRequest = z.infer<
   typeof chatConfirmationRequestSchema
 >;
+export type ConversationTurnRequest = ConversationTurn;
 export type MoveEntryRequest = z.infer<typeof moveEntryRequestSchema>;
 export type BucketStatusRequest = z.infer<typeof bucketStatusRequestSchema>;
 export type MemoryQueryRequest = z.infer<typeof memoryQueryRequestSchema>;
+export type TodoAgendaQuery = z.infer<typeof todoAgendaQuerySchema>;
+export type TodoTransitionRequest = z.infer<typeof todoTransitionRequestSchema>;
+export type TodoPlanRequest = z.infer<typeof todoPlanRequestSchema>;
+export type TodoAdvanceRequest = z.infer<typeof todoAdvanceRequestSchema>;
+export type TodoReopenRequest = z.infer<typeof todoReopenRequestSchema>;
 
 export class HttpBoundaryError extends Error {
   readonly status: number;
@@ -171,6 +225,43 @@ export function stableError(error: unknown): {
 
 export function normalizeHttpError(error: unknown): HttpBoundaryError {
   if (error instanceof HttpBoundaryError) return error;
+  if (error instanceof ConversationError)
+    return new HttpBoundaryError(
+      error.code === "missing" ? 404 : 409,
+      error.message,
+    );
+  if (error instanceof WorkItemError)
+    return new HttpBoundaryError(
+      error.code === "missing"
+        ? 404
+        : error.code === "invalid_reference"
+          ? 400
+          : 409,
+      error.message,
+    );
+  if (error instanceof AgentError)
+    return new HttpBoundaryError(
+      error.code === "missing"
+        ? 404
+        : error.code === "disabled" || error.code === "unavailable"
+          ? 503
+          : error.code === "conflict" ||
+              error.code === "memory_changed" ||
+              error.code === "workspace_changed" ||
+              error.code === "binding_mismatch"
+            ? 409
+            : 400,
+      error.message,
+    );
+  if (error instanceof HarnessError)
+    return new HttpBoundaryError(500, error.message);
+  if (error instanceof ChatCapacityError)
+    return new HttpBoundaryError(429, error.message);
+  if (error instanceof TaskError)
+    return new HttpBoundaryError(
+      error.kind === "missing" ? 404 : error.kind === "capacity" ? 429 : 503,
+      error.message,
+    );
   if (error instanceof z.ZodError) {
     return new HttpBoundaryError(400, "request body is invalid");
   }
@@ -187,12 +278,16 @@ export function normalizeHttpError(error: unknown): HttpBoundaryError {
       case "missing_record":
         return new HttpBoundaryError(404, error.message);
       case "inactive_bucket":
+      case "memory_context_changed":
       case "archive_attempt_not_found":
       case "archive_attempt_text_mismatch":
       case "archive_attempt_not_pending":
+      case "stale_write":
         return new HttpBoundaryError(409, error.message);
       case "invalid_write":
         return new HttpBoundaryError(400, error.message);
+      case "storage_unavailable":
+        return new HttpBoundaryError(503, "storage is unavailable");
       case "foreign_database":
       case "unsupported_schema_version":
       case "pragma_not_applied":
@@ -209,182 +304,40 @@ export type BucketJson = ReturnType<typeof projectBucket>;
 export type EntryJson = ReturnType<typeof projectEntry>;
 export type MemoryJson = ReturnType<typeof projectMemory>;
 
-export function projectBucket(bucket: BucketRow) {
+export function projectTodo(todo: TodoRow) {
   return {
-    id: bucket.id,
-    title: bucket.title,
-    type: bucket.kind,
-    status: bucket.lifecycle,
-    summary: bucket.summary,
-    tags: [...bucket.tags],
-    created_at: bucket.createdAt,
-    updated_at: bucket.updatedAt,
-    last_active_at: bucket.lastActiveAt,
-    archived_at: bucket.archivedAt,
-  } as const;
-}
-
-export function projectEntry(entry: EntryRow) {
-  return {
-    id: entry.id,
-    bucket_id: entry.bucketId,
-    raw_text: entry.rawText,
-    summary: entry.summary,
-    content_type: entry.contentType,
-    classification_confidence: entry.classificationConfidence,
-    classification_reason: entry.classificationReason,
-    created_at: entry.createdAt,
-    moved_from_bucket_id: entry.movedFromBucketId,
-    archive_state: entry.archiveState,
-    archived_at: entry.archivedAt,
-  } as const;
-}
-
-export function projectMemory(memory: MemoryRow) {
-  return {
-    id: memory.id,
-    bucket_id: memory.bucketId,
-    entry_id: memory.entryId,
-    kind: memory.kind,
-    text: memory.text,
-    status: memory.status,
-    due_at: memory.dueAt,
-    occurred_at: memory.occurredAt,
-    source: memory.source,
-    reason: memory.reason,
-    created_at: memory.createdAt,
-    updated_at: memory.updatedAt,
-    metadata: memory.metadata,
-  } as const;
-}
-
-export function projectBucketDetail(detail: BucketDetail) {
-  return {
-    bucket: projectBucket(detail.bucket),
-    entries: detail.entries.map(projectEntry),
-    memories: detail.memories.map(projectMemory),
-  } as const;
-}
-
-export function projectQueryPlan(plan: MemoryQueryPlan) {
-  return {
-    raw_text: plan.rawText,
-    terms: [...plan.terms],
-    entity_terms: [...plan.entityTerms],
-    topic_terms: [...plan.topicTerms],
-    bucket_terms: [...plan.bucketTerms],
-    time_range:
-      plan.timeRange === undefined
+    id: todo.id,
+    bucket_id: todo.bucketId,
+    entry_id: todo.entryId,
+    kind: "todo" as const,
+    text: todo.text,
+    status: todo.status,
+    scheduled_at: todo.scheduledAt,
+    due_at: todo.dueAt,
+    todo_rule:
+      todo.todoRule === null
         ? null
         : {
-            start: plan.timeRange.start.toISOString(),
-            end: plan.timeRange.end.toISOString(),
-            label: plan.timeRange.label,
+            frequency: todo.todoRule.frequency,
+            interval: todo.todoRule.interval,
+            weekdays: todo.todoRule.weekdays ?? null,
+            until: todo.todoRule.until ?? null,
+            count: todo.todoRule.count ?? null,
           },
-    statuses: [...plan.statuses],
-    structured_filters: plan.structuredFilters.map((filter) => ({
-      field: filter.field,
-      value: filter.value,
-    })),
-    limit: plan.limit,
-  } as const;
-}
-
-export function projectMemoryQuery(response: MemorySearchResponse) {
-  return {
-    ok: true,
-    query: response.query.rawText,
-    query_plan: projectQueryPlan(response.query),
-    total_entries: response.results.length,
-    total_buckets: response.buckets.length,
-    results: response.results.map((hit) => ({
-      bucket: projectBucket(hit.bucket),
-      entry: projectEntry(hit.entry),
-      memories: hit.memories.map(projectMemory),
-      matched_fields: [...hit.matchedFields],
-      keyword_score: hit.keywordScore,
-      semantic_score: hit.lexicalSimilarity,
-      score: hit.score,
-    })),
-    buckets: response.buckets.map((group) => ({
-      bucket: projectBucket(group.bucket),
-      matched_entry_count: group.matchedEntryCount,
-      top_score: group.topScore,
-    })),
-    evidence: response.evidence.map(projectMemory),
-    answer: response.answer,
-  } as const;
-}
-
-export type ArchiveProjectionOptions = {
-  readonly candidates?: readonly BucketView[];
-  readonly bucket?: BucketRow | undefined;
-  readonly memoryItemIds?: readonly string[];
-};
-
-export function projectArchive(
-  result: ArchiveResult,
-  options: ArchiveProjectionOptions = {},
-) {
-  const recommendedBucketId =
-    result.action === "append_existing"
-      ? (result.bucketId ?? result.candidateBucketIds[0] ?? null)
-      : (result.candidateBucketIds[0] ?? null);
-  const candidateBuckets = result.candidateBucketIds.flatMap((candidateId) => {
-    const candidate = options.candidates?.find(({ id }) => id === candidateId);
-    return candidate === undefined
-      ? []
-      : [
-          {
-            id: candidate.id,
-            title: candidate.title,
-            type: candidate.bucketType,
-            status: candidate.status,
-            summary: candidate.summary,
-            tags: [...candidate.tags],
-            last_active_at_unix_ms: candidate.lastActiveAtUnixMs,
-            is_recommended: candidate.id === recommendedBucketId,
-          },
-        ];
-  });
-  const recommendedBucket =
-    candidateBuckets.find(({ is_recommended }) => is_recommended) ?? null;
-
-  return {
-    ok: true,
-    attempt_id: result.attemptId,
-    archive_state: result.archiveState,
-    bucket_id: result.bucketId ?? null,
-    entry_id: result.entryId ?? null,
-    memory_item_ids: [...(options.memoryItemIds ?? [])],
-    action: result.action,
-    confidence: result.confidence,
-    reason: result.reason,
-    question: result.question ?? null,
-    candidate_bucket_ids: [...result.candidateBucketIds],
-    recommended_bucket_id: recommendedBucketId,
-    recommended_bucket: recommendedBucket,
-    candidate_buckets: candidateBuckets,
-    bucket_title: result.bucketTitle ?? null,
-    bucket_type: result.bucketType ?? null,
-    bucket: options.bucket === undefined ? null : projectBucket(options.bucket),
-    extraction:
-      result.extraction === undefined
+    todo_raw_time:
+      todo.todoRawTime === null
         ? null
         : {
-            summary: result.extraction.summary,
-            todos: [...result.extraction.todos],
-            evidences: [...result.extraction.evidences],
-            timeline_events: result.extraction.timelineEvents.map((event) => ({
-              event_time: event.occurredAt ?? null,
-              text: event.text,
-            })),
-            decisions: [...result.extraction.decisions],
-            hypotheses: [...result.extraction.hypotheses],
-            entities: [...result.extraction.entities],
-            tags: [...result.extraction.tags],
+            scheduled_text: todo.todoRawTime.scheduledText,
+            due_text: todo.todoRawTime.dueText,
+            time_zone: todo.todoRawTime.timeZone,
           },
-    source_attempt_id: result.sourceAttemptId ?? null,
+    todo_occurrence: todo.todoOccurrence,
+    occurred_at: todo.occurredAt,
+    source: todo.source,
+    reason: todo.reason,
+    created_at: todo.createdAt,
+    updated_at: todo.updatedAt,
   } as const;
 }
 

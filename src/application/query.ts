@@ -34,6 +34,7 @@ export type MemoryBucketGroup = {
 
 export type MemorySearchResponse = {
   readonly query: MemoryQueryPlan;
+  readonly hasMore: boolean;
   readonly results: readonly MemorySearchHit[];
   readonly buckets: readonly MemoryBucketGroup[];
   readonly evidence: readonly MemoryRow[];
@@ -41,10 +42,13 @@ export type MemorySearchResponse = {
 };
 
 export class MemoryQueryService {
-  readonly #store: Store;
+  readonly #store: Pick<Store, "searchEntryCandidates">;
   readonly #clock: () => Date;
 
-  constructor(store: Store, clock: () => Date = () => new Date()) {
+  constructor(
+    store: Pick<Store, "searchEntryCandidates">,
+    clock: () => Date = () => new Date(),
+  ) {
     this.#store = store;
     this.#clock = clock;
   }
@@ -92,11 +96,13 @@ export class MemoryQueryService {
         Date.parse(right.entry.createdAt) - Date.parse(left.entry.createdAt) ||
         compareStrings(left.entry.id, right.entry.id),
     );
+    const hasMore = results.length > query.limit;
     results.splice(query.limit);
 
     const buckets = groupBuckets(results);
     return {
       query,
+      hasMore,
       results,
       buckets,
       evidence: dedupeEvidence(results),

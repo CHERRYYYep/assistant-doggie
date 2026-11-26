@@ -1,8 +1,15 @@
 /** Transport-independent strict structured-output calls with bounded retries. */
 
+import { abortError, isAbortError, throwIfAborted } from "./cancellation.ts";
 import type { LlmEndpointConfig } from "./config.ts";
 import { LlmApiMode, resolveLlmEndpoint } from "./config.ts";
 import type { StructuredOutputContract } from "./contracts.ts";
+import {
+  defaultStructuredRetryTiming,
+  retryBackoffMs,
+  type RetryAfterDelay,
+  type StructuredRetryTiming,
+} from "./retry-policy.ts";
 import type { LlmHttpRequest, StructuredOutputTransport } from "./transport.ts";
 import { LlmTransportError } from "./transport.ts";
 import {
@@ -26,6 +33,7 @@ export type LlmErrorKind =
   | "invalid_json"
   | "invalid_response"
   | "contract"
+  | "budget_exhausted"
   | "attempts_exhausted";
 
 /**
@@ -40,6 +48,7 @@ export class LlmError extends Error {
   readonly retryable: boolean;
   readonly attempts: number | undefined;
   readonly lastError: LlmError | undefined;
+  readonly retryAfterMs: RetryAfterDelay | undefined;
 
   private constructor(
     kind: LlmErrorKind,
@@ -47,6 +56,7 @@ export class LlmError extends Error {
     retryable: boolean,
     attempts?: number | undefined,
     lastError?: LlmError | undefined,
+    retryAfterMs?: RetryAfterDelay,
   ) {
     super(message);
     this.name = "LlmError";
@@ -54,6 +64,7 @@ export class LlmError extends Error {
     this.retryable = retryable;
     this.attempts = attempts;
     this.lastError = lastError;
+    this.retryAfterMs = retryAfterMs;
   }
 
   static requestValidation(
@@ -68,7 +79,14 @@ export class LlmError extends Error {
   }
 
   static transport(error: LlmTransportError): LlmError {
-    return new LlmError("transport", "LLM transport failed", error.retryable);
+    return new LlmError(
+      "transport",
+      "LLM transport failed",
+      error.retryable,
+      undefined,
+      undefined,
+      error.retryAfterMs,
+    );
   }
 
   static response(
@@ -79,6 +97,7 @@ export class LlmError extends Error {
       | "empty_user_prompt"
       | "invalid_max_retries"
       | "transport"
+      | "budget_exhausted"
       | "attempts_exhausted"
     >,
     message: string,
@@ -96,15 +115,36 @@ export class LlmError extends Error {
       lastError,
     );
   }
+
+  static budgetExhausted(attempts: number, lastError?: LlmError): LlmError {
+    return new LlmError(
+      "budget_exhausted",
+      "structured model call exhausted its time budget",
+      false,
+      attempts,
+      lastError,
+    );
+  }
 }
+
+export type StructuredOutputInput<T> = {
+  readonly contract: StructuredOutputContract<T>;
+  readonly model: string;
+  readonly systemPrompt: string;
+  readonly userPrompt: string;
+  readonly maxRetries: number;
+  readonly signal?: AbortSignal | undefined;
+};
 
 export class StructuredOutputAdapter {
   readonly #endpoint: LlmEndpointConfig;
   readonly #transport: StructuredOutputTransport;
+  readonly #timing: StructuredRetryTiming;
 
   constructor(
     endpoint: LlmEndpointConfig,
     transport: StructuredOutputTransport,
+    timing: Partial<StructuredRetryTiming> = {},
   ) {
     // Re-resolve even a structurally forged or later-mutated object. TypeScript
     // `readonly` is not a runtime security boundary, while this adapter will
@@ -115,6 +155,7 @@ export class StructuredOutputAdapter {
       apiMode: endpoint.apiMode,
     });
     this.#transport = transport;
+    this.#timing = { ...defaultStructuredRetryTiming, ...timing };
   }
 
   get endpoint(): LlmEndpointConfig {
@@ -132,7 +173,29 @@ export class StructuredOutputAdapter {
     systemPrompt: string,
     userPrompt: string,
     maxRetries: number,
+    signal?: AbortSignal,
   ): Promise<T> {
+    return this.generate({
+      contract,
+      model,
+      systemPrompt,
+      userPrompt,
+      maxRetries,
+      signal,
+    });
+  }
+
+  async generate<T>(input: StructuredOutputInput<T>): Promise<T> {
+    const { contract, model, systemPrompt, userPrompt, maxRetries, signal } =
+      input;
+    const processSignal = this.#transport.processSignal;
+    const checkCaller = (): void => {
+      throwIfAborted(signal);
+      throwIfAborted(processSignal);
+    };
+    checkCaller();
+    const timing = this.#timing;
+    const deadline = timing.now() + timing.budgetMs;
     const cleanedModel = model.trim();
     if (cleanedModel === "") {
       throw LlmError.requestValidation(
@@ -159,31 +222,77 @@ export class StructuredOutputAdapter {
       );
     }
 
-    const request = requestForContract(
-      this.#endpoint,
-      contract,
-      cleanedModel,
-      systemPrompt,
-      userPrompt,
+    const expiry = new AbortController();
+    const active = AbortSignal.any(
+      [signal, processSignal, expiry.signal].filter(
+        (candidate) => candidate !== undefined,
+      ),
     );
-
-    for (let attemptIndex = 0; attemptIndex <= maxRetries; attemptIndex += 1) {
-      const attempt = attemptIndex + 1;
-      try {
-        const response = await this.#transport.send(request);
-        return parseStructuredResponse(
-          this.#endpoint.apiMode,
-          contract,
-          response.body,
-        );
-      } catch (error: unknown) {
-        const normalized = normalizeAttemptError(error);
-        if (attemptIndex < maxRetries && normalized.retryable) continue;
-        throw LlmError.attemptsExhausted(attempt, normalized);
+    let attempts = 0;
+    let lastError: LlmError | undefined;
+    const remaining = (): number => {
+      checkCaller();
+      const ms = deadline - timing.now();
+      if (expiry.signal.aborted || ms <= 0)
+        throw LlmError.budgetExhausted(attempts, lastError);
+      return ms;
+    };
+    const stopExpiry = timing.scheduleExpiry(Math.ceil(remaining()), () =>
+      expiry.abort(),
+    );
+    try {
+      const request = requestForContract(
+        this.#endpoint,
+        contract,
+        cleanedModel,
+        systemPrompt,
+        userPrompt,
+        active,
+      );
+      for (;;) {
+        remaining();
+        attempts += 1;
+        try {
+          const response = await this.#transport.send(request);
+          remaining();
+          const result = parseStructuredResponse(
+            this.#endpoint.apiMode,
+            contract,
+            response.body,
+          );
+          remaining();
+          return result;
+        } catch (error: unknown) {
+          remaining();
+          if (isAbortError(error)) throw abortError();
+          lastError = normalizeAttemptError(error);
+        }
+        if (attempts > maxRetries || !lastError.retryable)
+          throw LlmError.attemptsExhausted(attempts, lastError);
+        const available = remaining();
+        const retryAfter = lastError.retryAfterMs;
+        const wait =
+          retryAfter === "too_long"
+            ? Infinity
+            : Math.max(
+                retryBackoffMs(attempts, timing.random),
+                retryAfter ?? 0,
+              );
+        if (wait >= available)
+          throw LlmError.budgetExhausted(attempts, lastError);
+        await timing.sleep(wait, active);
+        remaining();
       }
+    } catch (error: unknown) {
+      checkCaller();
+      if (isAbortError(error)) {
+        remaining(); // Distinguish the adapter timer from an upstream abort.
+        throw abortError();
+      }
+      throw error;
+    } finally {
+      stopExpiry();
     }
-
-    throw new Error("bounded retry loop must return or throw");
   }
 }
 
@@ -193,6 +302,7 @@ function requestForContract<T>(
   model: string,
   systemPrompt: string,
   userPrompt: string,
+  signal?: AbortSignal,
 ): LlmHttpRequest {
   const messages = [
     { role: "system", content: systemPrompt },
@@ -218,7 +328,11 @@ function requestForContract<T>(
             json_schema: jsonSchema,
           },
         };
-  return { url: endpoint.requestUrl, body };
+  return {
+    url: endpoint.requestUrl,
+    body,
+    ...(signal === undefined ? {} : { signal }),
+  };
 }
 
 function parseStructuredResponse<T>(

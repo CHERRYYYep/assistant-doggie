@@ -1,0 +1,65 @@
+/** Goal coordination reuses the existing explicitly approved CLI boundary. */
+import type { AgentService } from "../agent/service.ts";
+import {
+  resolveWorkItem,
+  resolveWorkItemSchema,
+  workItemActionSchema,
+  type WorkItem,
+} from "../domain/work-item.ts";
+import { WorkItemStore } from "../storage/work-items.ts";
+
+export class WorkItemService {
+  readonly #store: WorkItemStore;
+  readonly #agents: AgentService;
+  constructor(store: WorkItemStore, agents: AgentService) {
+    this.#store = store;
+    this.#agents = agents;
+  }
+  list() {
+    return this.#store.list();
+  }
+  detail(id: string) {
+    return this.#store.detail(id);
+  }
+  create(input: unknown) {
+    return this.#store.create(input, describeCreatedGoal);
+  }
+  update(id: string, input: unknown) {
+    return this.#store.update(id, input, describeUpdatedGoal);
+  }
+  resolve(input: unknown) {
+    const request = resolveWorkItemSchema.parse(input);
+    // Resolve identity independently of the bounded display list.
+    const items =
+      request.workItemId !== undefined
+        ? [this.#store.get(request.workItemId)]
+        : request.title !== undefined
+          ? this.#store.findExactTitle(request.title)
+          : this.list();
+    return resolveWorkItem(request, items);
+  }
+  async transition(id: string, input: unknown) {
+    const request = workItemActionSchema.parse(input);
+    this.#store.transition(id, request);
+    if (request.action === "cancel") {
+      // Persist intent first. A failed/aborted response cannot revive approval.
+      // Repeated reads expose cancellation requested until actual termination.
+      for (const taskId of this.#store.inFlight(id))
+        await this.#agents.cancel(taskId);
+    }
+    return this.#store.get(id);
+  }
+  propose(id: string, input: unknown) {
+    return this.#agents.proposeForWorkItem(id, input);
+  }
+}
+
+type GoalDescription = Pick<WorkItem, "title" | "goal" | "acceptance">;
+
+export function describeCreatedGoal(item: GoalDescription): string {
+  return `建立工作目标「${item.title}」\n${item.goal}\n验收要求：${item.acceptance}`;
+}
+
+export function describeUpdatedGoal(item: GoalDescription): string {
+  return `修改工作目标「${item.title}」\n${item.goal}\n验收要求：${item.acceptance}`;
+}

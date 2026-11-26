@@ -154,3 +154,10 @@ T10 的测试覆盖：
 - `propose_entry` 只创建 pending attempt；
 - proposal 能生成 Web UI 可恢复的确认卡片；
 - 参数与输出资源上限。
+
+
+## T13：由 Doggie 启动 CLI 时的只读子服务
+
+普通 Claude/Codex 直接接入 MCP 的四工具合同不变。通过 Doggie 网页创建并批准 Agent 任务时，服务端另以 `DOGGIE_MCP_READ_ONLY=1` 启动 MCP 子进程，仅注册 `list_active_buckets`、`search_memory`、`get_bucket_detail`，不注册 `propose_entry`。CLI 工具配置也只允许这三个名字，形成两层限制。
+
+网页模型 `OPENAI_*` 与 CLI 的认证分开配置。完整使用步骤与只读权限范围见 [AGENT_CONTROL.md](AGENT_CONTROL.md)。

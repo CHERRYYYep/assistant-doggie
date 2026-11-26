@@ -9,7 +9,7 @@
 *.sqlite3
 work_memory.db
 
-# Rust build output
+# Historical local build cache (source workspace removed)
 /target/
 
 # Application runtime output
@@ -18,8 +18,9 @@ work_memory.db
 # Coverage and reports
 coverage/
 
-# Frontend tooling (Prettier + node --test only; no build output is committed)
+# Frontend tooling & build output (never committed)
 node_modules/
+web/dist/
 
 # OS and editors
 .DS_Store
@@ -27,9 +28,12 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Python tooling/cache kept out of the Rust-only branch
+# Local Python tooling/cache
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Private CLI session directories beside the configured database
+.doggie-agent-sessions/

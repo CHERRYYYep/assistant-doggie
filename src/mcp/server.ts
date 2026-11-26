@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/server";
 
+import { stableError } from "../http/contracts.ts";
 import type { JsonValue, Store } from "../storage/store.ts";
 import {
   boundedToolResult,
@@ -22,6 +23,7 @@ export const DOGGIE_MCP_SERVER_VERSION = "0.1.0";
 export function createDoggieMcpServer(
   store: Store,
   clock: () => Date = () => new Date(),
+  readOnly = false,
 ): McpServer {
   const tools = new DoggieMcpTools(store, clock);
   const server = new McpServer(
@@ -65,22 +67,23 @@ export function createDoggieMcpServer(
       toolResponse(() => tools.getBucketDetail(bucket_id)),
   );
 
-  server.registerTool(
-    PROPOSE_ENTRY_TOOL,
-    {
-      title: "Propose a Doggie memory entry",
-      description:
-        "提交一条待确认的工作记忆。只创建 needs_confirmation attempt；不会直接创建 Bucket、Entry 或 memory。",
-      inputSchema: proposeEntryInputSchema,
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
+  if (!readOnly)
+    server.registerTool(
+      PROPOSE_ENTRY_TOOL,
+      {
+        title: "Propose a Doggie memory entry",
+        description:
+          "提交一条待确认的工作记忆。只创建 needs_confirmation attempt；不会直接创建 Bucket、Entry 或 memory。",
+        inputSchema: proposeEntryInputSchema,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+        },
       },
-    },
-    async ({ text, bucket_id }) =>
-      toolResponse(() => tools.proposeEntry(text, bucket_id)),
-  );
+      async ({ text, bucket_id }) =>
+        toolResponse(() => tools.proposeEntry(text, bucket_id)),
+    );
 
   return server;
 }
@@ -95,10 +98,7 @@ function toolResponse(action: () => JsonValue) {
       ...(isError ? { isError: true } : {}),
     };
   } catch (error: unknown) {
-    const value = {
-      ok: false,
-      error: error instanceof Error ? error.message : "tool execution failed",
-    } as const;
+    const value = stableError(error).body;
     return {
       content: [{ type: "text" as const, text: JSON.stringify(value) }],
       structuredContent: value,

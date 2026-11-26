@@ -3,6 +3,7 @@
 import type {
   DeleteBucketOutcome,
   EntryRow,
+  EntryRevocation,
   MoveEntryOutcome,
 } from "../storage/store.ts";
 import { Store } from "../storage/store.ts";
@@ -35,7 +36,7 @@ export type CorrectionResult = {
   readonly targetBucketId: string;
 };
 
-export type EntryDeletionResult = {
+export type EntryDeletionResult = EntryRevocation & {
   readonly action: "delete_entry";
   readonly targetType: "entry";
   readonly targetId: string;
@@ -92,8 +93,16 @@ export class CorrectionService {
   }
 
   deleteEntry(entryId: string, commandText: string): EntryDeletionResult {
-    this.#store.deleteEntry(entryId, cleanedCommand(commandText));
-    return { action: "delete_entry", targetType: "entry", targetId: entryId };
+    const outcome = this.#store.deleteEntry(
+      entryId,
+      cleanedCommand(commandText),
+    );
+    return {
+      ...outcome,
+      action: "delete_entry",
+      targetType: "entry",
+      targetId: entryId,
+    };
   }
 
   deleteBucket(bucketId: string, commandText: string): BucketDeletionResult {

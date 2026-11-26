@@ -1,32 +1,14 @@
+import { httpApiFixture } from "./test-fixtures.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { DoggieHttpApi } from "./app.ts";
-import { createDoggieApp, loadFrontendAssets } from "./app.ts";
+import {
+  createDoggieApp,
+  loadFrontendAssets,
+  loadLegacyFrontendAssets,
+} from "./app.ts";
 import { HttpBoundaryError } from "./contracts.ts";
-
-function fakeApi(calls: string[]): DoggieHttpApi {
-  const called = (name: string, value: unknown) => {
-    calls.push(`${name}:${JSON.stringify(value)}`);
-    return { ok: true, route: name, value };
-  };
-  return {
-    activeBuckets: (limit) => called("active", limit),
-    searchBuckets: (query, limit) => called("search", { query, limit }),
-    chatHistory: (limit) => called("history", limit),
-    memoryQuery: (query, limit) => called("query", { query, limit }),
-    memoryQueryJson: (request) => called("queryJson", request),
-    bucketDetail: (bucketId) => called("detail", bucketId),
-    deleteBucket: (bucketId) => called("delete", bucketId),
-    archive: (request) => called("archive", request),
-    chat: (request) => called("chat", request),
-    confirmChat: (request) => called("confirm", request),
-    appendConfirmed: (request) => called("append", request),
-    createConfirmed: (request) => called("create", request),
-    moveEntry: (request) => called("move", request),
-    setBucketStatus: (request) => called("status", request),
-  };
-}
 
 function localRequest(
   app: ReturnType<typeof createDoggieApp>,
@@ -44,7 +26,7 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 }
 
 test("Hono serves the existing module frontend and supports HEAD correctly", async () => {
-  const app = createDoggieApp(fakeApi([]), [
+  const app = createDoggieApp(httpApiFixture([]), [
     {
       path: "/",
       contentType: "text/html; charset=utf-8",
@@ -69,12 +51,14 @@ test("Hono serves the existing module frontend and supports HEAD correctly", asy
   assert.equal(await head.text(), "");
 });
 
-test("frontend TypeScript assets are stripped into browser JavaScript", () => {
-  const scripts = loadFrontendAssets().filter(({ path }) =>
+test("legacy frontend TypeScript assets are stripped into browser JavaScript", () => {
+  const scripts = loadLegacyFrontendAssets().filter(({ path }) =>
     path.endsWith(".ts"),
   );
 
-  assert.equal(scripts.length, 10);
+  assert.equal(scripts.length, 15);
+  assert.ok(scripts.some((script) => script.path === "/assets/workspace.ts"));
+  assert.ok(scripts.some((script) => script.path === "/assets/agents.ts"));
   for (const script of scripts) {
     assert.equal(script.contentType, "text/javascript; charset=utf-8");
     assert.doesNotMatch(script.body, /\b(?:import|export)\s+type\b/u);
@@ -83,19 +67,47 @@ test("frontend TypeScript assets are stripped into browser JavaScript", () => {
   }
 });
 
+test("default frontend bundle serves external static assets with strict CSP compatibility", () => {
+  const assets = loadFrontendAssets();
+  const root = assets.find(({ path }) => path === "/");
+  assert.ok(root);
+  assert.equal(root.contentType, "text/html; charset=utf-8");
+  assert.doesNotMatch(root.body, /<style\b/iu);
+  assert.doesNotMatch(root.body, /\s(?:style|on\w+)\s*=/iu);
+  const scripts = assets.filter(({ contentType }) =>
+    contentType.startsWith("text/javascript"),
+  );
+  const styles = assets.filter(({ contentType }) =>
+    contentType.startsWith("text/css"),
+  );
+  assert.ok(scripts.length >= 1);
+  assert.ok(styles.length >= 1);
+  for (const asset of [...scripts, ...styles]) {
+    assert.match(asset.body, /\S/u);
+  }
+});
+
 test("Hono routes decoded query, path and strict JSON DTOs to the API", async () => {
   const calls: string[] = [];
-  const app = createDoggieApp(fakeApi(calls), []);
+  const app = createDoggieApp(httpApiFixture(calls), []);
 
   const query = await localRequest(
     app,
     "http://127.0.0.1:8787/api/memory/query?q=%E6%8E%A5%E5%8F%A3%20A&limit=10",
   );
   assert.equal(query.status, 200);
-  assert.deepEqual(await body(query), {
-    ok: true,
-    route: "query",
-    value: { query: "接口 A", limit: 10 },
+  const queryBody = await body(query);
+  assert.equal(queryBody["query"], "接口 A");
+  assert.deepEqual(queryBody["query_plan"], {
+    raw_text: "接口 A",
+    terms: [],
+    entity_terms: [],
+    topic_terms: [],
+    bucket_terms: [],
+    time_range: null,
+    statuses: [],
+    structured_filters: [],
+    limit: 10,
   });
 
   const detail = await localRequest(
@@ -103,11 +115,14 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
     "http://127.0.0.1:8787/api/buckets/%E6%A1%B6-1",
   );
   assert.equal(detail.status, 200);
-  assert.deepEqual(await body(detail), {
-    ok: true,
-    route: "detail",
-    value: "桶-1",
-  });
+  const detailBody = await body(detail);
+  assert.equal(
+    Reflect.get(
+      Reflect.get(detailBody["detail"] as object, "bucket") as object,
+      "id",
+    ),
+    "桶-1",
+  );
 
   const chat = await localRequest(app, "http://127.0.0.1:8787/api/chat", {
     method: "POST",
@@ -115,11 +130,11 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
     body: JSON.stringify({ message: " 事实 " }),
   });
   assert.equal(chat.status, 200);
-  assert.deepEqual(await body(chat), {
-    ok: true,
-    route: "chat",
-    value: { message: "事实" },
-  });
+  const chatBody = await body(chat);
+  assert.equal(
+    Reflect.get(chatBody["user_message"] as object, "content"),
+    "事实",
+  );
   assert.deepEqual(calls, [
     'query:{"query":"接口 A","limit":10}',
     'detail:"桶-1"',
@@ -129,7 +144,7 @@ test("Hono routes decoded query, path and strict JSON DTOs to the API", async ()
 
 test("all declared write routes dispatch and DELETE remains bodyless", async () => {
   const calls: string[] = [];
-  const app = createDoggieApp(fakeApi(calls), []);
+  const app = createDoggieApp(httpApiFixture(calls), []);
   const post = (path: string, value: unknown) =>
     localRequest(app, `http://127.0.0.1:8787${path}`, {
       method: "POST",
@@ -164,7 +179,7 @@ test("all declared write routes dispatch and DELETE remains bodyless", async () 
 
 test("malformed inputs and thrown handlers keep the stable JSON error shape", async () => {
   const api: DoggieHttpApi = {
-    ...fakeApi([]),
+    ...httpApiFixture([]),
     activeBuckets: () => {
       throw new HttpBoundaryError(409, "fixture conflict");
     },
@@ -198,4 +213,59 @@ test("malformed inputs and thrown handlers keep the stable JSON error shape", as
     ok: false,
     error: "route not found",
   });
+});
+
+test("internal invalid success data produces a sanitized 500 instead of a request error", async () => {
+  const app = createDoggieApp(
+    {
+      ...httpApiFixture(),
+      activeBuckets: () => ({
+        ok: true,
+        buckets: [],
+        private_detail: "must not leak",
+      }),
+    },
+    [],
+  );
+  const response = await localRequest(app, "/api/buckets/active");
+  assert.equal(response.status, 500);
+  assert.deepEqual(await body(response), {
+    ok: false,
+    error: "internal response contract violation",
+  });
+});
+
+test("strict query and path contracts reject ambiguous inputs before dispatch", async () => {
+  const calls: string[] = [];
+  const app = createDoggieApp(httpApiFixture(calls), []);
+  for (const path of [
+    "/api/buckets/active?unknown=true",
+    "/api/buckets/active?limit=1&limit=2",
+    "/api/memory/query?q=first&q=second",
+    "/api/buckets/%20",
+    "/api/buckets/%FF",
+  ]) {
+    const response = await localRequest(app, path);
+    assert.equal(response.status, 400, path);
+    assert.equal((await body(response))["ok"], false, path);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test("DELETE contracts reject JSON bodies before any mutation", async () => {
+  const calls: string[] = [];
+  const app = createDoggieApp(httpApiFixture(calls), []);
+  for (const path of ["/api/buckets/b1", "/api/entries/e1"]) {
+    const response = await localRequest(app, path, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 400, path);
+    assert.deepEqual(await body(response), {
+      ok: false,
+      error: "delete does not accept a body",
+    });
+  }
+  assert.deepEqual(calls, []);
 });

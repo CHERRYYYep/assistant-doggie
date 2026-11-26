@@ -67,17 +67,25 @@ export function assertSecureRequest(
     throw new HttpBoundaryError(403, "host is not allowed");
   }
 
-  if (!isStateChanging(request.method)) return;
-
-  const origin = optionalSingleHeader(request.headers, "Origin");
-  if (origin !== undefined && !policy.allowsOrigin(origin)) {
-    throw new HttpBoundaryError(
-      403,
-      "cross-origin state change is not allowed",
-    );
+  if (isStateChanging(request.method)) {
+    const origin = optionalSingleHeader(request.headers, "Origin");
+    if (origin !== undefined && !policy.allowsOrigin(origin)) {
+      throw new HttpBoundaryError(
+        403,
+        "cross-origin state change is not allowed",
+      );
+    }
   }
 
-  if (request.body !== null && !isAcceptedJsonContentType(request.headers)) {
+  assertJsonBodyContentType(request.headers, request.body !== null);
+}
+
+/** Also used before the Node adapter discards unsupported GET/HEAD bodies. */
+export function assertJsonBodyContentType(
+  headers: Headers,
+  hasBody: boolean,
+): void {
+  if (hasBody && !isAcceptedJsonContentType(headers)) {
     throw new HttpBoundaryError(
       415,
       "request body must use Content-Type: application/json",

@@ -1,290 +1,116 @@
-/** JSON-only DTOs shared by the HTTP service and browser frontend. */
-
-import type {
-  BucketStatus,
-  BucketType,
-  ClassificationAction,
-} from "../domain/types.ts";
+/** JSON-only types derived from runtime schemas; all imports erase in browsers. */
+import type { z } from "zod";
+import type * as schema from "./response-schemas.ts";
 
 export type JsonPrimitive = null | boolean | number | string;
 export type JsonValue =
   JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
-export type ErrorResponse = {
-  readonly ok: false;
-  readonly error: string;
-  readonly [key: string]: unknown;
-};
+// JSON omits undefined properties. Keep exact optional properties and readonly
+// collections without maintaining a second handwritten protocol definition.
+type JsonDto<T> = T extends readonly (infer Item)[]
+  ? readonly JsonDto<Item>[]
+  : T extends object
+    ? { readonly [Key in keyof T]: JsonDto<Exclude<T[Key], undefined>> }
+    : T;
+type ResponseDto<T extends z.ZodType> = JsonDto<z.output<T>>;
+export type ErrorResponse = ResponseDto<typeof schema.errorResponseSchema>;
+export type BucketDto = ResponseDto<typeof schema.bucketResponseSchema>;
+export type EntryDto = ResponseDto<typeof schema.entryResponseSchema>;
+export type MemoryDto = ResponseDto<typeof schema.memoryResponseSchema>;
+export type BucketDetailDto = ResponseDto<typeof schema.bucketDetailSchema>;
+export type CandidateBucketDto = ResponseDto<
+  typeof schema.candidateBucketSchema
+>;
+export type ArchiveExtractionDto = ResponseDto<
+  typeof schema.archiveExtractionSchema
+>;
+export type ArchiveProjectionDto = ResponseDto<
+  typeof schema.archiveProjectionSchema
+>;
+export type DiscardedArchiveDto = ResponseDto<
+  typeof schema.discardedArchiveSchema
+>;
+export type ArchiveDto = ResponseDto<typeof schema.archiveResponseSchema>;
+export type ChatMessageDto = ResponseDto<typeof schema.chatMessageSchema>;
+export type QueryPlanDto = ResponseDto<typeof schema.queryPlanSchema>;
+export type MemoryQueryResponse = ResponseDto<
+  typeof schema.memoryQueryResponseSchema
+>;
+export type ActiveBucketsResponse = ResponseDto<
+  typeof schema.activeBucketsResponseSchema
+>;
+export type BucketSearchResponse = ResponseDto<
+  typeof schema.bucketSearchResponseSchema
+>;
+export type BucketDetailResponse = ResponseDto<
+  typeof schema.bucketDetailResponseSchema
+>;
+export type ChatHistoryResponse = ResponseDto<
+  typeof schema.chatHistoryResponseSchema
+>;
+export type ArchiveResponse = ResponseDto<
+  typeof schema.archiveProjectionSchema
+>;
+export type ChatResponse = ResponseDto<typeof schema.chatResponseSchema>;
+export type ChatConfirmationResponse = ResponseDto<
+  typeof schema.chatConfirmationResponseSchema
+>;
+export type MoveEntryResponse = ResponseDto<
+  typeof schema.moveEntryResponseSchema
+>;
+export type DeleteBucketResponse = ResponseDto<
+  typeof schema.deleteBucketResponseSchema
+>;
+export type EntryRevocationResponse = ResponseDto<
+  typeof schema.revokeEntryResponseSchema
+>;
+export type BucketStatusResponse = ResponseDto<
+  typeof schema.bucketStatusResponseSchema
+>;
+export type TodoDto = ResponseDto<typeof schema.todoSchema>;
+export type AgendaResponse = ResponseDto<typeof schema.agendaResponseSchema>;
+export type TodoResponse = ResponseDto<typeof schema.todoResponseSchema>;
+export type TodoMutationResponse = ResponseDto<
+  typeof schema.todoMutationResponseSchema
+>;
 
-export type BucketDto = {
-  readonly id: string;
-  readonly title: string;
-  readonly type: BucketType;
-  readonly status: BucketStatus;
-  readonly summary: string;
-  readonly tags: readonly string[];
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly last_active_at: string;
-  readonly archived_at: string | null;
-};
-
-export type EntryDto = {
-  readonly id: string;
-  readonly bucket_id: string;
-  readonly raw_text: string;
-  readonly summary: string | null;
-  readonly content_type: string;
-  readonly classification_confidence: number | null;
-  readonly classification_reason: string | null;
-  readonly created_at: string;
-  readonly moved_from_bucket_id: string | null;
-  readonly archive_state: string;
-  readonly archived_at: string;
-};
-
-export type MemoryDto = {
-  readonly id: string;
-  readonly bucket_id: string;
-  readonly entry_id: string | null;
-  readonly kind: string;
-  readonly text: string;
-  readonly status: string | null;
-  readonly due_at: string | null;
-  readonly occurred_at: string | null;
-  readonly source: string | null;
-  readonly reason: string | null;
-  readonly created_at: string;
-  readonly updated_at: string;
-  readonly metadata: JsonValue;
-};
-
-export type BucketDetailDto = {
-  readonly bucket: BucketDto;
-  readonly entries: readonly EntryDto[];
-  readonly memories: readonly MemoryDto[];
-};
-
-export type CandidateBucketDto = {
-  readonly id: string;
-  readonly title: string;
-  readonly type: BucketType;
-  readonly status: BucketStatus;
-  readonly summary: string;
-  readonly tags: readonly string[];
-  readonly last_active_at_unix_ms: number;
-  readonly is_recommended: boolean;
-};
-
-export type ArchiveExtractionDto = {
-  readonly summary: string;
-  readonly todos: readonly string[];
-  readonly evidences: readonly string[];
-  readonly timeline_events: readonly {
-    readonly event_time: string | null;
-    readonly text: string;
-  }[];
-  readonly decisions: readonly string[];
-  readonly hypotheses: readonly string[];
-  readonly entities: readonly string[];
-  readonly tags: readonly string[];
-};
-
-export type ArchiveActionDto =
-  | "append_recommended"
-  | "append_alternative"
-  | "create_new"
-  | "discard"
-  | "move_entry";
-
-export type ArchiveProjectionDto = {
-  readonly ok: true;
-  readonly attempt_id: string;
-  readonly archive_state: "archived" | "needs_confirmation";
-  readonly bucket_id: string | null;
-  readonly entry_id: string | null;
-  readonly memory_item_ids: readonly string[];
-  readonly action: ClassificationAction;
-  readonly confidence: number;
-  readonly reason: string;
-  readonly question: string | null;
-  readonly candidate_bucket_ids: readonly string[];
-  readonly recommended_bucket_id: string | null;
-  readonly recommended_bucket: CandidateBucketDto | null;
-  readonly candidate_buckets: readonly CandidateBucketDto[];
-  readonly bucket_title: string | null;
-  readonly bucket_type: BucketType | null;
-  readonly bucket: BucketDto | null;
-  readonly extraction: ArchiveExtractionDto | null;
-  readonly source_attempt_id: string | null;
-  readonly result_attempt_id?: string | null;
-  readonly available_actions?: readonly ArchiveActionDto[];
-  readonly confirmation_options?: {
-    readonly recommended: "append_recommended";
-    readonly alternative: "append_alternative";
-    readonly create: "create_new";
-    readonly discard: "discard";
-  };
-  readonly pending_confirmation?: boolean;
-};
-
-export type DiscardedArchiveDto = {
-  readonly ok: true;
-  readonly attempt_id: string;
-  readonly archive_state: "discarded";
-  readonly bucket_id: null;
-  readonly entry_id: null;
-  readonly memory_item_ids: readonly string[];
-  readonly source_attempt_id: string;
-  readonly result_attempt_id: null;
-  readonly bucket?: BucketDto | null;
-  readonly reason?: string;
-};
-
-export type ArchiveDto = ArchiveProjectionDto | DiscardedArchiveDto;
-
+export type ArchiveActionDto = NonNullable<
+  ArchiveProjectionDto["available_actions"]
+>[number];
 export type ChatMessageDetailsDto = JsonValue;
-
-export type ChatMessageDto = {
-  readonly id: string;
-  readonly sequence: number;
-  readonly role: string;
-  readonly content: string;
-  readonly tool_name: string | null;
-  readonly tool_call_id: string | null;
-  readonly details: ChatMessageDetailsDto | null;
-  readonly created_at: string;
-};
-
+export type MemoryQueryHitDto = MemoryQueryResponse["results"][number];
+export type ChatToolMessageDto = ChatResponse["tool_messages"][number];
 export type PendingChatMessageDto = {
   readonly id: string;
   readonly role: "user";
   readonly content: string;
   readonly pending: true;
 };
-
 export type UiChatMessageDto = ChatMessageDto | PendingChatMessageDto;
 
-export type QueryPlanDto = {
-  readonly raw_text: string;
-  readonly terms: readonly string[];
-  readonly entity_terms: readonly string[];
-  readonly topic_terms: readonly string[];
-  readonly bucket_terms: readonly string[];
-  readonly time_range: {
-    readonly start: string;
-    readonly end: string;
-    readonly label: string;
-  } | null;
-  readonly statuses: readonly BucketStatus[];
-  readonly structured_filters: readonly {
-    readonly field: string;
-    readonly value: string;
-  }[];
-  readonly limit: number;
-};
+export type WorkItemResponse = ResponseDto<
+  typeof schema.workItemResponseSchema
+>;
+export type WorkItemsResponse = ResponseDto<
+  typeof schema.workItemsResponseSchema
+>;
+export type WorkItemDetailResponse = ResponseDto<
+  typeof schema.workItemDetailResponseSchema
+>;
+export type WorkItemResolutionResponse = ResponseDto<
+  typeof schema.workItemResolutionResponseSchema
+>;
 
-export type MemoryQueryHitDto = {
-  readonly bucket: BucketDto;
-  readonly entry: EntryDto;
-  readonly memories: readonly MemoryDto[];
-  readonly matched_fields: readonly string[];
-  readonly keyword_score: number;
-  readonly semantic_score: number;
-  readonly score: number;
-};
+export type ConversationTurnResponse = ResponseDto<
+  typeof schema.conversationTurnResponseSchema
+>;
+export type ClarificationListResponse = ResponseDto<
+  typeof schema.clarificationListResponseSchema
+>;
+export type ClarificationCardDto =
+  ClarificationListResponse["clarifications"][number];
 
-export type MemoryQueryResponse = {
-  readonly ok: true;
-  readonly query: string;
-  readonly query_plan: QueryPlanDto;
-  readonly total_entries: number;
-  readonly total_buckets: number;
-  readonly results: readonly MemoryQueryHitDto[];
-  readonly buckets: readonly {
-    readonly bucket: BucketDto;
-    readonly matched_entry_count: number;
-    readonly top_score: number;
-  }[];
-  readonly evidence: readonly MemoryDto[];
-  readonly answer: string;
-};
-
-export type ActiveBucketsResponse = {
-  readonly ok: true;
-  readonly buckets: readonly BucketDto[];
-};
-
-export type BucketSearchResponse = {
-  readonly ok: true;
-  readonly results: readonly {
-    readonly bucket: BucketDto;
-    readonly matched_entry_count: number;
-    readonly score: number;
-  }[];
-};
-
-export type BucketDetailResponse = {
-  readonly ok: true;
-  readonly detail: BucketDetailDto;
-};
-
-export type ChatHistoryResponse = {
-  readonly ok: true;
-  readonly messages: readonly ChatMessageDto[];
-};
-
-export type ArchiveResponse = ArchiveProjectionDto;
-
-export type ChatToolMessageDto = {
-  readonly name: string;
-  readonly call_id: string;
-  readonly arguments: JsonValue;
-  readonly output: JsonValue;
-};
-
-export type ChatResponse = {
-  readonly ok: true;
-  readonly archive: ArchiveProjectionDto;
-  readonly archive_state: ArchiveProjectionDto["archive_state"];
-  readonly user_message: ChatMessageDto;
-  readonly tool_messages: readonly ChatToolMessageDto[];
-  readonly assistant_message: ChatMessageDto;
-  readonly messages: readonly ChatMessageDto[];
-  readonly chat_error: string | null;
-};
-
-export type ChatConfirmationResponse = {
-  readonly ok: true;
-  readonly confirmation_action: "append" | "create" | "discard";
-  readonly archive: ArchiveDto;
-  readonly archive_state: ArchiveDto["archive_state"];
-  readonly source_attempt_id: string;
-  readonly result_attempt_id: string | null;
-  readonly user_message: ChatMessageDto;
-  readonly assistant_message: ChatMessageDto;
-  readonly messages: readonly ChatMessageDto[];
-};
-
-export type MoveEntryResponse = {
-  readonly ok: true;
-  readonly correction_id: string;
-  readonly source_bucket_id: string;
-  readonly target_bucket_id: string;
-  readonly entry: EntryDto;
-};
-
-export type DeleteBucketResponse = {
-  readonly ok: true;
-  readonly bucket_id: string;
-  readonly deleted_entry_ids: readonly string[];
-  readonly deleted_memory_item_ids: readonly string[];
-  readonly updated_archive_attempt_ids: readonly string[];
-  readonly correction_id: string;
-};
-
-export type BucketStatusResponse = {
-  readonly ok: true;
-  readonly bucket_id: string;
-  readonly status: BucketStatus;
-};
+export type ConversationInteractionListResponse = ResponseDto<
+  typeof schema.conversationInteractionListResponseSchema
+>;

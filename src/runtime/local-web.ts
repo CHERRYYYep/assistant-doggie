@@ -1,3 +1,28 @@
+import {
+  ConversationContextService,
+  type GroundedResponder,
+} from "../application/conversation-context.ts";
+import { MainConversationService } from "../application/main-conversation.ts";
+import { ClarificationStore } from "../storage/clarifications.ts";
+import { MemoryTools } from "../application/memory-tools.ts";
+import { WorkItemService } from "../application/work-items.ts";
+import { WorkItemStore } from "../storage/work-items.ts";
+import {
+  AgentHarness,
+  createMemoryHarnessTools,
+  createHarnessChatResponder,
+  createHarnessGroundedResponder,
+} from "../agent/harness.ts";
+import { AgentService } from "../agent/service.ts";
+import { WorkspacePolicy } from "../agent/workspace.ts";
+import { CliAgentRunner, type AgentProcessRunner } from "../agent/process.ts";
+import { AgentStore } from "../storage/agents.ts";
+import type {
+  ChatResponder,
+  MainTurnRouter,
+} from "../application/chat-types.ts";
+import { ChatService } from "../application/chat.ts";
+import { StructuredMainTurnRouter } from "../application/main-turn-router.ts";
 /** Composition root for the local TypeScript Web application. */
 
 import { once } from "node:events";
@@ -10,11 +35,20 @@ import {
   StructuredMemoryModel,
   type MemoryModel,
 } from "../application/archive-runtime.ts";
+import { TaskQueue } from "../application/task-queue.ts";
+import { TaskStore } from "../storage/tasks.ts";
 import { ConcreteDoggieHttpApi } from "../http/api.ts";
 import type { StaticAsset } from "../http/app.ts";
-import { createDoggieNodeServer } from "../http/server.ts";
+import {
+  createDoggieNodeServer,
+  drainDoggieNodeServer,
+} from "../http/server.ts";
 import { StructuredOutputAdapter } from "../llm/structured-output.ts";
-import { openDatabase } from "../storage/database.ts";
+import {
+  assertDatabaseAvailable,
+  onDatabaseFault,
+  openDatabase,
+} from "../storage/database.ts";
 import { Store } from "../storage/store.ts";
 import type { DoggieRuntimeConfig } from "./config.ts";
 
@@ -22,12 +56,18 @@ export type LocalWebDependencies = {
   readonly model?: MemoryModel | undefined;
   readonly fetchImplementation?: typeof fetch | undefined;
   readonly assets?: readonly StaticAsset[] | undefined;
+  readonly agentRunner?: AgentProcessRunner;
+  readonly chatResponder?: ChatResponder;
+  readonly groundedResponder?: GroundedResponder;
+  readonly mainTurnRouter?: MainTurnRouter;
 };
 
 export class DoggieLocalWeb {
   readonly server: Server;
   readonly database: DatabaseSync;
   readonly store: Store;
+  readonly tasks: TaskQueue;
+  readonly agents: AgentService;
   readonly url: string;
   readonly #shutdownController: AbortController;
   #closePromise: Promise<void> | undefined;
@@ -36,12 +76,16 @@ export class DoggieLocalWeb {
     readonly server: Server;
     readonly database: DatabaseSync;
     readonly store: Store;
+    readonly tasks: TaskQueue;
+    readonly agents: AgentService;
     readonly url: string;
     readonly shutdownController: AbortController;
   }) {
     this.server = input.server;
     this.database = input.database;
     this.store = input.store;
+    this.tasks = input.tasks;
+    this.agents = input.agents;
     this.url = input.url;
     this.#shutdownController = input.shutdownController;
   }
@@ -53,13 +97,26 @@ export class DoggieLocalWeb {
 
   async #performClose(): Promise<void> {
     this.#shutdownController.abort();
+    const workerClose = this.tasks.close();
+    const serverClose = this.server.listening
+      ? once(this.server, "close")
+      : Promise.resolve();
+    this.server.close();
+    this.server.closeAllConnections();
     try {
-      this.server.closeIdleConnections();
-      if (this.server.listening) {
-        this.server.close();
-        await once(this.server, "close");
-      }
+      await Promise.all([
+        workerClose,
+        serverClose,
+        drainDoggieNodeServer(this.server),
+      ]);
     } finally {
+      // All settled is required even when one drain fails: no worker may retain
+      // access to SQLite after close.
+      await Promise.allSettled([
+        workerClose,
+        serverClose,
+        drainDoggieNodeServer(this.server),
+      ]);
       this.database.close();
     }
   }
@@ -72,48 +129,144 @@ export async function startDoggieLocalWeb(
   const database = openDatabase(config.databasePath);
   const shutdownController = new AbortController();
   let server: Server | undefined;
+  let tasks: TaskQueue | undefined;
+  let application: DoggieLocalWeb | undefined;
+  onDatabaseFault(database, () => {
+    if (application === undefined) return; // Startup checks the fault before publishing.
+    console.error("doggie-local-web storage unavailable; stopping");
+    void application.close().catch(() => {
+      // A quarantined connection cannot release the persistent worker claim.
+      // The next process recovers the abandoned claim after this PID exits.
+    });
+  });
   try {
     const store = new Store(database);
+    const productionAdapter =
+      dependencies.model === undefined
+        ? new StructuredOutputAdapter(
+            config.endpoint,
+            config.createTransport(
+              dependencies.fetchImplementation,
+              shutdownController.signal,
+            ),
+          )
+        : undefined;
     const model =
-      dependencies.model ??
-      createProductionModel(config, dependencies, shutdownController.signal);
+      dependencies.model ?? createProductionModel(config, productionAdapter);
     const runtime = new ArchiveRuntime(store, model);
-    const api = new ConcreteDoggieHttpApi(store, runtime);
+    const harness =
+      dependencies.model === undefined
+        ? new AgentHarness(
+            config.endpoint,
+            config.createTransport(
+              dependencies.fetchImplementation,
+              shutdownController.signal,
+            ),
+            config.model,
+            createMemoryHarnessTools(new MemoryTools(store.memory)),
+          )
+        : undefined;
+    const chatResponder =
+      dependencies.chatResponder ??
+      (harness === undefined ? undefined : createHarnessChatResponder(harness));
+    const mainTurnRouter =
+      dependencies.mainTurnRouter ??
+      (productionAdapter === undefined
+        ? undefined
+        : new StructuredMainTurnRouter(productionAdapter, config.model));
+    const grounding = new ConversationContextService(
+      store,
+      dependencies.groundedResponder ??
+        (harness === undefined
+          ? undefined
+          : createHarnessGroundedResponder(harness)),
+    );
+    const chatService = new ChatService(
+      store,
+      runtime,
+      chatResponder,
+      mainTurnRouter,
+    );
+    const api = new ConcreteDoggieHttpApi(store, runtime, { chatService });
+    const agents = new AgentService({
+      store: new AgentStore(database),
+      policy: new WorkspacePolicy(config.agent.workspaceRoots),
+      runner: dependencies.agentRunner ?? new CliAgentRunner(config.agent),
+      databasePath: config.databasePath,
+      enabled: [
+        ...(config.agent.claude === undefined ? [] : ["claude" as const]),
+        ...(config.agent.codex === undefined ? [] : ["codex" as const]),
+      ],
+    });
+    tasks = new TaskQueue(new TaskStore(database), async (payload, signal) =>
+      "agent_task_id" in payload
+        ? agents.execute(payload.agent_task_id, signal)
+        : chatService.chat(
+            { text: payload.message, focusBucketId: payload.focus_bucket_id },
+            signal,
+          ),
+    );
+    agents.attachQueue(tasks);
+    const workItemStore = new WorkItemStore(database);
     server = createDoggieNodeServer(api, {
+      tasks,
+      agents,
+      workItems: new WorkItemService(workItemStore, agents),
+      conversation: new MainConversationService(
+        new ClarificationStore(database, store.conversation),
+        workItemStore,
+        chatService,
+        grounding,
+        agents,
+      ),
+      signal: shutdownController.signal,
       ...(dependencies.assets === undefined
         ? {}
         : { assets: dependencies.assets }),
     });
     server.listen(config.server.port, config.server.host);
     await once(server, "listening");
-    return new DoggieLocalWeb({
+    assertDatabaseAvailable(database);
+    application = new DoggieLocalWeb({
       server,
       database,
       store,
+      tasks,
+      agents,
       url: serverUrl(server),
       shutdownController,
     });
+    return application;
   } catch (error) {
-    if (server?.listening) {
-      server.closeAllConnections();
-      server.close();
-      await once(server, "close").catch(() => undefined);
+    shutdownController.abort();
+    const workerClose = tasks?.close();
+    const serverClose = server?.listening
+      ? once(server, "close").catch(() => undefined)
+      : Promise.resolve();
+    server?.close();
+    server?.closeAllConnections();
+    try {
+      await Promise.allSettled([
+        workerClose,
+        serverClose,
+        server === undefined ? undefined : drainDoggieNodeServer(server),
+      ]);
+    } finally {
+      database.close();
     }
-    database.close();
+    // Preserve the original startup failure. Cleanup faults must not skip
+    // remaining resources or replace the user's actionable bind/config error.
     throw error;
   }
 }
 
 function createProductionModel(
   config: DoggieRuntimeConfig,
-  dependencies: LocalWebDependencies,
-  shutdownSignal: AbortSignal,
+  adapter: StructuredOutputAdapter | undefined,
 ): StructuredMemoryModel {
-  const transport = config.createTransport(
-    dependencies.fetchImplementation,
-    shutdownSignal,
-  );
-  const adapter = new StructuredOutputAdapter(config.endpoint, transport);
+  if (adapter === undefined) {
+    throw new Error("missing production structured output adapter");
+  }
   return new StructuredMemoryModel(adapter, config.model);
 }
 

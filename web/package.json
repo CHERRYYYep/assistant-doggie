@@ -1,0 +1,15 @@
+{
+  "name": "doggie-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Static Web UI assets for TypeScript Doggie",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test --test-isolation=none 'tests/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "prettier": "^3.9.6"
+  }
+}
